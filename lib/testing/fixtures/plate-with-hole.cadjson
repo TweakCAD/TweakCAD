@@ -1,0 +1,93 @@
+{
+  "schemaVersion": "0.2",
+  "units": "mm",
+  "metadata": {
+    "name": "Plate with Hole",
+    "description": "Simple test model - plate with center hole",
+    "createdAt": "2026-05-17T12:00:00Z",
+    "updatedAt": "2026-05-17T12:00:00Z",
+    "appVersion": "0.1.0"
+  },
+  "parameters": {
+    "values": {
+      "width": { "name": "width", "expression": "100", "unit": "mm" },
+      "height": { "name": "height", "expression": "60", "unit": "mm" },
+      "thickness": { "name": "thickness", "expression": "20", "unit": "mm" },
+      "holeDiameter": { "name": "holeDiameter", "expression": "10", "unit": "mm" }
+    }
+  },
+  "parts": {
+    "part_1": {
+      "id": "part_1",
+      "name": "Plate",
+      "transform": { "position": [0, 0, 0], "rotation": [0, 0, 0, 1] },
+      "parameters": { "values": {} },
+      "timeline": [
+        {
+          "id": "sketch_1",
+          "type": "sketch",
+          "name": "Base Sketch",
+          "version": 1,
+          "enabled": true,
+          "dependsOn": [],
+          "inputs": {
+            "plane": { "type": "defaultPlane", "name": "XY" },
+            "entities": {
+              "rect_1": {
+                "id": "rect_1",
+                "type": "rectangle",
+                "mode": "center",
+                "center": ["0", "0"],
+                "width": "width",
+                "height": "height"
+              }
+            }
+          },
+          "createdAt": "2026-05-17T12:00:00Z",
+          "updatedAt": "2026-05-17T12:00:00Z"
+        },
+        {
+          "id": "extrude_1",
+          "type": "extrude",
+          "name": "Base Extrude",
+          "version": 1,
+          "enabled": true,
+          "dependsOn": ["sketch_1"],
+          "inputs": {
+            "profiles": [{ "sketchId": "sketch_1", "wireEntityIds": ["rect_1"] }],
+            "operation": "newBody",
+            "direction": { "type": "normal" },
+            "extent": { "type": "distance", "value": "thickness" }
+          },
+          "createdAt": "2026-05-17T12:00:00Z",
+          "updatedAt": "2026-05-17T12:00:00Z"
+        },
+        {
+          "id": "hole_1",
+          "type": "hole",
+          "name": "Center Hole",
+          "version": 1,
+          "enabled": true,
+          "dependsOn": ["extrude_1"],
+          "inputs": {
+            "face": { "type": "featureOutput", "featureId": "extrude_1", "output": "endFace" },
+            "center": ["0", "0"],
+            "direction": { "type": "normal" },
+            "diameter": "holeDiameter",
+            "extent": { "type": "throughAll" },
+            "kind": "simple"
+          },
+          "createdAt": "2026-05-17T12:00:00Z",
+          "updatedAt": "2026-05-17T12:00:00Z"
+        }
+      ],
+      "defaultPlanes": {
+        "XY": { "type": "defaultPlane", "name": "XY" },
+        "XZ": { "type": "defaultPlane", "name": "XZ" },
+        "YZ": { "type": "defaultPlane", "name": "YZ" }
+      }
+    }
+  },
+  "references": {},
+  "assemblies": {}
+}

@@ -1,0 +1,62 @@
+# Dependencies
+node_modules/
+**/node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+out/
+coverage/
+.nyc_output/
+.vite/
+.cache/
+.tmp/
+tmp/
+
+# Generated WASM copied from node_modules by `pnpm sync-planegcs-wasm`
+public/planegcs/*.wasm
+
+# TypeScript and tooling artifacts
+*.tsbuildinfo
+*.eslintcache
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Filled-in k8s Secret manifests (real credentials) — only *.example.yaml is committed
+**/deploy/k8s/secret.yaml
+**/deploy/k8s/secret.*.yaml
+!**/deploy/k8s/secret.example.yaml
+
+# Editor and OS files
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Local editor / tooling config (per-user, not committed)
+.claude/
+.codex/
+.cursor/
+.agents/
+.mcp.json
+AGENTS.md
+CLAUDE.md
+
+# Internal supply-chain allowlist — maintained outside this repo. Guard against
+# committing it here.
+mini-shai-hulud-packages.csv

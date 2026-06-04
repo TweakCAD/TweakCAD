@@ -1,0 +1,34 @@
+# Keep the host's install/build artifacts OUT of the build context.
+# The builder runs a clean `pnpm install --frozen-lockfile`; copying the host's
+# (Windows) node_modules over that makes pnpm's pre-run deps check trigger a
+# reinstall that aborts in the TTY-less build
+# (ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY). It also bloats the context.
+node_modules
+**/node_modules
+dist
+build
+
+# VCS & editor
+.git
+.gitignore
+.vscode
+.idea
+
+# Secrets / env
+.env
+.env.*
+!.env.example
+
+# Logs, test output, caches
+*.log
+npm-debug.log*
+pnpm-debug.log*
+coverage
+playwright-report
+test-results
+.turbo
+
+# Docker itself
+Dockerfile*
+.dockerignore
+compose*.yml

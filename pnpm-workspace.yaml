@@ -1,0 +1,7 @@
+# Single-project root: the CAD libraries are folded into ./lib and resolved
+# via tsconfig paths + vite aliases, not as workspace packages.
+packages:
+  - '.'
+allowBuilds:
+  '@swc/core': true
+  esbuild: true

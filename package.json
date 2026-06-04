@@ -1,0 +1,42 @@
+{
+  "name": "@tweakcad/cad",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "TweakCAD editor — the browser CAD app and the libraries only it uses (core, kernel, viewport, worker, api-client, cloud-providers, fcstd-import) folded into one project. cad-tools is the canonical CAD tool catalogue; api-types is a client-safe subset of the server API contract. Both resolve via lib/ paths, not deps.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/ lib/",
+    "test:unit": "vitest run"
+  },
+  "dependencies": {
+    "@salusoft89/planegcs": "1.1.7",
+    "@xstate/react": "^6.1.0",
+    "comlink": "^4.4.2",
+    "fflate": "0.8.3",
+    "immer": "^10.1.0",
+    "lucide-react": "^1.16.0",
+    "occt-wasm": "3.2.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "three": "^0.172.0",
+    "xstate": "^5.31.1",
+    "zod": "3.25.76",
+    "zustand": "^5.0.13"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/three": "^0.170.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "typescript": "^5.8.0",
+    "vite": "^6.0.0",
+    "vite-plugin-top-level-await": "^1.6.0",
+    "vite-plugin-wasm": "^3.6.0",
+    "vitest": "^2.0.0"
+  },
+  "packageManager": "pnpm@11.1.2+sha512.415a1cc25974731e75455c1468371be74c5aa5fb7621b50d4056d222451609f11412f23fd602e6169f1e060466641f798597e1be961a10688836a67b16569499"
+}

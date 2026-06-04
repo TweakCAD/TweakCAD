@@ -1,0 +1,1120 @@
+/**
+ * Document model types for the .cadjson format.
+ * These are the canonical source of truth for all CAD data.
+ * Plain objects only - no classes, no methods.
+ */
+
+import type { PartId, FeatureId, BodyId, FaceId, EdgeId, StableFaceId, StableEdgeId, EntityId, ReferenceId, AssemblyId } from '../ids.ts';
+import type { Transform3D, BoundingBox3D, MassProperties, Vec3 } from '../math.ts';
+import type { Expression } from '../expressions.ts';
+import type { UnitSystem, ParameterUnit } from '../units.ts';
+
+// --- Top-Level Project ---
+
+export type CadProject = {
+  schemaVersion: '0.1' | '0.2';
+  units: UnitSystem;
+  metadata: ProjectMetadata;
+  parameters: ParameterTable;
+  parts: Record<PartId, CadPart>;
+  references: Record<ReferenceId, ReferenceAsset>;
+  assemblies: Record<AssemblyId, CadAssembly>;
+  embeddedComponents?: Record<string, ComponentDefinition>;
+};
+
+export type ProjectMetadata = {
+  name: string;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+  appVersion: string;
+};
+
+// --- Part ---
+
+export type CadPart = {
+  id: PartId;
+  name: string;
+  transform: Transform3D;
+  parameters: ParameterTable;
+  timeline: FeatureNode[];
+  defaultPlanes: DefaultPlaneSet;
+  /**
+   * Optional named presets that override the part's parameter values.
+   * Picking an active row applies its overrides on top of the parameter
+   * table at rebuild time.
+   */
+  configurations?: ConfigurationTable;
+};
+
+// --- Configurations (parameter presets) ---
+
+export type ConfigurationTable = {
+  /** Currently active row's id; null = use parameter defaults (no overrides). */
+  active: string | null;
+  rows: ConfigurationRow[];
+};
+
+export type ConfigurationRow = {
+  /** Stable identifier (e.g. nanoid). Survives renames. */
+  id: string;
+  /** Display name (e.g. "M3×10"). Free-form. */
+  name: string;
+  /**
+   * Per-parameter overrides as expressions. Names must exist in the
+   * containing part's `parameters` table (or the project scope).
+   * Missing names = use the parameter's default expression.
+   */
+  overrides: Record<string, Expression>;
+};
+
+export type DefaultPlaneSet = {
+  XY: PlaneRef;
+  XZ: PlaneRef;
+  YZ: PlaneRef;
+};
+
+// --- Feature Node ---
+
+export type FeatureNode = {
+  id: FeatureId;
+  type: FeatureType;
+  name: string;
+  version: number;
+  enabled: boolean;
+  /** Show/hide in viewport. Does NOT affect rebuild — hidden features still participate in booleans. */
+  visible: boolean;
+  inputs: Record<string, unknown>;
+  dependsOn: FeatureId[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type FeatureType =
+  | 'sketch'
+  | 'extrude'
+  | 'revolve'
+  | 'loft'
+  | 'hole'
+  | 'shell'
+  | 'sweep'
+  | 'linearPattern'
+  | 'circularPattern'
+  | 'fillet'
+  | 'chamfer'
+  | 'mirror'
+  | 'componentInstance'
+  | 'importedComponent'
+  | 'constructionPlane'
+  | 'importedGeometry';
+
+// --- Feature Status (in build artifacts, not in document) ---
+
+export type FeatureStatus =
+  | { state: 'clean' }
+  | { state: 'dirty' }
+  | { state: 'failed'; error: FeatureError }
+  | { state: 'blocked'; blockedBy: FeatureId }
+  | { state: 'suppressed' };
+
+export type FeatureError = {
+  category: 'geometry' | 'reference' | 'parameter' | 'kernel';
+  code: string;
+  message: string;
+  suggestion?: string;
+};
+
+// --- Parameters ---
+
+export type ParameterTable = {
+  values: Record<string, ParameterValue>;
+};
+
+export type ParameterValue = {
+  name: string;
+  expression: Expression;
+  unit: ParameterUnit;
+  /**
+   * When true, this parameter is shown in the import-component dialog as a
+   * consumer-facing knob. Default false (internal helper parameter).
+   * Used by the parametric-components flow.
+   */
+  public?: boolean;
+  /** One-line helper text shown next to the input in the parameters editor. */
+  description?: string;
+  /**
+   * `'number'` (default): `expression` is a numeric expression evaluated by
+   *   the expression parser. Participates in `resolveAllParameters`.
+   * `'choice'`: `expression` holds the currently-selected option from
+   *   `options[]`. Does NOT enter the numeric resolved-params map; numeric
+   *   expressions cannot reference choice parameters.
+   */
+  kind?: 'number' | 'choice';
+  /** Allowed values when `kind === 'choice'`. Required iff kind is 'choice'. */
+  options?: string[];
+};
+
+// --- Sketch Entities ---
+
+export type SketchFeatureInputs = {
+  plane: PlaneRef;
+  entities: Record<EntityId, SketchEntity>;
+  // NOTE: `constraints` (top-level dict, schema-side `SketchConstraint`) was
+  // removed. It was a v0.1 placeholder for "lightweight,
+  // Expression-driven, document-level constraints" that never got wired —
+  // no UI wrote to it and no rebuilder read from it. The solver
+  // (`sketch/solver/` — planegcs via the ISketchSolver
+  // interface) supersedes it: real constraints live in
+  // `_editorState.constraints` with their richer 15-variant editor type
+  // (`sketch/types.ts`). When parametric sketch
+  // dimensions ship, they'll be a new field designed for the post-solver
+  // world, not a revival of this stub.
+  entityOrder?: EntityId[];
+  /**
+   * Internal sidecar capturing the sketch editor's native state (points,
+   * geometries, constraints with stable IDs). Used to round-trip the editor
+   * across finish/edit cycles so constraints and point IDs survive intact.
+   *
+   * The worker builds geometry from `entities` (the canonical model). This
+   * field is purely for the editor UI. Optional for backward compatibility
+   * with sketches saved before the field existed.
+   */
+  _editorState?: SketchEditorSnapshot;
+};
+
+/**
+ * Serializable snapshot of the sketch editor store.
+ * Types `unknown` because the editor types live in `core/src/sketch/types.ts`
+ * which has structurally-cloneable plain objects but uses branded IDs the
+ * document layer doesn't need to validate against.
+ */
+export type SketchEditorSnapshot = {
+  points: unknown[];
+  geometries: unknown[];
+  constraints: unknown[];
+};
+
+// NOTE: `SketchRectangleEntity` (type: 'rectangle') and `SketchSlotEntity`
+// (type: 'slot') were removed during the sketch-commands unification.
+// Per invariant #11 ("there is no rectangle"),
+// every shape is curves + constraints — never a composite document entity.
+// The in-editor drawRectangle / drawSlot primitives emit 4 lines / 2 lines +
+// 2 arcs decompositions directly, and the editorStateToEntities serializer
+// no longer collapses them back. Older .cadjson files written before this
+// retirement would still parse (they'd land in `entities` as foreign types
+// and be ignored by the region detector), but no new code path emits them.
+//
+// The three remaining primitive curves — ellipse, spline, point — are
+// part of the document-entities projection. The
+// worker doesn't tessellate them yet (only line / circle / arc enter
+// the kernel today), but the projection gives constraint references
+// and downstream tooling a stable per-curve id to work with.
+export type SketchEntity =
+  | SketchCircleEntity
+  | SketchLineEntity
+  | SketchArcEntity
+  | SketchEllipseEntity
+  | SketchSplineEntity
+  | SketchPointEntity;
+
+export type SketchCircleEntity = {
+  id: EntityId;
+  type: 'circle';
+  center: [Expression, Expression];
+  diameter: Expression;
+  construction?: boolean;
+};
+
+export type SketchLineEntity = {
+  id: EntityId;
+  type: 'line';
+  start: [Expression, Expression];
+  end: [Expression, Expression];
+  construction?: boolean;
+};
+
+export type SketchArcEntity = {
+  id: EntityId;
+  type: 'arc';
+  center: [Expression, Expression];
+  radius: Expression;
+  startAngle: Expression;
+  endAngle: Expression;
+  construction?: boolean;
+};
+
+/**
+ * Ellipse defined by center, the end-point of the major axis (which
+ * encodes both major-radius and rotation as a single point), and the
+ * minor radius. Editor representation matches one-for-one — see
+ * `SketchEllipse` in `core/src/sketch/types.ts`.
+ */
+export type SketchEllipseEntity = {
+  id: EntityId;
+  type: 'ellipse';
+  center: [Expression, Expression];
+  majorEnd: [Expression, Expression];
+  minorRadius: Expression;
+  construction?: boolean;
+};
+
+/**
+ * Quadratic Bezier-ish spline as an ordered control-point sequence
+ * (≥2 points). Worker tessellation is a follow-up — currently used
+ * for round-tripping a hand-drawn curve through the document.
+ */
+export type SketchSplineEntity = {
+  id: EntityId;
+  type: 'spline';
+  points: ReadonlyArray<[Expression, Expression]>;
+  construction?: boolean;
+};
+
+/**
+ * Standalone reference point, not attached to any other geometry.
+ * Useful as a constraint anchor (point-on-line, distance-to-point)
+ * without committing to a full curve.
+ */
+export type SketchPointEntity = {
+  id: EntityId;
+  type: 'point';
+  at: [Expression, Expression];
+  construction?: boolean;
+};
+
+// --- Sketch Constraints ---
+//
+// The schema-side `SketchConstraint` type (a 6-variant Expression-valued
+// union) and its supporting `EntityRef` / `EntityPointRef` were removed
+// along with the dead `SketchFeatureInputs.constraints` field.
+// They were a v0.1 placeholder for "lightweight document-level constraints"
+// that never got wired. The solver
+// (`sketch/solver/` — planegcs via the ISketchSolver
+// interface) uses the richer 15-variant `SketchConstraint` from
+// `sketch/types.ts` instead, persisted in
+// `SketchFeatureInputs._editorState.constraints`.
+
+// --- Extrude ---
+
+export type ExtrudeFeatureInputs = {
+  /** One or more profile references. Multi-profile extrude creates one timeline entry. */
+  profiles: ProfileRef[];
+  operation: 'newBody' | 'join' | 'cut';
+  direction: DirectionSpec;
+  extent: ExtentSpec;
+  startOffset?: Expression;
+  targetBodies?: BodyRef[];
+};
+
+export type ExtentSpec =
+  | { type: 'distance'; value: Expression }
+  | { type: 'throughAll' }
+  | { type: 'toPlane'; plane: PlaneRef }
+  | { type: 'symmetric'; value: Expression };
+
+/**
+ * Profile reference stored in the extrude feature.
+ * References a sketch + the entity IDs forming the wire boundary
+ * (a sketch plus a subset of named sub-edges).
+ */
+export type ProfileRef = {
+  /** The sketch that contains the profile geometry. */
+  sketchId: FeatureId;
+
+  /**
+   * Entity IDs forming the wire boundary of this profile.
+   * For a circle: ["circle_E"]
+   * For a rectangle: ["rect_base"]
+   * For a line loop: ["line_A", "line_B", "line_C", "line_D"]
+   */
+  wireEntityIds: EntityId[];
+
+  /**
+   * A 2D point known to be inside this region, in sketch-local coordinates.
+   * Used for disambiguation when the same entity IDs participate in multiple
+   * detected regions (overlapping/intersecting geometry).
+   * Not needed for simple non-intersecting cases.
+   */
+  interiorPoint?: [number, number];
+};
+
+// --- Revolve ---
+
+/**
+ * Revolve a sketch profile around an axis to create a solid body.
+ * Built with OCCT's BRepPrimAPI_MakeRevol; a 360° revolve of a closed
+ * profile with an axis offset produces a torus-section solid.
+ */
+export type RevolveFeatureInputs = {
+  /** The closed profile to revolve. Single profile per revolve feature. */
+  profile: ProfileRef;
+  /** Axis of revolution. Default planes work; custom needs origin + direction. */
+  axis: AxisSpec;
+  /** Sweep angle in degrees. 360 = full revolve. */
+  angle: Expression;
+  operation: 'newBody' | 'join' | 'cut';
+  /** Optional offset along the profile normal before revolving. */
+  startOffset?: Expression;
+  targetBodies?: BodyRef[];
+};
+
+// --- Fillet ---
+
+/**
+ * Round one or more edges of an existing body with a constant-radius
+ * fillet. First feature in the codebase that consumes EdgeRef.stableTopology
+ * — its edge refs survive upstream rebuilds via the topology-naming layer.
+ */
+export type FilletFeatureInputs = {
+  /**
+   * Edges to fillet. Ordered for human-readability in the timeline; the
+   * kernel doesn't care about order. All edges must belong to the same
+   * body (the schema doesn't enforce this — the builder rejects mixed
+   * bodies with a clear diagnostic).
+   */
+  edges: EdgeRef[];
+  /** Fillet radius (Expression so parameters can drive it). */
+  radius: Expression;
+  /** Optional body override; otherwise inferred from the first edge's bodyRef. */
+  targetBody?: BodyRef;
+};
+
+// --- Chamfer ---
+
+/**
+ * Bevel one or more edges of an existing body with a constant-distance
+ * symmetric chamfer. Mirrors {@link FilletFeatureInputs} field-for-field
+ * — same EdgeRef.stableTopology input, same all-edges-same-body
+ * constraint enforced in the builder — but produces a flat cut surface
+ * instead of a rounded one. Kernel-side: BRepFilletAPI_MakeChamfer.
+ *
+ * v1 ships symmetric (equal setback on both adjacent faces).
+ * Asymmetric (`d1, d2`) and angle (`distance + angle`) variants are
+ * deferred until a real workflow demands them; the schema can grow a
+ * discriminated `mode` field without breaking existing chamfer features
+ * (the current shape is implicitly `mode: 'symmetric'`).
+ */
+export type ChamferFeatureInputs = {
+  /**
+   * Edges to chamfer. Same ordering + same-body rules as Fillet.
+   */
+  edges: EdgeRef[];
+  /** Setback distance on each adjacent face (Expression). */
+  distance: Expression;
+  /** Optional body override; otherwise inferred from the first edge's bodyRef. */
+  targetBody?: BodyRef;
+};
+
+// --- Loft ---
+
+/**
+ * Loft a solid through 2+ closed profile sections.
+ * Built with OCCT's BRepOffsetAPI_ThruSections; two parallel circles of
+ * different diameters produce a cone frustum, three coaxial profiles a
+ * lens, etc.
+ *
+ * Profile order is significant — the resulting surface interpolates
+ * between consecutive entries in the order given.
+ */
+export type LoftFeatureInputs = {
+  /**
+   * Ordered profile sections, 2..16 entries. May come from different
+   * sketches. All profiles must resolve to closed wires; mixed open/closed
+   * causes the build to fail with a clear diagnostic.
+   */
+  profiles: ProfileRef[];
+  operation: 'newBody' | 'join' | 'cut';
+  /**
+   * If true, OCCT uses straight (ruled) segments between profiles instead
+   * of fitting a smooth surface. Faster and produces simpler topology.
+   */
+  ruled?: boolean;
+  /**
+   * If true, the loft closes back from the last profile to the first,
+   * producing a closed loop (think: torus from circles around an axis).
+   */
+  closed?: boolean;
+  targetBodies?: BodyRef[];
+};
+
+// --- Operation Effect (consumed/created body tracking) ---
+
+export type OperationEffect = {
+  consumed: BodyId[];
+  created: BodyId[];
+};
+
+// --- Construction Plane ---
+
+/**
+ * A datum plane — pure reference geometry, not a body. Downstream features
+ * (sketch base, Hole face) consume it via a `PlaneRef.constructionPlane`
+ * or `FaceRef.constructionPlane`. Grown incrementally as the
+ * supporting pickers ship — deferred plane modes include angle-through-
+ * edge, midplane, two-edges, three-points, and tangent-at-point.
+ */
+export type ConstructionPlaneFeatureInputs =
+  /**
+   * Parallel to an existing plane (default XY/XZ/YZ or another
+   * construction plane) with a signed offset along that plane's
+   * normal. The base is captured as a {@link PlaneRef} so the UI's
+   * click-pick overlay can hand back either variant uniformly.
+   */
+  | {
+      kind: 'offsetFromPlane';
+      basePlane: PlaneRef;
+      /** Signed offset along the base plane's normal, in mm. */
+      offset: Expression;
+    }
+  /**
+   * Parallel to a picked face's tangent plane with a signed offset
+   * along the face's outward normal. The face is resolved via the
+   * topology-tracker layer just like a Fillet edge — survives upstream
+   * rebuilds. Offset 0 produces a plane coincident with the face
+   * (useful as a named reference to that face's plane).
+   */
+  | {
+      kind: 'offsetFromFace';
+      face: FaceRef;
+      offset: Expression;
+    };
+
+// --- Sweep ---
+
+/**
+ * Sweep a closed profile along a path (spine) to produce a solid.
+ * Wraps OCCT's `BRepOffsetAPI_MakePipe` via occt-wasm `pipe(profile,
+ * spine)`.
+ *
+ * V1 scope:
+ *  - Profile = a closed sketch region (rectangle / circle / wire-loop).
+ *    Resolves through the same profile-region picker the Extrude /
+ *    Loft / Revolve features already use.
+ *  - Path = a closed sketch region too. The builder extracts the
+ *    boundary wire from the resolved path face and feeds it to
+ *    occt-wasm's `pipe` as the spine. Closed-path sweeps include the
+ *    canonical "circle profile + circle path = torus" workflow.
+ *  - `operation: 'newBody'` only. Boolean composition with existing
+ *    bodies (`join` / `cut`) is a v2 follow-up — the schema reserves
+ *    the field so it can grow without migration.
+ *
+ * V2 deferred work (tracked separately, not blocking v1):
+ *  - **Open-wire paths.** Needs an open-chain detector + a kernel
+ *    method that returns a wire (not a face) from a chain of sketch
+ *    entities. Depends on tangent-edge chain selection landing first.
+ *  - **Body-edge paths** — pick edges on an existing body as the
+ *    spine. Same dependency as above.
+ *  - **Boolean composition** (`join` / `cut`).
+ *  - **Guide rail**, transition mode, twist/scale-along-path.
+ */
+export type SweepFeatureInputs = {
+  /** Closed sketch profile that gets swept. */
+  profile: ProfileRef;
+  /**
+   * Closed sketch region whose boundary wire is the sweep path. The
+   * sweep follows the outer boundary of this region (inner holes are
+   * ignored). v1 closes-only restriction; open-wire paths land in v2.
+   */
+  path: ProfileRef;
+  /**
+   * Boolean composition with existing bodies. v1 only accepts
+   * `'newBody'`; the field is here to forward-compat without a schema
+   * migration when join/cut land.
+   */
+  operation: 'newBody';
+  /** Reserved for `join` / `cut` operation modes. v1 ignores. */
+  targetBodies?: BodyRef[];
+};
+
+// --- Shell ---
+
+/**
+ * Hollow a solid body to a uniform wall thickness, optionally removing
+ * one or more faces so the cavity opens through them.
+ *
+ * Kernel-side (`occt-wasm.shellWithHistory`):
+ *  - `solid`           = the source body's shape handle.
+ *  - `facesToRemove[]` = ShapeHandles of faces left open (0 or more).
+ *                        v1 requires at least one — a zero-removed-face
+ *                        shell produces a closed hollow body, which has
+ *                        legitimate uses (interior cavity) but is rarely
+ *                        the user's intent and easy to add later.
+ *  - `thickness`       = wall thickness in mm. Stored positive in the
+ *                        schema; the builder negates before calling OCCT
+ *                        so the wall grows *inward* from the original
+ *                        surface (the common default). Outward shell
+ *                        is a deferred toggle.
+ *  - `tolerance`       = numerical tolerance for the offset surface fit.
+ *                        Default 1e-3 (occt-wasm's loose preset);
+ *                        precise shells can pass 1e-6.
+ *
+ * Topology naming: occt-wasm's `shellWithHistory` reports per-face
+ * evolution, so faces on the resulting shell trace back to the source
+ * body's stable IDs via the same path used by fillet/chamfer.
+ * Edges fall back to hash-match (history is face-only on the facade).
+ */
+export type ShellFeatureInputs = {
+  /** Body to hollow. Single-body v1. */
+  sourceBody: BodyRef;
+  /**
+   * Faces left open after shelling — the cavity opens through these
+   * faces. Each must lie on `sourceBody`; the builder rejects mixed-
+   * body input with a clear diagnostic (same all-edges-same-body rule
+   * as Fillet). 1..N faces.
+   */
+  removedFaces: FaceRef[];
+  /**
+   * Wall thickness in mm, positive. Always grows inward in v1
+   * (builder negates before passing to OCCT). An `outward` toggle can
+   * land in a follow-up without a schema migration if a workflow needs
+   * it.
+   */
+  thickness: Expression;
+  /**
+   * Numerical tolerance for OCCT's offset-surface fit. Optional;
+   * defaults to 1e-3 (the loose preset most CAD UX uses).
+   * Pass 1e-6 for precise shells.
+   */
+  tolerance?: number;
+};
+
+// --- Imported Geometry (STEP / STL) ---
+
+/**
+ * Import geometry from a STEP (.step / .stp) or STL (.stl) file as a
+ * timeline feature. The feature stores the file's raw bytes (base64-
+ * encoded) so the .cadjson is self-contained — projects can be
+ * opened anywhere without the original file. Cost: ~33% size bloat
+ * from base64, fine for v1.
+ *
+ * One feature = one file = N bodies. STEP files commonly arrive as a
+ * compound containing multiple solids; the kernel decomposes via
+ * `getSubShapes(shape, 'solid')` so each solid becomes its own
+ * `KernelBody` with its own stable face/edge IDs. Single-solid
+ * files return a one-body result.
+ *
+ * V1 limitations (clearly flagged):
+ *  - Plain `importStep` only — no XCAF. Names, colors, and assembly
+ *    hierarchy aren't preserved. Will switch to `xcafImportSTEP`
+ *    when our document model grows multi-body assemblies (today
+ *    `CadProject.assemblies` is a stub `{}`).
+ *  - No re-import on file change. The bytes are captured at import
+ *    time; user must delete + re-import to refresh from disk.
+ *  - STL produces a faceted shell with no analytical curves —
+ *    boolean ops still work but the topology is purely triangular.
+ *
+ * One feature per file maps to a multi-body result.
+ */
+export type ImportedGeometryFeatureInputs = {
+  /** Original filename — shown as the timeline label and tooltip. */
+  fileName: string;
+  /** File format. `step` covers both .step and .stp; `stl` is its own format. */
+  format: 'step' | 'stl';
+  /**
+   * Raw file bytes, base64-encoded. The builder decodes back to
+   * ArrayBuffer before handing to the kernel. Inline storage keeps
+   * .cadjson self-contained; future variants can swap to an
+   * external `ReferenceAsset` for very large files (no schema
+   * migration needed — `format` discriminator can grow).
+   */
+  data: string;
+  /**
+   * Optional rigid placement applied to ALL imported bodies as a group
+   * (the whole import moves together). Absent/identity = "as imported".
+   * Reserved for a future "Move all"; per-body Move uses `bodyTransforms`.
+   */
+  transform?: Transform3D;
+  /**
+   * Per-body rigid placement, keyed by the body's index in the imported
+   * set ("0", "1", …) — a STEP compound decomposes into N solids and each
+   * can be moved independently. The Move gizmo (right-click one body →
+   * Move) edits this entry's `position` (v1 is translate-only; rotation is
+   * carried forward). `buildImportedGeometry` applies the per-body
+   * transform, then the group `transform` on top, via `kernel.transform`.
+   */
+  bodyTransforms?: Record<string, Transform3D>;
+};
+
+// --- Mirror Body ---
+
+/**
+ * Mirror an existing body across a plane to produce its reflection.
+ *
+ * v1 semantics:
+ *  - One source body (`sourceBody`). Multi-body mirror is a follow-up.
+ *  - One mirror plane (`PlaneRef`) — default planes XY/XZ/YZ, a named
+ *    construction plane, or (future) a planar face. Kernel-side OCCT only
+ *    needs origin + outward normal; basis u/v don't matter for the mirror
+ *    transform.
+ *  - `operation`:
+ *      `newBody`  → keep the mirrored copy as a separate body alongside
+ *                   the source (default; matches "Mirror as new body").
+ *      `join`     → fuse the mirrored copy back with the source — gives
+ *                   a single symmetric body, the most common workflow
+ *                   when modelling a left/right-symmetric part from one
+ *                   half. Kernel pipeline: mirror → booleanFuse.
+ *
+ * Topology naming: the kernel's `mirror` op uses occt-wasm's
+ * `mirrorWithHistory`, so stable face/edge IDs on the mirrored copy
+ * derive from the source body's IDs via the per-input-face evolution
+ * mapping. Downstream features that picked a face on the mirrored copy
+ * survive subsequent rebuilds.
+ */
+export type MirrorFeatureInputs = {
+  /**
+   * Body to mirror. v1 is single-body; the `targetBodies` field is
+   * reserved for forward compatibility with multi-body mirror without a
+   * schema migration.
+   */
+  sourceBody: BodyRef;
+  /**
+   * Plane to mirror across. `defaultPlane` (XY/XZ/YZ) is the v1 happy
+   * path; `constructionPlane` works once the user has a named CP in
+   * scope. `featureOutput` and `stableTopology` (face-as-plane) are
+   * accepted by the schema but resolved by the existing
+   * `resolvePlaneRef` helper, which currently rejects them — they'll
+   * light up when that helper grows the corresponding kinds.
+   */
+  plane: PlaneRef;
+  /**
+   * Boolean composition with the source body.
+   *  - `newBody`: emit the mirror as a separate body alongside the
+   *    source (default; "mirror to new body").
+   *  - `join`: fuse the mirror back into the source so the result is a
+   *    single symmetric body. Most common when modelling a symmetric
+   *    half.
+   */
+  operation: 'newBody' | 'join';
+  /**
+   * Optional forward-compatibility slot for multi-body mirror. Ignored
+   * in v1; reserved so the field can be populated later without a
+   * schema migration.
+   */
+  targetBodies?: BodyRef[];
+};
+
+// --- Hole ---
+
+/**
+ * Drill a hole through the picked face into a body.
+ *
+ * Geometry pipeline (see `packages/worker/src/featureBuilders/buildHole.ts`):
+ *   1. Resolve `face` → face plane (origin + outward normal).
+ *   2. Build a primary cylinder anchored at the face surface, axis = the
+ *      *inward* direction (face normal flipped), height = blind depth or
+ *      a through-all distance derived from the target body's AABB.
+ *   3. For `counterbore`, fuse a wider, shallower cylinder on top.
+ *   4. For `countersink`, fuse a cone (r1 = csink-rim radius, r2 = 0) on
+ *      top — height derived from the user-supplied included angle.
+ *   5. Boolean-cut the assembled tool body from the face's parent body.
+ *
+ * `center` is the in-plane (u, v) offset of the hole axis from the face's
+ * surface centroid. v1 always emits [0, 0] (auto-center); the field is
+ * reserved for the eventual click-to-position UX (drag-on-face
+ * placement).
+ *
+ * `counterbore*` / `countersink*` fields are consulted only when `kind`
+ * matches. Kept at the top level (rather than a discriminated union per
+ * kind) so the dialog can preserve user-entered values when toggling the
+ * Hole kind dropdown.
+ */
+export type HoleFeatureInputs = {
+  face: FaceRef;
+  center: [Expression, Expression];
+  direction: DirectionSpec;
+  diameter: Expression;
+  extent: ExtentSpec;
+  kind: 'simple' | 'counterbore' | 'countersink';
+  /** Counterbore (cylindrical recess) head diameter. Required when kind = 'counterbore'. */
+  counterboreDiameter?: Expression;
+  /** Counterbore depth into the body, measured from the face surface. */
+  counterboreDepth?: Expression;
+  /** Countersink (conical recess) rim diameter at the face surface. Required when kind = 'countersink'. */
+  countersinkDiameter?: Expression;
+  /** Countersink full included angle in degrees (90° is the ISO 7046 default; 82° matches Imperial flatheads). */
+  countersinkAngle?: Expression;
+  targetBodies?: BodyRef[];
+};
+
+// --- Pattern ---
+
+/**
+ * Replicate a body in a regular pattern. v1 ships **body-level**
+ * patterns (replicating whole bodies)
+ * because that's what the kernel exposes natively
+ * (`linearPattern(body, dir, spacing, count)`,
+ * `circularPattern(body, center, axis, angle, count)`).
+ *
+ * Feature-level patterning (replicating the source feature, keeping the
+ * originals) requires re-running the source feature builder once per
+ * transformed instance and merging *WithHistory across instances —
+ * that's a v2 task. The schema reserves `sourceBody` instead of
+ * `sourceFeature` to keep the door open for both modes; a future
+ * `mode: 'body' | 'feature'` discriminator can pick.
+ */
+export type PatternFeatureInputs =
+  | LinearPatternInputs
+  | CircularPatternInputs;
+
+/**
+ * Linear (rectangular) body pattern. Produces `count` copies spaced
+ * `spacing` mm apart along `direction` (the original is instance #0;
+ * `count = 1` is a no-op). v1 only exposes X/Y/Z directions in the
+ * dialog; the schema accepts any AxisSpec so custom directions
+ * (e.g. along a picked edge) light up later without a schema change.
+ */
+export type LinearPatternInputs = {
+  patternType: 'linear';
+  /** Body to replicate. Single-body v1. */
+  sourceBody: BodyRef;
+  /**
+   * Direction of replication. v1 dialog emits `{ type: 'x' | 'y' | 'z' }`;
+   * `custom` is parsed by the kernel via the picked-edge → direction
+   * follow-up. Origin (when AxisSpec is `custom`) is ignored — only the
+   * direction component drives linear pattern.
+   */
+  direction: AxisSpec;
+  /** Total instance count including the source. Evaluates to a positive integer. */
+  count: Expression;
+  /** Center-to-center spacing in mm between consecutive instances. */
+  spacing: Expression;
+};
+
+/**
+ * Circular (polar) body pattern. Produces `count` copies evenly
+ * distributed around `axis` over `fullAngle` (defaults to 360°).
+ * The source counts as instance #0; `count = 1` is a no-op.
+ */
+export type CircularPatternInputs = {
+  patternType: 'circular';
+  /** Body to replicate. Single-body v1. */
+  sourceBody: BodyRef;
+  /** Axis of rotation. Origin matters — defines the rotation center. */
+  axis: AxisSpec;
+  /** Total instance count including the source. Evaluates to a positive integer. */
+  count: Expression;
+  /**
+   * Total sweep angle in degrees (default 360 = full revolution). v1
+   * dialog defaults to 360; partial sweeps land as an inputs follow-up
+   * without a schema change.
+   */
+  fullAngle?: Expression;
+};
+
+// --- Imported Component (parametric components) ---
+
+/**
+ * Inputs for the `importedComponent` feature type — a single instance of
+ * an embedded parametric component placed into the host part's timeline.
+ *
+ * v1 = feature-mode: the component's sub-timeline is
+ * rebuilt by the worker and its bodies are added to (or boolean-composed
+ * with) the host part. The component itself lives in
+ * `project.embeddedComponents[componentRef]` — same .cadjson shape as a
+ * full project, but with exactly one part inside.
+ *
+ * v1 scope:
+ *  - `transform` is stored but the builder treats it as identity (the
+ *    Transform UX is a follow-up). The field is in the
+ *    schema today so that follow-up doesn't need a schema migration.
+ *  - `parameterOverrides` + `configurationId` are applied at rebuild
+ *    time on top of the component's own parameter table (merge
+ *    order: defaults → config row → per-instance overrides).
+ *  - `boolean` mirrors `ExtrudeFeatureInputs.operation` — `cut` lets a
+ *    screw component punch its own hole into the host body, `join`
+ *    fuses a mounting boss into a chassis, `newBody` keeps them
+ *    separate (most common; default).
+ */
+export type ImportedComponentFeatureInputs = {
+  /** Lookup key into `CadProject.embeddedComponents`. The component's content hash. */
+  componentRef: string;
+  /**
+   * Position + orientation in host-part local space. v1 stores it but
+   * the builder treats non-identity as identity (the transform UX is a
+   * follow-up). Defaults written by the handler are origin +
+   * identity quaternion.
+   */
+  transform: Transform3D;
+  /**
+   * Per-instance parameter overrides keyed by parameter name. Applied
+   * on top of the active configuration row's overrides at rebuild
+   * time. Empty record = no per-instance customisation.
+   */
+  parameterOverrides: Record<string, Expression>;
+  /**
+   * Which row of the component's configurations table is active for
+   * THIS instance. `null` (or missing) = use the component's own
+   * `configurations.active` value, which itself can be `null` to mean
+   * "no overrides — use parameter defaults". Per-instance config wins
+   * over the component-internal active row so two screws can be
+   * different sizes from the same embedded component.
+   */
+  configurationId?: string | null;
+  /**
+   * Boolean op against existing host bodies in the part.
+   *  - `newBody` (default): keep the component as separate bodies.
+   *  - `cut`:    subtract the component bodies from every host body.
+   *  - `join`:   fuse the component bodies with every host body.
+   * Mirrors `ExtrudeFeatureInputs.operation`.
+   */
+  boolean: 'newBody' | 'cut' | 'join';
+};
+
+// --- Component Instance ---
+
+/**
+ * A reference to a published parametric component from the SaaS catalog,
+ * placed into the host part with concrete parameter values.
+ *
+ * Geometry is produced by the in-worker component library
+ * (`packages/worker/src/componentLibrary/`) — each known slug maps to a
+ * TypeScript build script that calls `CadKernel` primitives. Unknown
+ * slugs fall back to a placeholder cylinder so the timeline still has a
+ * visible node while a new standard is being implemented.
+ */
+export type ComponentInstanceFeatureInputs = {
+  /** Project ID of the source component in the SaaS catalog. */
+  componentProjectId: string;
+  /** Stable slug of the source component (used for re-fetching the manifest). */
+  componentSlug: string;
+  /** Human-readable name pulled from the catalog at insert time. */
+  componentName: string;
+  /** ComponentManifest.schemaVersion captured at insert time. */
+  manifestVersion: number;
+  /** Concrete values keyed by ComponentParameter.name. */
+  parameters: Record<string, unknown>;
+  /**
+   * Boolean mode against existing bodies in the host part.
+   *   - `newBody` (default): keep the component as a separate body.
+   *   - `cut`:    subtract the component geometry from the host bodies
+   *               (lets a screw / dowel-pin component punch its own hole).
+   *   - `join`:   fuse with the host bodies.
+   * Mirrors the `operation` field used by `ExtrudeFeatureInputs`.
+   */
+  boolean?: 'newBody' | 'cut' | 'join';
+  /** Optional placement. v1 inserts at origin so this stays undefined. */
+  placement?: {
+    plane?: PlaneRef;
+    offset?: Vec3;
+  };
+};
+
+// --- References ---
+
+export type PlaneRef =
+  | { type: 'defaultPlane'; name: 'XY' | 'YZ' | 'XZ' }
+  | { type: 'constructionPlane'; planeId: string }
+  | { type: 'featureOutput'; featureId: FeatureId; output: string }
+  | { type: 'stableTopology'; bodyRef: BodyRef; stableFaceId: StableFaceId; repairHint?: RepairHint };
+
+export type FaceRef =
+  | { type: 'defaultPlane'; name: 'XY' | 'YZ' | 'XZ' }
+  | { type: 'constructionPlane'; planeId: string }
+  | { type: 'featureOutput'; featureId: FeatureId; output: string }
+  | { type: 'stableTopology'; bodyRef: BodyRef; stableFaceId: StableFaceId; repairHint?: RepairHint };
+
+/**
+ * Reference to an edge on a body. Mirrors {@link FaceRef} but for edges.
+ * The only kind that lives across rebuilds is `stableTopology`; the others
+ * are reserved for future symmetry with construction-edge constructs.
+ */
+export type EdgeRef =
+  | { type: 'featureOutput'; featureId: FeatureId; output: string }
+  | { type: 'stableTopology'; bodyRef: BodyRef; stableEdgeId: StableEdgeId; repairHint?: RepairHint };
+
+export type BodyRef = {
+  partId: PartId;
+  bodyId: BodyId;
+};
+
+export type DirectionSpec =
+  | { type: 'normal' }
+  | { type: 'reversed' }
+  | { type: 'custom'; vector: Vec3 };
+
+export type AxisSpec =
+  | { type: 'x' }
+  | { type: 'y' }
+  | { type: 'z' }
+  | { type: 'custom'; origin: Vec3; direction: Vec3 };
+
+export type RepairHint = {
+  geometrySignature?: string;
+  centroid?: Vec3;
+  normal?: Vec3;
+  area?: number;
+};
+
+// --- Selection ---
+
+export type Selection =
+  | { type: 'part'; partId: PartId }
+  | { type: 'body'; partId: PartId; bodyId: BodyId }
+  | { type: 'face'; partId: PartId; bodyId: BodyId; faceId: FaceId }
+  | { type: 'edge'; partId: PartId; bodyId: BodyId; edgeId: EdgeId }
+  | { type: 'feature'; partId: PartId; featureId: FeatureId }
+  | { type: 'sketchEntity'; sketchId: FeatureId; entityId: EntityId }
+  | { type: 'plane'; plane: PlaneRef };
+
+// --- Build Artifacts (separate from document, disposable) ---
+
+export type ProjectBuildArtifact = {
+  documentRevision: string;
+  builtAt: string;
+  parts: Record<PartId, PartBuildArtifact>;
+  diagnostics: Diagnostic[];
+};
+
+export type PartBuildArtifact = {
+  partId: PartId;
+  status: 'success' | 'partial' | 'failed';
+  bodies: BuiltBody[];
+  featureResults: Record<FeatureId, FeatureBuildResult>;
+  topologyIndex?: TopologyIndex;
+};
+
+export type BuiltBody = {
+  bodyId: BodyId;
+  sourceFeatureId: FeatureId;
+  role: string;
+  displayMesh: DisplayMesh;
+  boundingBox: BoundingBox3D;
+  massProperties?: MassProperties;
+};
+
+export type DisplayMesh = {
+  bodyId: BodyId;
+  positions: Float32Array;
+  normals: Float32Array;
+  indices: Uint32Array;
+  edgePositions?: Float32Array;
+};
+
+/**
+ * Worker→main-thread shape for a construction plane's viewport display.
+ *
+ * The plane itself is pure math (origin + 3-vector basis), so unlike a
+ * solid body we don't ship a tessellated mesh. The viewport's
+ * `ConstructionPlaneLayer` constructs the translucent rectangle locally
+ * sized to the scene bounding box. We do ship `name` + `visible` so the
+ * viewport can label the plane and honor the timeline's eye toggle
+ * without re-reading the document.
+ */
+export type ConstructionPlaneDisplay = {
+  featureId: FeatureId;
+  /** User-facing name shown as a label next to the plane. */
+  name: string;
+  /** Whether to render it. Mirrors `FeatureNode.visible`. */
+  visible: boolean;
+  origin: Vec3;
+  uAxis: Vec3;
+  vAxis: Vec3;
+  normal: Vec3;
+};
+
+export type FeatureBuildResult =
+  | { featureId: FeatureId; status: 'success'; bodies: BuiltBody[] }
+  | { featureId: FeatureId; status: 'suppressed' }
+  | { featureId: FeatureId; status: 'blocked'; blockedBy: FeatureId }
+  | { featureId: FeatureId; status: 'failed'; error: FeatureError };
+
+export type TopologyIndex = {
+  bodyTopologies: Record<BodyId, TopologyMap>;
+};
+
+export type TopologyMap = {
+  bodyId: BodyId;
+  faces: {
+    faceId: FaceId;
+    triStart: number;
+    triEnd: number;
+    semanticRef?: string;
+    /**
+     * Stable identifier that survives rebuilds. Optional during the
+     * topology-naming layer rollout; will be required once feature
+     * builders consume it via FaceRef.stableTopology.
+     */
+    stableFaceId?: StableFaceId;
+  }[];
+  edges: {
+    edgeId: EdgeId;
+    lineSegments: Float32Array;
+    adjacentFaces: [FaceId, FaceId];
+    /** Stable edge identifier — see {@link StableEdgeId}. Optional during topology-naming rollout. */
+    stableEdgeId?: StableEdgeId;
+  }[];
+};
+
+// --- Diagnostics ---
+
+export type Diagnostic = {
+  id: string;
+  severity: 'info' | 'warning' | 'error';
+  code: string;
+  message: string;
+  featureId?: FeatureId;
+  entityId?: string;
+  recoverable: boolean;
+  suggestedFixes?: SuggestedFix[];
+};
+
+export type SuggestedFix = {
+  label: string;
+  command: unknown;
+};
+
+// --- Stubs for future features ---
+
+export type ReferenceAsset = {
+  id: ReferenceId;
+  name: string;
+  type: 'step' | 'stl';
+  data: string;
+};
+
+export type CadAssembly = {
+  id: AssemblyId;
+  name: string;
+  components: AssemblyComponent[];
+};
+
+export type AssemblyComponent = {
+  partId: PartId;
+  transform: Transform3D;
+};
+
+/**
+ * An embedded parametric component.
+ *
+ * Stored in `CadProject.embeddedComponents`, keyed by `hash` (so the
+ * dict key matches the field — easy lookup-and-verify). The full
+ * sub-document `source` is embedded so .cadjson is self-contained
+ * (ship one file → consumer can open it offline, no broken links).
+ *
+ * Multiple `importedComponent` features that reference the same hash
+ * share this one entry — 20 screws of the same size cost one copy of
+ * the source, not 20.
+ */
+export type ComponentDefinition = {
+  /**
+   * SHA-256 of canonical-JSON serialization of `source`. Also the
+   * dict key in `CadProject.embeddedComponents`. Pins the exact
+   * version the host was built against; "re-link from disk" can
+   * detect drift by re-hashing the on-disk file.
+   */
+  hash: string;
+  /** Human-readable name from the source file. Cached for tree display. */
+  name: string;
+  /** Author-provided semver string from source metadata. Optional. */
+  version?: string;
+  /** Original filename / path the user picked. Cached for "re-link" UX. */
+  origin?: string;
+  /** ISO timestamp of when this was embedded into the host project. */
+  embeddedAt: string;
+  /**
+   * The full sub-document. Same CadProject shape as the host; we just
+   * nest. The rebuilder runs `source.parts[firstPartId].timeline`
+   * through the same builder dispatch the host part uses.
+   */
+  source: CadProject;
+};

@@ -1,0 +1,39 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "@tweakcad/core/*": ["./lib/core/*"],
+      "@tweakcad/kernel/*": ["./lib/kernel/*"],
+      "@tweakcad/viewport/*": ["./lib/viewport/*"],
+      "@tweakcad/worker/*": ["./lib/worker/*"],
+      "@tweakcad/api-client": ["./lib/api-client/src/index.ts"],
+      "@tweakcad/api-client/*": ["./lib/api-client/*"],
+      "@tweakcad/cloud-providers": ["./lib/cloud-providers/src/index.ts"],
+      "@tweakcad/cloud-providers/*": ["./lib/cloud-providers/*"],
+      "@tweakcad/fcstd-import": ["./lib/fcstd-import/src/index.ts"],
+      "@tweakcad/fcstd-import/*": ["./lib/fcstd-import/*"],
+      "@tweakcad/api-types": ["./lib/api-types/src/index.ts"],
+      "@tweakcad/cad-tools": ["./lib/cad-tools/src/index.ts"]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "lib/**/*.ts",
+    "lib/**/*.tsx"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/testSetup.ts",
+    "**/vitest.config.ts",
+    "lib/testing"
+  ]
+}

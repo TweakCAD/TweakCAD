@@ -1,0 +1,613 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { newProjectWithPart } from '@tweakcad/core/src/document/factory.ts';
+import { Shell } from './layout/Shell.tsx';
+import { initializeApp } from './appInit.ts';
+import { initRebuildScheduler, exportActivePart } from './rebuildScheduler.ts';
+import {
+  runAutoExport,
+  shouldAutoExport,
+  type AutoExportStatus,
+} from './storage/autoExport.ts';
+import { setSketchStoreRef } from './hooks/useSketchStore.ts';
+import { setDisplayContextStoreRef } from './hooks/useDisplayContext.ts';
+import {
+  AutosaveScheduler,
+  resolveInitialProject,
+  probeSaas,
+  useSaasState,
+  newDocument,
+  openFromDisk,
+  pickGeometryForImport,
+  pickComponentForImport,
+  save,
+  saveAsToDisk,
+  saveAsNewCloudProject,
+  type ProjectContext,
+  type DocumentStorage,
+  type FileOpsHandles,
+} from './storage/index.ts';
+import { SaveStatus } from './components/SaveStatus.tsx';
+import { useConfirm } from './components/ConfirmDialog.tsx';
+import { Toast } from './components/Toast.tsx';
+import { useToastStore } from './components/toastStore.ts';
+import { SignInModal } from './components/SignInModal.tsx';
+import { SaveAsPicker } from './components/SaveAsPicker.tsx';
+import { useParametersEditor } from './components/ParametersDialog.tsx';
+import { useSettingsDialog } from './components/SettingsDialog.tsx';
+import { startBridgeClient } from './ai/mcpBridgeClient.ts';
+import { refreshSaasState, isSignedIn } from './storage/index.ts';
+import { ErrorBoundary } from './components/ErrorBoundary.tsx';
+
+type StorageRuntime = {
+  scheduler: AutosaveScheduler;
+  context: ProjectContext;
+  storage: DocumentStorage;
+  bootWarning?: string;
+  /** "We loaded an autosaved doc from a disk file you opened last session." */
+  recoveredFilename?: string;
+};
+
+/**
+ * Root application component.
+ *
+ * Boot sequence:
+ *   1. Synchronously initialize the in-memory app (no I/O).
+ *   2. Fire the SaaS probe so cloud-aware features know whether the backend
+ *      is reachable.
+ *   3. Resolve the initial document from URL / IDB / cloud — never blocks
+ *      the editor on a network error; falls back to local mirror or blank.
+ *   4. Attach the autosave scheduler.
+ */
+export function App() {
+  const appState = useMemo(() => initializeApp(), []);
+  const [storage, setStorage] = useState<StorageRuntime | null>(null);
+  const saas = useSaasState();
+
+  useMemo(() => {
+    setSketchStoreRef(appState.sketchStore);
+    setDisplayContextStoreRef(appState.displayContextStore);
+  }, [appState]);
+
+  useEffect(() => {
+    initRebuildScheduler(appState);
+  }, [appState]);
+
+  // Boot the local MCP bridge WS client. Reads settings on mount; opens /
+  // closes the socket as the user flips Settings → AI → Enable bridge.
+  // Returns a stop() unsub the cleanup runs on unmount or HMR.
+  useEffect(() => {
+    const stop = startBridgeClient({
+      documentStore: appState.documentStore,
+      commandBus: appState.commandBus,
+      viewportStore: appState.viewportStore,
+    });
+    return stop;
+  }, [appState]);
+
+  // ?autoExport=1 flow: once the project resolves to a cloud-backed
+  // context, generate STL/STEP/3MF and PUT them as attachments to the
+  // current published version. Runs at most once per page load.
+  const autoExportFiredRef = useRef(false);
+  const [autoExportStatus, setAutoExportStatus] = useState<
+    AutoExportStatus[] | null
+  >(null);
+  useEffect(() => {
+    if (autoExportFiredRef.current) return;
+    if (!storage) return;
+    if (storage.context.kind !== 'cloud') return;
+    if (!shouldAutoExport()) return;
+    autoExportFiredRef.current = true;
+    setAutoExportStatus([]);
+    void runAutoExport(
+      appState.documentStore,
+      storage.context.cloudProjectId,
+      (status) => {
+        setAutoExportStatus((prev) => [...(prev ?? []), status]);
+        console.log('[autoExport]', status);
+      },
+    );
+  }, [storage, appState.documentStore]);
+
+  // Resolve initial document + attach autosave. Runs once on mount.
+  useEffect(() => {
+    let unsub: (() => void) | null = null;
+    let cancelled = false;
+    (async () => {
+      // Kick off the SaaS probe so the rest of the UI can render cloud
+      // features (or hide them) as soon as the result lands.
+      probeSaas();
+
+      const defaultDoc = appState.documentStore.getState();
+      const resolution = await resolveInitialProject(defaultDoc);
+      if (cancelled) return;
+
+      if (resolution.doc !== defaultDoc) {
+        appState.documentStore.replaceDocument(resolution.doc);
+      }
+
+      const scheduler = new AutosaveScheduler(resolution.context);
+      scheduler.setStorage(resolution.storage);
+      unsub = scheduler.attach(appState.documentStore);
+
+      setStorage({
+        scheduler,
+        context: resolution.context,
+        storage: resolution.storage,
+        ...(resolution.warning ? { bootWarning: resolution.warning } : {}),
+        ...(resolution.recoveredFromAutosave && resolution.recoveredFilename
+          ? { recoveredFilename: resolution.recoveredFilename }
+          : {}),
+      });
+    })();
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
+  }, [appState]);
+
+  // Surface boot warnings (e.g. "SaaS unreachable, opened local copy") via a
+  // console message until the UI gets a proper toast surface.
+  useEffect(() => {
+    if (storage?.bootWarning) {
+      console.warn('[boot]', storage.bootWarning);
+    }
+  }, [storage?.bootWarning]);
+
+  // The file-ops layer needs synchronous read access to the current storage
+  // and a way to mutate context routing. We use a ref so callbacks captured
+  // by handlers see the latest values without re-binding every state change.
+  const storageRef = useRef<DocumentStorage>({ kind: 'unsaved' });
+  useEffect(() => {
+    if (storage) storageRef.current = storage.storage;
+  }, [storage]);
+
+  const { confirm, element: confirmDialogElement } = useConfirm();
+  const { open: openParametersEditor, element: parametersDialogElement } = useParametersEditor();
+  const { open: openSettings, element: settingsDialogElement } = useSettingsDialog();
+
+  const fileHandles: FileOpsHandles | null = useMemo(() => {
+    if (!storage) return null;
+    return {
+      documentStore: appState.documentStore,
+      scheduler: storage.scheduler,
+      getStorage: () => storageRef.current,
+      setStorage: (next) => {
+        storageRef.current = next;
+        storage.scheduler.setStorage(next);
+        setStorage((prev) => (prev ? { ...prev, storage: next } : prev));
+      },
+      setContext: (next) => {
+        setStorage((prev) => (prev ? { ...prev, context: next } : prev));
+        storage.scheduler.setContext(next);
+      },
+      blankDoc: () => newProjectWithPart('New Project', 'Part 1'),
+      confirm,
+    };
+  }, [appState, storage, confirm]);
+
+  const [saveAsOpen, setSaveAsOpen] = useState(false);
+
+  const onFileNew = useCallback(() => {
+    if (fileHandles) void newDocument(fileHandles);
+  }, [fileHandles]);
+  const onFileOpen = useCallback(() => {
+    if (fileHandles) void openFromDisk(fileHandles);
+  }, [fileHandles]);
+
+  /**
+   * File → Import. Prompts for a STEP / STL file, base64-encodes it,
+   * and dispatches a `CreateImportedGeometry` command that appends a
+   * new feature to the active part's timeline. The rebuilder then
+   * picks it up on the next pass and the kernel decomposes the file
+   * into per-solid bodies.
+   *
+   * Errors during pick (cancel, unsupported extension) are silent /
+   * thrown — App.tsx doesn't gate on them because the worker / kernel
+   * surface already logs failures to the in-app console via the
+   * standard rebuild diagnostics path.
+   */
+  const onFileImport = useCallback(async (format?: 'step' | 'stl') => {
+    try {
+      const pick = await pickGeometryForImport(format);
+      if (!pick) return; // user cancelled
+      const project = appState.documentStore.getState();
+      const partIds = Object.keys(project.parts);
+      if (partIds.length === 0) {
+        console.warn('[App] Import: no parts in document — create or open a project first');
+        return;
+      }
+      // v1 imports into the first part. Multi-part documents land
+      // when the document model grows assembly support; until then
+      // there's a single active part by convention.
+      const partId = partIds[0] as import('@tweakcad/core/src/ids.ts').PartId;
+      const result = appState.commandBus.dispatch({
+        type: 'CreateImportedGeometry',
+        partId,
+        inputs: {
+          fileName: pick.fileName,
+          format: pick.format,
+          data: pick.dataBase64,
+        },
+      });
+      if (!result.ok) {
+        console.error('[App] Import dispatch failed:', result.error.message);
+      }
+    } catch (err) {
+      console.error('[App] Import failed:', err);
+    }
+  }, [appState.documentStore, appState.commandBus]);
+
+  /**
+   * File → Import Component. Prompts for a `.cadcomponent` (or `.cadjson`
+   * used as one), computes its content hash, embeds the sub-document
+   * into `project.embeddedComponents[hash]` and appends an
+   * `importedComponent` feature to the active part's timeline. The
+   * rebuilder then re-runs the sub-timeline and surfaces the bodies.
+   *
+   * v1 always lands the instance at the origin — the Transform UX
+   * (numeric panel + gizmo + snap picker) is a future enhancement.
+   */
+  const onComponentImport = useCallback(async () => {
+    try {
+      const pick = await pickComponentForImport();
+      if (!pick) return; // user cancelled
+      const project = appState.documentStore.getState();
+      const partIds = Object.keys(project.parts);
+      if (partIds.length === 0) {
+        console.warn('[App] Component import: no parts — create or open a project first');
+        return;
+      }
+      const partId = partIds[0] as import('@tweakcad/core/src/ids.ts').PartId;
+
+      // Strip extension for the display name; falls back to the file
+      // base if the source's metadata.name is unset.
+      const baseName = pick.fileName.replace(/\.(cadcomponent|cadjson)$/i, '');
+      const componentName = pick.source.metadata?.name?.trim() || baseName;
+
+      const result = appState.commandBus.dispatch({
+        type: 'CreateImportedComponent',
+        partId,
+        component: {
+          hash: pick.hash,
+          name: componentName,
+          origin: pick.fileName,
+          embeddedAt: new Date().toISOString(),
+          source: pick.source,
+        },
+        inputs: {
+          transform: { position: [0, 0, 0], rotation: [0, 0, 0, 1] },
+          parameterOverrides: {},
+          configurationId: null,
+          boolean: 'newBody',
+        },
+      });
+      if (!result.ok) {
+        console.error('[App] Component import dispatch failed:', result.error.message);
+      }
+    } catch (err) {
+      console.error('[App] Component import failed:', err);
+    }
+  }, [appState.documentStore, appState.commandBus]);
+
+
+  const onFileSave = useCallback(() => {
+    if (fileHandles) void save(fileHandles);
+  }, [fileHandles]);
+  // Save As opens the destination picker — disk OR cloud — instead of
+  // committing straight to disk.
+  const onFileSaveAs = useCallback(() => {
+    if (fileHandles) setSaveAsOpen(true);
+  }, [fileHandles]);
+
+  /**
+   * File → Export. Runs the kernel's STL / STEP / 3MF exporter on the
+   * dedicated export worker and triggers a browser download. Filename
+   * mirrors the project name plus the canonical extension.
+   */
+  const onFileExport = useCallback(
+    async (format: 'stl' | 'step' | '3mf') => {
+      try {
+        const ab = await exportActivePart(appState.documentStore, format);
+        if (ab.byteLength === 0) {
+          console.warn('[App] Export produced empty output — no bodies?');
+          return;
+        }
+        const mime =
+          format === 'stl'
+            ? 'model/stl'
+            : format === 'step'
+              ? 'application/step'
+              : 'application/vnd.ms-package.3dmanufacturing-3dmodel+xml';
+        const blob = new Blob([ab], { type: mime });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const baseName =
+          appState.documentStore.getState().metadata.name?.trim() || 'model';
+        const safe = baseName.replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 64);
+        a.href = url;
+        a.download = `${safe}.${format}`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        // Give the browser a tick to start the download before revoking.
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } catch (err) {
+        console.error('[App] Export failed:', err);
+      }
+    },
+    [appState.documentStore],
+  );
+
+  // Dismissable recovery toast: shown once when the boot loaded an
+  // autosaved doc whose previous origin was a disk file we no longer have
+  // a handle to. The user can keep the toast around (dismiss the X) or
+  // act on it via the CTA.
+  const [recoveryDismissed, setRecoveryDismissed] = useState(false);
+  const showRecoveryToast =
+    !!storage?.recoveredFilename && !recoveryDismissed;
+
+  // Sign-in modal state. Opens from SaveStatus' "Sign in to sync" pill,
+  // from the MainAppBar's account chip, and from the Save-to-cloud flow
+  // when the user picks "Cloud" but isn't signed in yet.
+  const [signInOpen, setSignInOpen] = useState(false);
+  const onRequestSignIn = useCallback(() => setSignInOpen(true), []);
+  const onSignOut = useCallback(async () => {
+    try {
+      // Same-origin in prod (/cad served from the SaaS host), Vite-proxied
+      // in dev. Better Auth's sign-out requires Content-Type: application/json
+      // AND a body (header alone returns 415; missing body returns 500).
+      // The empty object is the minimum that satisfies both checks.
+      await fetch('/api/v1/auth/sign-out', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: '{}',
+      });
+    } catch {
+      // Ignore — even if the network call fails, refresh below will clear
+      // any stale local state.
+    }
+    await refreshSaasState();
+  }, []);
+
+  return (
+    <>
+      <ErrorBoundary scopeLabel="the editor">
+        <Shell
+          onFileNew={onFileNew}
+          onFileOpen={onFileOpen}
+          onFileImport={onFileImport}
+          onComponentImport={onComponentImport}
+          onFileSave={onFileSave}
+          onFileSaveAs={onFileSaveAs}
+          onFileExport={onFileExport}
+          saas={saas}
+          onRequestSignIn={onRequestSignIn}
+          onSignOut={onSignOut}
+          onEditParameters={openParametersEditor}
+          onOpenSettings={openSettings}
+        />
+      </ErrorBoundary>
+      {parametersDialogElement}
+      {settingsDialogElement}
+      {storage && (
+        <div style={saveStatusContainer}>
+          <SaveStatus
+            scheduler={storage.scheduler}
+            context={storage.context}
+            storage={storage.storage}
+            saas={saas}
+            onRequestSignIn={onRequestSignIn}
+          />
+        </div>
+      )}
+      {showRecoveryToast && storage?.recoveredFilename && (
+        <Toast
+          id="recovery"
+          tone="warning"
+          title="Restored from your last session"
+          message={`Showing autosaved content for "${storage.recoveredFilename}". The original file is no longer attached — use Open to re-attach, or Save to write a new file.`}
+          action={{
+            label: 'Re-open original',
+            onClick: () => onFileOpen(),
+          }}
+          durationMs={20_000}
+          onDismiss={() => setRecoveryDismissed(true)}
+        />
+      )}
+      <GlobalToast />
+      <SignInModal
+        open={signInOpen}
+        onClose={() => setSignInOpen(false)}
+        onSignedIn={() => {
+          // No-op for now — SaaS state refresh inside the modal triggers
+          // the relevant re-renders. Hook point for "save to cloud
+          // after sign-in" follow-through.
+          void isSignedIn;
+        }}
+      />
+      {fileHandles && storage && (
+        <SaveAsPicker
+          open={saveAsOpen}
+          docName={appState.documentStore.getState().metadata.name}
+          saas={saas}
+          onClose={() => setSaveAsOpen(false)}
+          onPickDisk={() => {
+            setSaveAsOpen(false);
+            void saveAsToDisk(fileHandles);
+          }}
+          onPickCloud={async (projectName) => {
+            const created = await saveAsNewCloudProject(
+              fileHandles,
+              projectName,
+              createCloudProject,
+            );
+            if (!created) {
+              // saveAsNewCloudProject logged the error; throw so the picker
+              // surfaces it inline.
+              throw new Error('Could not create the cloud project.');
+            }
+            setSaveAsOpen(false);
+          }}
+          onRequestSignIn={() => {
+            setSaveAsOpen(false);
+            setSignInOpen(true);
+          }}
+        />
+      )}
+      {confirmDialogElement}
+      {autoExportStatus !== null && (
+        <AutoExportStatusPanel statuses={autoExportStatus} />
+      )}
+    </>
+  );
+}
+
+/**
+ * Render the most recent toast from the global toast store. Any module —
+ * stores, command handlers — can call `enqueueToast(...)` to surface a
+ * notification; this component handles the rest. Single-toast-at-a-time;
+ * latest replaces previous via the incrementing nonce in the payload.
+ */
+function GlobalToast() {
+  const current = useToastStore((s) => s.current);
+  const dismiss = useToastStore((s) => s.dismiss);
+  if (!current) return null;
+  return (
+    <Toast
+      id={current.nonce}
+      tone={current.tone ?? 'info'}
+      {...(current.title !== undefined ? { title: current.title } : {})}
+      message={current.message}
+      durationMs={current.durationMs ?? 6_000}
+      onDismiss={dismiss}
+    />
+  );
+}
+
+/**
+ * Tiny floating status panel rendered while the auto-export flow runs.
+ * Shows per-format progress + final summary so the user knows when it's
+ * safe to close the tab.
+ */
+function AutoExportStatusPanel({ statuses }: { statuses: AutoExportStatus[] }) {
+  const done = statuses.some((s) => s.kind === 'done');
+  // Aggregate per-format state.
+  const byFormat = new Map<
+    'stl' | 'step' | '3mf',
+    { running: boolean; result: 'ok' | 'failed' | null; bytes: number; error?: string }
+  >();
+  for (const s of statuses) {
+    if (s.kind === 'done') continue;
+    const cur = byFormat.get(s.format) ?? { running: false, result: null, bytes: 0 };
+    if (s.kind === 'start') cur.running = true;
+    if (s.kind === 'uploaded') {
+      cur.running = false;
+      cur.result = 'ok';
+      cur.bytes = s.sizeBytes;
+    }
+    if (s.kind === 'failed') {
+      cur.running = false;
+      cur.result = 'failed';
+      cur.error = s.message;
+    }
+    byFormat.set(s.format, cur);
+  }
+  const formats: ('stl' | 'step' | '3mf')[] = ['stl', 'step', '3mf'];
+
+  function formatBytes(n: number): string {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / 1024 / 1024).toFixed(2)} MB`;
+  }
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        right: 16,
+        bottom: 16,
+        zIndex: 90,
+        minWidth: 280,
+        maxWidth: 360,
+        padding: '12px 14px',
+        background: '#ffffff',
+        border: '1px solid #d8d8d8',
+        borderRadius: 10,
+        boxShadow: '0 8px 24px rgba(0,0,0,0.14)',
+        fontFamily: 'inherit',
+        fontSize: 12,
+        color: '#333',
+      }}
+      role="status"
+      aria-live="polite"
+    >
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
+        <strong style={{ fontSize: 13, color: '#111' }}>
+          {done ? 'Downloads generated' : 'Generating downloads…'}
+        </strong>
+        {done && (
+          <a
+            href={window.location.pathname + window.location.hash}
+            style={{ fontSize: 11, color: '#888', textDecoration: 'none' }}
+            title="Dismiss"
+          >
+            ×
+          </a>
+        )}
+      </div>
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {formats.map((f) => {
+          const s = byFormat.get(f);
+          const label = f.toUpperCase();
+          if (!s) return <li key={f} style={{ color: '#aaa' }}>{label} — waiting…</li>;
+          if (s.running) return <li key={f}>{label} — exporting…</li>;
+          if (s.result === 'ok') {
+            return (
+              <li key={f} style={{ color: '#15803d' }}>
+                ✓ {label} — uploaded ({formatBytes(s.bytes)})
+              </li>
+            );
+          }
+          return (
+            <li key={f} style={{ color: '#b91c1c' }} title={s.error}>
+              × {label} — failed
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * Create a new cloud project via the SaaS API.
+ * Used by the Save-As → Cloud flow. Same-origin in prod, Vite-proxied in dev.
+ */
+async function createCloudProject(name: string): Promise<{ id: string; slug: string }> {
+  const res = await fetch('/api/v1/projects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? `Project creation failed (${res.status})`);
+  }
+  const json = (await res.json()) as { id: string; slug: string };
+  return json;
+}
+
+const saveStatusContainer: React.CSSProperties = {
+  position: 'fixed',
+  bottom: 8,
+  right: 8,
+  zIndex: 50,
+  borderRadius: 6,
+  border: '1px solid #e5e5e5',
+  background: 'rgba(255, 255, 255, 0.9)',
+  backdropFilter: 'blur(4px)',
+  boxShadow: '0 1px 3px rgba(0, 0, 0, 0.08)',
+  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+};

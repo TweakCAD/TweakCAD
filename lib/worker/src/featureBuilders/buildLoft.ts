@@ -1,0 +1,216 @@
+/**
+ * Loft feature builder.
+ *
+ * Takes 2..16 closed profile references (potentially from different
+ * sketches) and lofts them through OCCT's BRepOffsetAPI_ThruSections.
+ * The profile order in `inputs.profiles` is the interpolation order.
+ */
+
+import type {
+  FeatureNode,
+  LoftFeatureInputs,
+  ProfileRef,
+} from '@tweakcad/core/src/document/schema.ts';
+import type { ResolvedParams } from '@tweakcad/core/src/expressions.ts';
+import { bodyId } from '@tweakcad/core/src/ids.ts';
+import type { FeatureId } from '@tweakcad/core/src/ids.ts';
+import type { Vec3 } from '@tweakcad/core/src/math.ts';
+import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
+import type { KernelBody, KernelFace, ResolvedProfile } from '@tweakcad/kernel/src/types.ts';
+import type { BuildContext, BuildResult } from '@tweakcad/core/src/features/contracts.ts';
+import { resolveProfile } from '@tweakcad/core/src/sketch/profileRegions.ts';
+import type { SketchRegion } from '@tweakcad/core/src/sketch/profileRegions.ts';
+import type {
+  ResolvedSketchEntityData,
+  ResolvedSketchPlaneData,
+} from './buildSketch.ts';
+import {
+  regionHasArcSegments,
+  regionSegmentsToWire,
+  sketchToWorld as sharedSketchToWorld,
+} from './wireProfile.ts';
+
+const MIN_PROFILES = 2;
+const MAX_PROFILES = 16;
+
+export async function buildLoft(
+  node: FeatureNode,
+  _params: ResolvedParams,
+  context: BuildContext,
+  kernel: CadKernel,
+): Promise<BuildResult> {
+  const inputs = node.inputs as unknown as LoftFeatureInputs;
+
+  const profiles = Array.isArray(inputs.profiles) ? inputs.profiles : [];
+  if (profiles.length < MIN_PROFILES) {
+    throw new Error(`Loft requires at least ${MIN_PROFILES} profiles (got ${profiles.length})`);
+  }
+  if (profiles.length > MAX_PROFILES) {
+    throw new Error(`Loft supports at most ${MAX_PROFILES} profiles (got ${profiles.length})`);
+  }
+
+  // Resolve every profile up-front; bail with a clear diagnostic if any one
+  // can't be turned into a closed region.
+  const faces: KernelFace[] = [];
+  for (let i = 0; i < profiles.length; i++) {
+    const ref = profiles[i]!;
+    const resolved = resolveOneProfile(ref, context);
+    if (resolved.status !== 'resolved' || !resolved.region) {
+      throw new Error(
+        `Loft profile #${i + 1} (sketch ${ref.sketchId}) failed to resolve: ${resolved.error ?? 'unknown'}`,
+      );
+    }
+    const kernelProfile = regionToKernelProfile(resolved.region, ref.sketchId, context);
+    const faceResult = await kernel.createSketchFace(kernelProfile);
+    if (!faceResult.ok) {
+      throw new Error(`Loft profile #${i + 1}: face creation failed: ${faceResult.error.message}`);
+    }
+    faces.push(faceResult.value);
+  }
+
+  const opts: { ruled?: boolean; closed?: boolean } = {};
+  if (inputs.ruled !== undefined) opts.ruled = inputs.ruled;
+  if (inputs.closed !== undefined) opts.closed = inputs.closed;
+
+  // Pass node.id as origin so stable face/edge IDs are deterministic
+  // per feature — user-captured FaceRef/EdgeRef survive rebuilds.
+  const bodyResult = await kernel.loft(faces, opts, node.id);
+  if (!bodyResult.ok) {
+    throw new Error(`Loft failed: ${bodyResult.error.message}`);
+  }
+
+  let finalBody = bodyResult.value;
+
+  if (inputs.operation === 'join' && context.bodies.size > 0) {
+    const existing = Array.from(context.bodies.values()) as KernelBody[];
+    const fuse = await kernel.booleanFuse([...existing, finalBody]);
+    if (fuse.ok) finalBody = fuse.value;
+  } else if (inputs.operation === 'cut' && context.bodies.size > 0) {
+    const target = Array.from(context.bodies.values())[0] as KernelBody | undefined;
+    if (target) {
+      const cut = await kernel.booleanCut(target, [finalBody]);
+      if (cut.ok) finalBody = cut.value;
+    }
+  }
+
+  // Deterministic id derived from the feature so user-captured
+  // FaceRef/EdgeRef on this body survive subsequent rebuilds.
+  const newBodyId = bodyId(`body_${node.id}_0`);
+  return {
+    bodies: [{ bodyId: newBodyId, handle: finalBody }],
+    outputs: {
+      bodies: { main: newBodyId },
+    },
+  };
+}
+
+// ---- Helpers (mirror buildRevolve.ts; extract into a shared file when Sweep lands) ----
+
+function resolveOneProfile(
+  ref: ProfileRef,
+  context: BuildContext,
+): ReturnType<typeof resolveProfile> {
+  const sketchId = ref.sketchId as FeatureId;
+  const sketchOutputs = context.featureOutputs.get(sketchId);
+  if (!sketchOutputs?.data) {
+    return {
+      profileRef: ref,
+      status: 'missing' as const,
+      error: `Sketch output not found for ${sketchId}`,
+    };
+  }
+  const resolvedRegions = sketchOutputs.data.resolvedRegions as Record<string, SketchRegion> | undefined;
+  const detected = resolvedRegions ? Object.values(resolvedRegions) : [];
+  return resolveProfile(ref, detected);
+}
+
+function regionToKernelProfile(
+  region: SketchRegion,
+  sketchId: FeatureId,
+  context: BuildContext,
+): ResolvedProfile {
+  const sketchOutputs = context.featureOutputs.get(sketchId);
+  const plane = sketchOutputs?.data?.plane as ResolvedSketchPlaneData | undefined;
+  const resolvedEntities = sketchOutputs?.data?.resolvedEntities as
+    | Record<string, ResolvedSketchEntityData>
+    | undefined;
+  const normal: Vec3 = plane?.normal ?? [0, 1, 0];
+  const uAxis: Vec3 = plane?.uAxis ?? [1, 0, 0];
+  const vAxis: Vec3 = plane?.vAxis ?? [0, 0, 1];
+
+  if (region.type === 'circle') {
+    const entityId = region.entityIds[0];
+    const entity = entityId ? resolvedEntities?.[String(entityId)] : undefined;
+    if (entity?.type === 'circle') {
+      const center = sketchToWorld(region.center, plane);
+      return {
+        type: 'circle',
+        center,
+        diameter: entity.diameter,
+        normal,
+        origin: center,
+        uAxis,
+        vAxis,
+      };
+    }
+  }
+
+  if (region.type === 'polygon') {
+    // (Rectangle fast path retired in task F — invariant #11 dropped
+    // the `SketchRectangleEntity` composite, so this branch is now
+    // unreachable. Rectangles arrive as 4 lines and fall through to the
+    // wire / general-polygon paths below.)
+
+    // Arc-bearing regions: emit a wire profile so the loft endpoint
+    // sections preserve real arc edges. Same shared helper used by
+    // buildExtrude / buildRevolve.
+    if (regionHasArcSegments(region)) {
+      const wireSegments = regionSegmentsToWire(region, plane);
+      const center = sharedSketchToWorld(region.center, plane);
+      return {
+        type: 'wire',
+        segments: wireSegments,
+        center,
+        normal,
+        origin: center,
+        uAxis,
+        vAxis,
+      };
+    }
+
+    const vertices = region.vertices.map(v => sketchToWorld(v, plane));
+    if (vertices.length < 3) {
+      throw new Error('Loft profile has fewer than three vertices');
+    }
+    const center = sketchToWorld(region.center, plane);
+    return {
+      type: 'polygon',
+      vertices,
+      center,
+      normal,
+      origin: center,
+      uAxis,
+      vAxis,
+    };
+  }
+
+  throw new Error(`Unable to convert region to loft profile: ${region.type}`);
+}
+
+function sketchToWorld(
+  point: [number, number],
+  plane: ResolvedSketchPlaneData | undefined,
+): Vec3 {
+  const p = plane ?? {
+    name: 'XZ' as const,
+    origin: [0, 0, 0] as Vec3,
+    uAxis: [1, 0, 0] as Vec3,
+    vAxis: [0, 0, 1] as Vec3,
+    normal: [0, 1, 0] as Vec3,
+  };
+  return [
+    p.origin[0] + point[0] * p.uAxis[0] + point[1] * p.vAxis[0],
+    p.origin[1] + point[0] * p.uAxis[1] + point[1] * p.vAxis[1],
+    p.origin[2] + point[0] * p.uAxis[2] + point[1] * p.vAxis[2],
+  ];
+}
