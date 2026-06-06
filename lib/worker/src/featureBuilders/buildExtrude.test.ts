@@ -502,11 +502,14 @@ describe('buildExtrude — extended behavior coverage', () => {
   });
 });
 
-// --- Known-problem coverage. These will fail until `targetBodies` is
-// wired end-to-end (UI picker → schema → builder). See cad-architecture.md
-// § "⚠ Known problem — `join`/`cut` target every body in the part".
-// Kept as real failing tests (not `.skip`) so the gap is visible in CI.
-describe('buildExtrude — target-body selectivity (blocked: targetBodies not read)', () => {
+// --- Target-body selectivity. `targetBodies` is now wired end-to-end
+// (UI picker → schema → builder via `selectTargetEntries`), so the first
+// two cases below pass: join consumes only the targeted body, and cut
+// directs at the user-picked target. The third case (disjoint join-result
+// stays its own body) is the tighter Fusion-style semantics we
+// deliberately deferred — it stays a real failing test (not `.skip`) so
+// the remaining gap is visible in CI.
+describe('buildExtrude — target-body selectivity', () => {
   it('join with two disjoint pre-existing bodies consumes ONLY the targeted body', async () => {
     const kernel = new MockKernel();
     await kernel.init();
