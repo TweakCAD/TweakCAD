@@ -715,30 +715,22 @@ export class ViewportController {
     this.updateCameraFromSpherical();
   }
 
-  /** Fit camera to show all scene content */
+  /** Fit camera to show all model bodies */
   fitToView(): void {
-    const box = new THREE.Box3();
-    let hasContent = false;
+    // Fit only the solid bodies — NOT the whole scene. Walking every mesh
+    // pulls in overlays (construction planes, the section plane, selection
+    // highlights, the transform gizmo), which either skew the framing or, if
+    // one has a degenerate bounding box, poison the union with NaN and send
+    // the camera nowhere. The body registry is the real model content.
+    const box = this.meshRegistry.getBodiesBoundingBox();
+    if (box.isEmpty()) return;
 
-    this.scene.traverse((obj) => {
-      if (obj instanceof THREE.Mesh && obj.geometry) {
-        obj.geometry.computeBoundingBox();
-        if (obj.geometry.boundingBox) {
-          const worldBox = obj.geometry.boundingBox.clone();
-          worldBox.applyMatrix4(obj.matrixWorld);
-          box.union(worldBox);
-          hasContent = true;
-        }
-      }
-    });
-
-    if (!hasContent) return;
-
-    const center = new THREE.Vector3();
-    box.getCenter(center);
-    const size = new THREE.Vector3();
-    box.getSize(size);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z);
+    // Bail on any non-finite result rather than flinging the camera to NaN.
+    if (!Number.isFinite(maxDim) || !Number.isFinite(center.length())) return;
+
     const fov = this.camera.fov * (Math.PI / 180);
     const distance = maxDim / (2 * Math.tan(fov / 2)) * 1.5; // 1.5x padding
 
