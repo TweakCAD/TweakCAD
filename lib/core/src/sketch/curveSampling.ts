@@ -121,6 +121,35 @@ export function catmullRomClosed(
 }
 
 /**
+ * Sample a spline's control points into a display/outline polyline, picking
+ * the right Catmull-Rom for its closure: a **closed** spline (first ≈ last
+ * control point) uses the *periodic* {@link catmullRomClosed} so its seam is
+ * smooth and matches the extruded face; an **open** spline uses the
+ * phantom-endpoint {@link catmullRomSpline}. Returns a closed polyline (last
+ * point repeats the first) for the closed case so the outline draws shut.
+ *
+ * One source for the editor render, the readonly overlay, and the region
+ * outline — so the sketch curve, the profile fill, and the solid all agree.
+ */
+export function sampleSplinePolyline(
+  ctrl: [number, number][],
+  subdivisions: number,
+): [number, number][] {
+  if (ctrl.length < 2) return ctrl.slice();
+  const first = ctrl[0]!;
+  const last = ctrl[ctrl.length - 1]!;
+  const closed = ctrl.length >= 4 && Math.hypot(first[0] - last[0], first[1] - last[1]) < 1e-6;
+  if (closed) {
+    const ring = ctrl.slice(0, -1);
+    if (ring.length >= 3) {
+      const samples = catmullRomClosed(ring, subdivisions);
+      return [...samples, samples[0]!];
+    }
+  }
+  return catmullRomSpline(ctrl, subdivisions);
+}
+
+/**
  * Sample a full ellipse into `samples` points around its perimeter (open
  * list — the first point is NOT repeated at the end, suitable for a
  * periodic interpolation).

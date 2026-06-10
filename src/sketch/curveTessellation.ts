@@ -11,5 +11,7 @@
 export {
   sampleCubicBezier,
   catmullRomSpline,
+  catmullRomClosed,
+  sampleSplinePolyline,
   sampleEllipse,
 } from '@tweakcad/core/src/sketch/curveSampling.ts';

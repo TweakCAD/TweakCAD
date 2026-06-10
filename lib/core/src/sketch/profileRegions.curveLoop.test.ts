@@ -174,7 +174,12 @@ describe('detectSketchRegions — curve-loop walker', () => {
     const cs = regions.find(r => r.type === 'closedSpline');
     expect(cs).toBeDefined();
     expect(cs!.splineControlPoints).toHaveLength(4); // 5 - duplicate close
-    expect(cs!.area).toBeCloseTo(100, 6);
+    // Area/outline now follow the smooth periodic Catmull-Rom (so the fill
+    // and hit-test match the curve), not the angular control polygon — so
+    // it's near, but not exactly, the 100 of the control square.
+    expect(cs!.area).toBeGreaterThan(70);
+    expect(cs!.area).toBeLessThan(140);
+    expect(cs!.vertices.length).toBeGreaterThan(8); // sampled curve, not 4 corners
   });
 
   it('does not treat an open spline as a standalone region', () => {

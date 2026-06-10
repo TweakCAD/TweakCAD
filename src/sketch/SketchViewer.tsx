@@ -32,7 +32,7 @@ import {
   type SketchPlaneConfig,
   type SketchPlaneInput,
 } from './SketchSceneManager.ts';
-import { catmullRomSpline, sampleCubicBezier } from './curveTessellation.ts';
+import { sampleSplinePolyline, sampleCubicBezier } from './curveTessellation.ts';
 
 // ---- Constants ----
 
@@ -429,7 +429,7 @@ function createEntityObject(
         ctrl.push([x, y]);
       }
       if (ctrl.length < 2) return null;
-      const sampled = catmullRomSpline(ctrl, 16);
+      const sampled = sampleSplinePolyline(ctrl, 16);
       return makeLine2(sampled.map(([x, y]) => toWorld(plane, x, y)), material);
     }
     case 'bezier': {

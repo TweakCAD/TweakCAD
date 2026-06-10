@@ -14,7 +14,7 @@ import type { SketchEntity, ProfileRef } from '../document/schema.ts';
 import type { EntityId, FeatureId } from '../ids.ts';
 import { detectIntersectionRegions } from './planarGraph.ts';
 import type { PlanarFace } from './planarGraph.ts';
-import { catmullRomSpline, sampleEllipse } from './curveSampling.ts';
+import { catmullRomSpline, catmullRomClosed, sampleEllipse } from './curveSampling.ts';
 
 /**
  * One segment of a region boundary. The optional `kind` + geometry
@@ -221,6 +221,10 @@ const CURVE_VERTEX_SAMPLES = 8;
 /** Perimeter samples for a standalone ellipse region's vertices/centroid.
  *  Independent of the kernel's perimeter fit — see `detectEllipseRegions`. */
 const ELLIPSE_VERTEX_SAMPLES = 32;
+
+/** Catmull-Rom samples per span for a closed-spline region's outline
+ *  (fill / hit-test / area) — see `detectClosedSplineRegions`. */
+const CLOSED_SPLINE_OUTLINE_SAMPLES = 8;
 
 function cubicBezierPoint(
   p0: [number, number], c1: [number, number],
@@ -587,6 +591,13 @@ function detectClosedSplineRegions(entities: Record<EntityId, SketchEntity>): Sk
     const ring = pts.slice(0, -1);
     if (ring.length < 3) continue;
 
+    // Outline = the smooth *periodic* Catmull-Rom (the same curve the
+    // kernel extrudes and the editor now renders), so the region fill,
+    // hit-test, and area follow the actual curve rather than the angular
+    // control polygon. `splineControlPoints` keeps the raw ring for the
+    // kernel fit.
+    const outline = catmullRomClosed(ring, CLOSED_SPLINE_OUTLINE_SAMPLES);
+
     regions.push({
       id: `region:${String(entity.id)}`,
       label: 'Profile closed spline',
@@ -594,9 +605,9 @@ function detectClosedSplineRegions(entities: Record<EntityId, SketchEntity>): Sk
       entityIds: [entity.id],
       allEntityIds: [entity.id],
       segments: [{ entityId: entity.id, reversed: false }],
-      vertices: ring,
-      center: polygonCenter(ring),
-      area: Math.abs(polygonArea(ring)),
+      vertices: outline,
+      center: polygonCenter(outline),
+      area: Math.abs(polygonArea(outline)),
       splineControlPoints: ring,
     });
   }

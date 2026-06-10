@@ -37,7 +37,7 @@ import type {
 } from '@tweakcad/core/src/sketch/types.ts';
 import { ORIGIN_POINT_ID } from '@tweakcad/core/src/sketch/types.ts';
 import type { SketchRegion } from '@tweakcad/core/src/sketch/profileRegions.ts';
-import { catmullRomSpline, sampleCubicBezier } from './curveTessellation.ts';
+import { catmullRomSpline, sampleSplinePolyline, sampleCubicBezier } from './curveTessellation.ts';
 
 // ---- Constants ----
 
@@ -796,7 +796,7 @@ export class SketchSceneManager {
           if (!pt) return null;
           ctrl.push([pt.x, pt.y]);
         }
-        const interpolated = catmullRomSpline(ctrl, 16);
+        const interpolated = sampleSplinePolyline(ctrl, 16);
         const pts: THREE.Vector3[] = [];
         for (const [x, y] of interpolated) pts.push(this.toWorld(x, y));
         return this.makeLine2(pts, material);
@@ -1152,7 +1152,7 @@ function isNearGeometry(
         if (!pt) return false;
         ctrl.push([pt.x, pt.y]);
       }
-      const sampled = catmullRomSpline(ctrl, 8);
+      const sampled = sampleSplinePolyline(ctrl, 8);
       for (let i = 1; i < sampled.length; i++) {
         const [x1, y1] = sampled[i - 1]!;
         const [x2, y2] = sampled[i]!;
