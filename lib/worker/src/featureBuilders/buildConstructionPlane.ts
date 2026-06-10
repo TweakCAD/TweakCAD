@@ -9,9 +9,10 @@
  * faces referencing it) resolve the ref via {@link resolvePlaneRef} and
  * see the same `ResolvedSketchPlaneData` shape regardless of source.
  *
- * v1 supports `kind: 'offsetFromDefault'` (parallel to XY/XZ/YZ with a
- * signed offset). v2 will add `offsetFromFace`, `angleThroughEdge`, and
- * `threePoint` modes once the corresponding pickers ship.
+ * Supports `kind: 'offsetFromPlane'` (parallel to a base plane — a default
+ * plane or another construction plane — with a signed offset) and
+ * `kind: 'offsetFromFace'` (parallel to a body face with a signed offset).
+ * `angleThroughEdge` and `threePoint` modes are not yet built.
  */
 
 import type { FeatureNode, ConstructionPlaneFeatureInputs } from '@tweakcad/core/src/document/schema.ts';

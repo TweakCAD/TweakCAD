@@ -172,7 +172,7 @@ export type SketchFeatureInputs = {
   // no UI wrote to it and no rebuilder read from it. The solver
   // (`sketch/solver/` — planegcs via the ISketchSolver
   // interface) supersedes it: real constraints live in
-  // `editorModel.constraints` with their richer 15-variant editor type
+  // `editorModel.constraints` with their richer 19-variant editor type
   // (`sketch/types.ts`). When parametric sketch
   // dimensions ship, they'll be a new field designed for the post-solver
   // world, not a revival of this stub.
@@ -318,7 +318,7 @@ export type SketchPointEntity = {
 // They were a v0.1 placeholder for "lightweight document-level constraints"
 // that never got wired. The solver
 // (`sketch/solver/` — planegcs via the ISketchSolver
-// interface) uses the richer 15-variant `SketchConstraint` from
+// interface) uses the richer 19-variant `SketchConstraint` from
 // `sketch/types.ts` instead, persisted in
 // `SketchFeatureInputs.editorModel.constraints`.
 

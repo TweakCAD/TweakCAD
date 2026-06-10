@@ -599,7 +599,8 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
             "A SketchConstraintInput. `type` is one of: coincident, horizontal, " +
             "vertical, fixed, distance, distanceX, distanceY, radius, length, " +
             "parallel, perpendicular, angle, tangent, pointOnLine, " +
-            "pointOnCircle, symmetric. See @tweakcad/core/src/sketch/types.ts.",
+            "pointOnCircle, symmetric, equal, concentric, midpoint. " +
+            "See @tweakcad/core/src/sketch/types.ts.",
         },
       },
       required: ['sketchId', 'constraint'],

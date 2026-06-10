@@ -369,10 +369,8 @@ export type AngleConstraint = {
  *
  * **Solver coverage.** planegcs (the default) supports both external and
  * internal natively via its `tangent_circumf` primitive
- * (`internal: boolean` flag). The in-house LM solver only implements
- * external; an `internal: true` constraint dispatched to LM falls
- * through to the external residual with a warning. Production runs
- * planegcs; LM is a fallback used only before WASM finishes loading.
+ * (`internal: boolean` flag). planegcs (the only solver) implements
+ * both external and internal tangency.
  */
 export type TangentConstraint = {
   id: SketchConstraintId;
