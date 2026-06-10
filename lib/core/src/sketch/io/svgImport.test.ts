@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { parseSvg, svgToEditorState } from './svgImport.ts';
+import { parseSvg, svgToEditorState, MAX_SVG_IMPORT_PRIMITIVES } from './svgImport.ts';
 import { sketchToSvg } from './svg.ts';
 import { makeCounterIdFactory } from '../operations.ts';
 import { entityId } from '../../ids.ts';
@@ -127,6 +127,29 @@ describe('parseSvg', () => {
     const ys = [b.start[1], b.cp1[1], b.cp2[1], b.end[1]];
     expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(20, 6);
     expect(Math.max(...ys) - Math.min(...ys)).toBeCloseTo(10, 6);
+  });
+});
+
+describe('svgToEditorState — complexity cap', () => {
+  it('refuses an SVG with more shapes than the cap (no editor state built)', () => {
+    const n = MAX_SVG_IMPORT_PRIMITIVES + 5;
+    const body = Array.from({ length: n }, (_, i) => `<line x1="0" y1="${i}" x2="1" y2="${i}"/>`).join('');
+    const r = svgToEditorState(svg100(body), { idFactory: makeCounterIdFactory() });
+    expect(r.tooComplex).toBe(true);
+    expect(r.primitiveCount).toBe(n);
+    expect(r.state.geometries.size).toBe(0);
+  });
+
+  it('imports normally under the cap and reports the count', () => {
+    const r = svgToEditorState(svg100('<line x1="0" y1="0" x2="1" y2="0"/>'), { idFactory: makeCounterIdFactory() });
+    expect(r.tooComplex).toBe(false);
+    expect(r.primitiveCount).toBe(1);
+    expect(r.state.geometries.size).toBe(1);
+  });
+
+  it('honors a custom maxPrimitives limit', () => {
+    const body = '<line x1="0" y1="0" x2="1" y2="0"/><line x1="1" y1="0" x2="2" y2="0"/>';
+    expect(svgToEditorState(svg100(body), { maxPrimitives: 1 }).tooComplex).toBe(true);
   });
 });
 

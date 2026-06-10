@@ -8,7 +8,7 @@ import type { ProfileRef, SketchFeatureInputs, SketchEntity, ExtrudeFeatureInput
 import { regionToProfileRef } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import { sketchToDxf } from '@tweakcad/core/src/sketch/io/dxf.ts';
 import { dxfToEditorState } from '@tweakcad/core/src/sketch/io/dxfImport.ts';
-import { svgToEditorState } from '@tweakcad/core/src/sketch/io/svgImport.ts';
+import { svgToEditorState, MAX_SVG_IMPORT_PRIMITIVES } from '@tweakcad/core/src/sketch/io/svgImport.ts';
 import { toSnapshot } from '@tweakcad/core/src/sketch/operations.ts';
 import { sketchToSvg } from '@tweakcad/core/src/sketch/io/svg.ts';
 import { resolveAllParameters } from '@tweakcad/core/src/parameters/evaluator.ts';
@@ -763,9 +763,17 @@ export function Shell({
     }
     if (!pick) return; // user cancelled
 
-    const { state, skipped } = svgToEditorState(pick.text);
+    const { state, skipped, tooComplex, primitiveCount } = svgToEditorState(pick.text);
     if (skipped.length > 0) {
       consoleLog('warn', `SVG: skipped unsupported elements: ${skipped.join(', ')}`, 'sketch');
+    }
+    if (tooComplex) {
+      consoleLog(
+        'warn',
+        `SVG "${pick.fileName}" has ${primitiveCount} shapes — too complex for the experimental SVG import (limit ${MAX_SVG_IMPORT_PRIMITIVES}). Try a simpler file or split it up.`,
+        'sketch',
+      );
+      return;
     }
     if (state.geometries.size === 0) {
       consoleLog('warn', `SVG "${pick.fileName}" had no supported geometry — nothing imported`, 'sketch');

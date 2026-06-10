@@ -28,7 +28,7 @@
  */
 
 import { buildEditorStateFromPrimitives, type DxfPrimitive } from './dxfImport.ts';
-import type { EditorState, IdFactory } from '../operations.ts';
+import { emptyEditorState, type EditorState, type IdFactory } from '../operations.ts';
 import { parseXml, type XmlNode } from '../../xml.ts';
 
 /** Normalized 2D import primitive — shared with the DXF importer. */
@@ -36,6 +36,17 @@ type SketchPrimitive = DxfPrimitive;
 
 /** Samples per bezier / arc segment when flattening curves to a spline. */
 const CURVE_SAMPLES = 24;
+
+/**
+ * Conservative cap on how many shapes an SVG may import as ONE editable sketch.
+ * SVG import is experimental: a big file (detailed art / traced logos / text)
+ * produces hundreds-to-thousands of curves, and a parametric sketch that large
+ * is slow to solve and edit (the junction-coincidence pass is O(n²) and every
+ * edit re-solves the whole sketch). Over this limit we refuse the import with a
+ * clear message instead of hanging or OOM-ing. Provisional — raise it once
+ * we've measured the real interactive ceiling.
+ */
+export const MAX_SVG_IMPORT_PRIMITIVES = 500;
 
 export interface SvgImportResult {
   /** Primitives in sketch space (Y-up, millimetres). */
@@ -179,10 +190,29 @@ export function parseSvg(text: string): SvgImportResult {
  */
 export function svgToEditorState(
   text: string,
-  opts: { idFactory?: IdFactory } = {},
-): { state: EditorState; skipped: string[]; unitScale: number } {
+  opts: { idFactory?: IdFactory; maxPrimitives?: number } = {},
+): {
+  state: EditorState;
+  skipped: string[];
+  unitScale: number;
+  /** Number of shapes the SVG produced (before any cap). */
+  primitiveCount: number;
+  /** True when `primitiveCount` exceeds the cap — caller should refuse the import. */
+  tooComplex: boolean;
+} {
   const { primitives, skipped, unitScale } = parseSvg(text);
-  return { state: buildEditorStateFromPrimitives(primitives, opts), skipped, unitScale };
+  const limit = opts.maxPrimitives ?? MAX_SVG_IMPORT_PRIMITIVES;
+  if (primitives.length > limit) {
+    // Don't build the (expensive, O(n²)) editor state for an over-large file.
+    return { state: emptyEditorState(), skipped, unitScale, primitiveCount: primitives.length, tooComplex: true };
+  }
+  return {
+    state: buildEditorStateFromPrimitives(primitives, opts),
+    skipped,
+    unitScale,
+    primitiveCount: primitives.length,
+    tooComplex: false,
+  };
 }
 
 // ---- Tree walk -------------------------------------------------------------

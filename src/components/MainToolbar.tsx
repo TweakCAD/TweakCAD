@@ -1680,8 +1680,8 @@ function ImportButton({
             onClick={pickSketchDxf}
           />
           <ExportMenuItem
-            label="Import SVG (sketch)…"
-            sub=".svg · 2D paths/shapes → new sketch on a chosen plane"
+            label="Import SVG (sketch) — experimental…"
+            sub=".svg · small files only · large/detailed art may be slow or rejected"
             onClick={pickSketchSvg}
           />
         </div>
