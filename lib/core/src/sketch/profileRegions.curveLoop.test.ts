@@ -118,6 +118,77 @@ describe('detectSketchRegions — curve-loop walker', () => {
     expect(endpoints).toEqual(['0,0', '0,10']);
   });
 
+  it('detects an open spline + line as a loop (spline boundary edge)', () => {
+    // Open spline (0,0)->(10,0) bulging up, closed by a straight line back.
+    const entities: Record<string, SketchEntity> = {
+      curve: {
+        id: entityId('curve'),
+        type: 'spline',
+        points: [['0', '0'], ['3', '5'], ['7', '5'], ['10', '0']],
+      },
+      base: {
+        id: entityId('base'),
+        type: 'line',
+        start: ['10', '0'],
+        end: ['0', '0'],
+      },
+    };
+    const regions = detectSketchRegions(entities);
+    const loop = regions.find(r => r.entityIds.length === 2);
+    expect(loop).toBeDefined();
+    const sp = loop!.segments.find(s => s.kind === 'spline');
+    expect(sp).toBeDefined();
+    expect(sp!.splinePoints!.length).toBe(4);
+    expect(loop!.area).toBeGreaterThan(0);
+  });
+
+  it('detects a standalone ellipse as its own region', () => {
+    const entities: Record<string, SketchEntity> = {
+      e: {
+        id: entityId('e'),
+        type: 'ellipse',
+        center: ['0', '0'],
+        majorEnd: ['10', '0'], // major radius 10, no rotation
+        minorRadius: '5',
+      },
+    };
+    const regions = detectSketchRegions(entities);
+    const ell = regions.find(r => r.type === 'ellipse');
+    expect(ell).toBeDefined();
+    expect(ell!.ellipseMajorEnd).toEqual([10, 0]);
+    expect(ell!.ellipseMinorRadius).toBe(5);
+    expect(ell!.area).toBeCloseTo(Math.PI * 10 * 5, 4);
+    expect(ell!.vertices.length).toBeGreaterThan(8); // sampled perimeter
+  });
+
+  it('detects a self-closed spline as its own region', () => {
+    // First point == last → closed; the closing duplicate is dropped.
+    const entities: Record<string, SketchEntity> = {
+      s: {
+        id: entityId('s'),
+        type: 'spline',
+        points: [['0', '0'], ['10', '0'], ['10', '10'], ['0', '10'], ['0', '0']],
+      },
+    };
+    const regions = detectSketchRegions(entities);
+    const cs = regions.find(r => r.type === 'closedSpline');
+    expect(cs).toBeDefined();
+    expect(cs!.splineControlPoints).toHaveLength(4); // 5 - duplicate close
+    expect(cs!.area).toBeCloseTo(100, 6);
+  });
+
+  it('does not treat an open spline as a standalone region', () => {
+    const entities: Record<string, SketchEntity> = {
+      s: {
+        id: entityId('s'),
+        type: 'spline',
+        points: [['0', '0'], ['5', '5'], ['10', '0']], // open (first != last)
+      },
+    };
+    const regions = detectSketchRegions(entities);
+    expect(regions.find(r => r.type === 'closedSpline')).toBeUndefined();
+  });
+
   it('still detects a pure-line triangle (regression)', () => {
     const entities: Record<string, SketchEntity> = {
       a: { id: entityId('a'), type: 'line', start: ['0', '0'], end: ['10', '0'] },

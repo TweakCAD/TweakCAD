@@ -394,11 +394,26 @@ export function handleToolPointerUp(
   store.setActiveSnap(null);
 }
 
-/** Handle escape key */
-export function handleToolEscape(store: SketchEditorState): void {
-  if (!session) return;
+/**
+ * Handle escape key. Returns `true` when the Escape finalized an
+ * in-progress operation that should keep the tool active (the caller then
+ * does NOT revert to the select tool) — currently only the spline tool's
+ * "finish-and-keep" first Escape. All other tools cancel to idle and
+ * return `false` so the caller reverts to select.
+ */
+export function handleToolEscape(store: SketchEditorState): boolean {
+  if (!session) return false;
   store.setPreview(null);
   store.setActiveSnap(null);
+
+  // Spline: the first Escape finalizes the points placed so far (keeping
+  // them) and stays in the tool; a second Escape (now idle, no pending
+  // points) falls through to the switch below and exits like other tools.
+  // Matches Fusion's "Esc keeps your points" behavior.
+  if (session.tool === 'spline' && session.phase === 'drawing' && session.points.length >= 2) {
+    finishSpline(store);
+    return true;
+  }
 
   // If mid-drawing, cancel and return to idle phase. After the task-D
   // migration the line / circle tools no longer place orphan points on
@@ -446,6 +461,7 @@ export function handleToolEscape(store: SketchEditorState): void {
       session = { tool: 'select', phase: 'idle' };
       break;
   }
+  return false;
 }
 
 // ---- Line Tool ----

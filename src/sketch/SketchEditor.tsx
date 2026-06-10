@@ -294,8 +294,12 @@ export function SketchEditor({
         // mid-rectangle) AND revert the active tool to 'select'. Without
         // the tool revert the user stays in (say) Rectangle mode after
         // bailing out, which doesn't match common CAD muscle memory.
-        handleToolEscape(store.getState());
-        if (activeTool !== 'select') {
+        //
+        // Exception: when Escape *finalizes* a spline (keeping its points),
+        // it returns true — we stay in the spline tool so a second Escape
+        // exits, matching Fusion's behavior.
+        const finalized = handleToolEscape(store.getState());
+        if (!finalized && activeTool !== 'select') {
           onActiveToolChange?.('select');
         }
       }

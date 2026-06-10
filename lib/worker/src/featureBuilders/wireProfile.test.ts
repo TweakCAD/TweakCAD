@@ -173,6 +173,31 @@ describe('regionSegmentsToWire — arc midpoint', () => {
     expect(seg.end).toEqual([10, 0, 0]);
   });
 
+  it('maps a spline segment to a sampled interpolated wire edge', () => {
+    const region: Pick<SketchRegion, 'segments'> = {
+      segments: [
+        {
+          entityId: 's' as EntityId,
+          reversed: false,
+          kind: 'spline',
+          start: [0, 0],
+          end: [10, 0],
+          splinePoints: [[0, 0], [3, 5], [7, 5], [10, 0]],
+        },
+      ],
+    };
+    const wire = regionSegmentsToWire(region as SketchRegion, xyPlane);
+    expect(wire).toHaveLength(1);
+    const seg = wire[0]!;
+    expect(seg.kind).toBe('spline');
+    if (seg.kind !== 'spline') return;
+    // Catmull-Rom sampling yields more points than the 4 control points,
+    // and the curve passes through the first/last control point in world.
+    expect(seg.points.length).toBeGreaterThan(4);
+    expect(seg.points[0]).toEqual([0, 0, 0]);
+    expect(seg.points[seg.points.length - 1]).toEqual([10, 0, 0]);
+  });
+
   it('regression: rect+inscribed-circle bottom-left corner arc midpoint', () => {
     // Lifted from the appInit demo + the planar-graph diagnostic output.
     // Arc bounds the bottom-left corner region (interior at (-18,-32) in

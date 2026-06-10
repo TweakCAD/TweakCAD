@@ -1567,7 +1567,7 @@ export async function executeListSketchRegions(
   host: ToolHost,
 ): Promise<Result<Array<{
   id: string;
-  type: 'circle' | 'polygon';
+  type: 'circle' | 'polygon' | 'ellipse' | 'closedSpline';
   area: number;
   center: [number, number];
   wireEntityIds: string[];

@@ -49,7 +49,16 @@ export type WireSegment =
    * `makeBezierEdge` — the curve is exact (no polygonalization), so an
    * extruded Bézier boundary produces a single lateral face per curve.
    */
-  | { kind: 'bezier'; start: Vec3; cp1: Vec3; cp2: Vec3; end: Vec3 };
+  | { kind: 'bezier'; start: Vec3; cp1: Vec3; cp2: Vec3; end: Vec3 }
+  /**
+   * Open interpolating B-spline edge through `points` (≥2, in order).
+   * Backed by occt-wasm's `interpolatePoints(points, periodic=false)`
+   * (OCCT `GeomAPI_Interpolate`). Used for a `spline` sketch curve on a
+   * profile boundary: the worker samples the editor's Catmull-Rom curve
+   * into `points` so the extruded edge follows the same shape the user
+   * drew, and OCCT fits one smooth B-spline edge through them.
+   */
+  | { kind: 'spline'; points: Vec3[] };
 
 /** Resolved 2D profile (closed wire) ready for extrusion.
  *
@@ -59,7 +68,16 @@ export type WireSegment =
  * lines + arcs and build via the general `'polygon'` / `'wire'` paths.
  */
 export type ResolvedProfile = {
-  type: 'circle' | 'polygon' | 'wire';
+  type: 'circle' | 'polygon' | 'wire' | 'closedSpline';
+  /**
+   * Polygon corners (`'polygon'`), or — for `'closedSpline'` profiles —
+   * the perimeter point ring (open, first point not repeated). A
+   * `'closedSpline'` builds a single closed periodic B-spline face through
+   * this ring via `interpolatePoints(…, periodic=true)`. It backs both
+   * standalone ellipses (occt-wasm's `makeEllipseEdge` can't express an
+   * in-plane-rotated ellipse) and standalone closed splines (e.g. an
+   * imported DXF of self-closing curves).
+   */
   vertices?: Vec3[];
   /**
    * For `'wire'` profiles: ordered closed-loop segments. Each segment

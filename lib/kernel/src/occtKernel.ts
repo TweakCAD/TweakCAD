@@ -16,6 +16,7 @@ import { bodyId as makeBodyId, faceId as makeFaceId, edgeId as makeEdgeId } from
 import type { StableFaceId, StableEdgeId } from '@tweakcad/core/src/ids.ts';
 import type { CadKernel } from './interface.ts';
 import { build3MF, EXPORT_MIME } from './occtExports.ts';
+import { dedupePointsForInterpolation } from './splineDedup.ts';
 import { FINE_TESSELLATION } from './types.ts';
 import type {
   KernelBody,
@@ -411,6 +412,9 @@ export class OcctKernel implements CadKernel {
         case 'wire':
           faceShape = this.makeWireFace(k, profile);
           break;
+        case 'closedSpline':
+          faceShape = this.makeClosedSplineFace(k, profile);
+          break;
       }
 
       return ok(this.storeFace(faceShape, ''));
@@ -438,6 +442,31 @@ export class OcctKernel implements CadKernel {
     const [nx, ny, nz] = profile.normal;
 
     const edge = k.makeCircleEdge({ x: cx, y: cy, z: cz }, { x: nx, y: ny, z: nz }, radius);
+    const wire = k.makeWire([edge]);
+    const face = k.makeFace(wire);
+    k.release(wire);
+    k.release(edge);
+    return face;
+  }
+
+  /**
+   * Build a face from a `'closedSpline'` profile — a standalone closed
+   * loop supplied pre-sampled (in world space) on `profile.vertices`.
+   * OCCT fits a single closed periodic B-spline through the ring via
+   * `interpolatePoints(…, true)`, so the result is one smooth face.
+   *
+   * Backs both standalone ellipses and standalone closed splines. For
+   * ellipses we sample-and-interpolate rather than call `makeEllipseEdge`
+   * because occt-wasm's ellipse edge builder takes only (center, normal,
+   * major, minor) with no in-plane major-axis direction — it can't
+   * represent a rotated ellipse, which our sketches allow.
+   */
+  private makeClosedSplineFace(k: UpstreamKernel, profile: ResolvedProfile): ShapeHandle {
+    const ring = dedupePointsForInterpolation(profile.vertices ?? [], true);
+    if (ring.length < 3) {
+      throw new Error(`closedSpline profile requires at least 3 distinct perimeter points (got ${ring.length})`);
+    }
+    const edge = k.interpolatePoints(ring.map(p => ({ x: p[0], y: p[1], z: p[2] })), true);
     const wire = k.makeWire([edge]);
     const face = k.makeFace(wire);
     k.release(wire);
@@ -511,6 +540,16 @@ export class OcctKernel implements CadKernel {
             ]),
           );
           break;
+        case 'spline': {
+          const pts = dedupePointsForInterpolation(seg.points, false);
+          if (pts.length < 2) {
+            throw new Error('Spline wire segment collapsed to <2 distinct points');
+          }
+          edgeHandles.push(
+            k.interpolatePoints(pts.map(p => ({ x: p[0], y: p[1], z: p[2] })), false),
+          );
+          break;
+        }
       }
     }
     const wire = k.makeWire(edgeHandles);

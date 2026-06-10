@@ -226,7 +226,7 @@ export function handleEllipseClick(
 }
 
 export function handleSplineClick(
-  store: SketchEditorState,
+  _store: SketchEditorState,
   x: number,
   y: number,
 ): void {
@@ -235,10 +235,9 @@ export function handleSplineClick(
   const next: [number, number][] = [...s.points, [x, y]];
   setSession({ tool: 'spline', phase: 'drawing', points: next });
 
-  // No commit on click; commit on double-click / Enter via finishSpline()
-  // which the dispatcher invokes from handleToolPointerUp on double click.
-  // For simplicity, treat 8+ points as auto-finish.
-  if (next.length >= 16) finishSpline(store);
+  // No auto-finish cap — the user decides how many points to place and
+  // finishes explicitly via Enter or Escape (Escape now finalizes the
+  // points drawn so far rather than discarding them).
 }
 
 export function finishSpline(store: SketchEditorState): void {

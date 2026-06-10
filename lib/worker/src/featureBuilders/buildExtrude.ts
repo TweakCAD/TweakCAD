@@ -19,6 +19,8 @@ import type { KernelBody, ResolvedProfile } from '@tweakcad/kernel/src/types.ts'
 import type { BuildContext, BuildResult } from '@tweakcad/core/src/features/contracts.ts';
 import { resolveProfile } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import type { SketchRegion, ResolvedProfileResult } from '@tweakcad/core/src/sketch/profileRegions.ts';
+import { sampleEllipse, catmullRomClosed } from '@tweakcad/core/src/sketch/curveSampling.ts';
+import { ringSelfIntersects } from '@tweakcad/core/src/sketch/selfIntersection.ts';
 import type {
   ResolvedSketchEntityData,
   ResolvedSketchPlaneData,
@@ -36,6 +38,14 @@ import {
  * and the resulting topology has degenerate edges.
  */
 const THROUGH_ALL_SLOP_MM = 5;
+
+/** Perimeter samples handed to the kernel for a standalone ellipse — a
+ *  periodic B-spline is fit through them. 48 is smooth past eye accuracy. */
+const ELLIPSE_KERNEL_SAMPLES = 48;
+
+/** Catmull-Rom samples per control-point span for a standalone closed
+ *  spline. Dense enough that the periodic B-spline fit follows the curve. */
+const CLOSED_SPLINE_SUBDIVISIONS = 8;
 
 /**
  * Build an extrude feature.
@@ -292,6 +302,38 @@ export function regionToKernelProfile(
     }
   }
 
+  if (region.type === 'ellipse') {
+    // Sample the ellipse perimeter in sketch-2D (center + major-axis
+    // endpoint + minor radius all live there, so the in-plane rotation is
+    // preserved), then lift each point to world. The kernel fits one
+    // periodic B-spline face through the ring.
+    const major = region.ellipseMajorEnd ?? region.center;
+    const minor = region.ellipseMinorRadius ?? 0;
+    const ring2d = sampleEllipse(region.center, major, minor, ELLIPSE_KERNEL_SAMPLES);
+    const vertices = ring2d.map(p => sketchToWorld(p, plane));
+    const center = sketchToWorld(region.center, plane);
+    return { type: 'closedSpline', vertices, center, normal, origin: center, uAxis, vAxis };
+  }
+
+  if (region.type === 'closedSpline') {
+    const ctrl = region.splineControlPoints ?? [];
+    // Sample a *periodic* Catmull-Rom through the control ring — seam-free,
+    // so the curve follows the drawn shape all the way around (the editor's
+    // open Catmull-Rom kinks at the closure, which both looked wrong and
+    // tripped the self-intersection guard on otherwise-simple loops).
+    const ringSamples = catmullRomClosed(ctrl, CLOSED_SPLINE_SUBDIVISIONS);
+    // Self-intersection check on the ACTUAL sampled boundary OCCT will
+    // build — a self-crossing curve doesn't bound a valid face and makes
+    // makeFace spin (stuck "rebuilding"). Reject up front with a clear
+    // error instead of hanging the worker.
+    if (ringSelfIntersects(ringSamples)) {
+      throw new Error('Closed spline self-intersects — cannot form a face. Simplify the curve or split it into non-crossing loops.');
+    }
+    const vertices = ringSamples.map(p => sketchToWorld(p, plane));
+    const center = sketchToWorld(region.center, plane);
+    return { type: 'closedSpline', vertices, center, normal, origin: center, uAxis, vAxis };
+  }
+
   if (region.type === 'polygon') {
     // (Rectangle fast path retired in task F — invariant #11 dropped
     // the `SketchRectangleEntity` composite, so this branch is now
@@ -516,6 +558,8 @@ function offsetProfile(profile: ResolvedProfile, distance: number): ResolvedProf
             cp2: shiftVec(seg.cp2),
             end: shiftVec(seg.end),
           };
+        case 'spline':
+          return { ...seg, points: seg.points.map(shiftVec) };
       }
     });
   }

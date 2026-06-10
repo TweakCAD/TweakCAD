@@ -14,6 +14,7 @@ import type { SketchEntity, ProfileRef } from '../document/schema.ts';
 import type { EntityId, FeatureId } from '../ids.ts';
 import { detectIntersectionRegions } from './planarGraph.ts';
 import type { PlanarFace } from './planarGraph.ts';
+import { catmullRomSpline, sampleEllipse } from './curveSampling.ts';
 
 /**
  * One segment of a region boundary. The optional `kind` + geometry
@@ -29,7 +30,7 @@ export type SketchRegionSegment = {
   entityId: EntityId;
   reversed: boolean;
   /** Native curve type. `undefined` falls back to line (legacy). */
-  kind?: 'line' | 'arc' | 'bezier';
+  kind?: 'line' | 'arc' | 'bezier' | 'spline';
   /**
    * Start point in sketch-local 2D coords. Required when `kind` is set.
    * For curve-loop segments the start/end are already oriented in loop
@@ -52,12 +53,18 @@ export type SketchRegionSegment = {
   bezierCp1?: [number, number];
   /** Bézier-only: second off-curve control pole (before `end`). */
   bezierCp2?: [number, number];
+  /**
+   * Spline-only: ordered Catmull-Rom control points, oriented in loop
+   * traversal order (`start` == first, `end` == last). The worker samples
+   * the curve through these for the kernel B-spline fit.
+   */
+  splinePoints?: [number, number][];
 };
 
 export type SketchRegion = {
   id: string;
   label: string;
-  type: 'circle' | 'polygon';
+  type: 'circle' | 'polygon' | 'ellipse' | 'closedSpline';
   entityIds: EntityId[];
   /** All entity IDs participating in this region (outer boundary + any inner holes). */
   allEntityIds: EntityId[];
@@ -65,6 +72,16 @@ export type SketchRegion = {
   vertices: [number, number][];
   center: [number, number];
   area: number;
+  /** Ellipse-only: absolute major-axis endpoint (encodes radius + rotation). */
+  ellipseMajorEnd?: [number, number];
+  /** Ellipse-only: minor radius (mm). */
+  ellipseMinorRadius?: number;
+  /**
+   * Closed-spline-only: the spline's control points (the closing
+   * duplicate, if any, removed), in sketch-local 2D. The kernel fits a
+   * periodic B-spline through these.
+   */
+  splineControlPoints?: [number, number][];
 };
 
 // --- Profile Resolution Types ---
@@ -161,20 +178,20 @@ function normalizeSegments(segments: SketchRegionSegment[]): SketchRegionSegment
 }
 
 /**
- * One open boundary edge — a `line`, `arc`, or cubic `bezier` entity
- * reduced to its two endpoints plus the analytic data the kernel needs
- * to rebuild the exact curve. Closed entities (circle, full ellipse)
- * are NOT edges; they're standalone single-entity regions.
+ * One open boundary edge — a `line`, `arc`, cubic `bezier`, or `spline`
+ * entity reduced to its two endpoints plus the analytic data the kernel
+ * needs to rebuild the curve. Closed entities (circle, full ellipse) are
+ * NOT edges; they're standalone single-entity regions.
  *
- * `start`/`end` (and, for an arc, its angles; for a Bézier, its poles)
- * are always given in this edge's natural orientation. The loop walker
- * pre-orients each edge into traversal order via {@link reverseCurveEdge}
- * before emitting a region segment, so no `reversed` flag is needed
- * downstream.
+ * `start`/`end` (and, for an arc, its angles; for a Bézier, its poles;
+ * for a spline, its control points) are always given in this edge's
+ * natural orientation. The loop walker pre-orients each edge into
+ * traversal order via {@link reverseCurveEdge} before emitting a region
+ * segment, so no `reversed` flag is needed downstream.
  */
 type CurveEdge = {
   entity: SketchEntity;
-  kind: 'line' | 'arc' | 'bezier';
+  kind: 'line' | 'arc' | 'bezier' | 'spline';
   start: [number, number];
   end: [number, number];
   arcCenter?: [number, number];
@@ -183,12 +200,17 @@ type CurveEdge = {
   arcEndAngle?: number;
   bezierCp1?: [number, number];
   bezierCp2?: [number, number];
+  splinePoints?: [number, number][];
 };
 
 /** Number of straight facets used to sample a curve's *vertices* (for
  *  area / centroid / point-in-region only — the kernel still receives the
  *  analytic curve as a single BREP edge, so this never reaches geometry). */
 const CURVE_VERTEX_SAMPLES = 8;
+
+/** Perimeter samples for a standalone ellipse region's vertices/centroid.
+ *  Independent of the kernel's perimeter fit — see `detectEllipseRegions`. */
+const ELLIPSE_VERTEX_SAMPLES = 32;
 
 function cubicBezierPoint(
   p0: [number, number], c1: [number, number],
@@ -264,6 +286,22 @@ function getCurveEdge(entity: SketchEntity): CurveEdge | null {
     };
   }
 
+  if (entity.type === 'spline') {
+    const pts: [number, number][] = [];
+    for (const p of entity.points) {
+      const px = expressionToNumber(p[0]);
+      const py = expressionToNumber(p[1]);
+      if (px === null || py === null) return null;
+      pts.push([px, py]);
+    }
+    // Need ≥2 control points and distinct endpoints to be an open edge.
+    if (pts.length < 2) return null;
+    const start = pts[0]!;
+    const end = pts[pts.length - 1]!;
+    if (distance(start, end) <= EPSILON) return null;
+    return { entity, kind: 'spline', start, end, splinePoints: pts };
+  }
+
   return null;
 }
 
@@ -286,6 +324,12 @@ function reverseCurveEdge(e: CurveEdge): CurveEdge {
       bezierCp1: e.bezierCp2!, bezierCp2: e.bezierCp1!,
     };
   }
+  if (e.kind === 'spline') {
+    return {
+      entity: e.entity, kind: 'spline', start: e.end, end: e.start,
+      splinePoints: [...e.splinePoints!].reverse(),
+    };
+  }
   return { entity: e.entity, kind: 'line', start: e.end, end: e.start };
 }
 
@@ -305,6 +349,8 @@ function edgeToSegment(e: CurveEdge): SketchRegionSegment {
   } else if (e.kind === 'bezier') {
     seg.bezierCp1 = e.bezierCp1!;
     seg.bezierCp2 = e.bezierCp2!;
+  } else if (e.kind === 'spline') {
+    seg.splinePoints = e.splinePoints!;
   }
   return seg;
 }
@@ -324,6 +370,13 @@ function sampleEdgeVertices(e: CurveEdge): [number, number][] {
       pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
     }
     return pts;
+  }
+  if (e.kind === 'spline') {
+    // Sample the Catmull-Rom curve through the control points, then drop
+    // the final point so concatenation around the loop doesn't duplicate
+    // the shared junction (matches the line/arc/bezier convention).
+    const sampled = catmullRomSpline(e.splinePoints!, 4);
+    return sampled.length > 1 ? sampled.slice(0, -1) : sampled;
   }
   // bezier
   const pts: [number, number][] = [];
@@ -452,6 +505,96 @@ function detectCircleRegions(entities: Record<EntityId, SketchEntity>): SketchRe
 }
 
 /**
+ * A full ellipse is a closed curve, so — like a circle — it's its own
+ * standalone single-entity region. The region carries the ellipse params
+ * (center + major-axis endpoint + minor radius); the kernel samples the
+ * perimeter and fits one periodic B-spline face (occt-wasm's ellipse-edge
+ * builder can't represent a rotated ellipse). Sampled `vertices` are
+ * stored for area / centroid / point-in-region tests.
+ */
+function detectEllipseRegions(entities: Record<EntityId, SketchEntity>): SketchRegion[] {
+  const regions: SketchRegion[] = [];
+
+  for (const entity of Object.values(entities)) {
+    if (entity.type !== 'ellipse' || entity.construction) continue;
+    const cx = expressionToNumber(entity.center[0]);
+    const cy = expressionToNumber(entity.center[1]);
+    const mx = expressionToNumber(entity.majorEnd[0]);
+    const my = expressionToNumber(entity.majorEnd[1]);
+    const minorRadius = expressionToNumber(entity.minorRadius);
+    if (cx === null || cy === null || mx === null || my === null || minorRadius === null) continue;
+    const majorRadius = Math.hypot(mx - cx, my - cy);
+    if (majorRadius <= EPSILON || minorRadius <= EPSILON) continue;
+
+    const center: [number, number] = [cx, cy];
+    regions.push({
+      id: `region:${String(entity.id)}`,
+      label: 'Profile ellipse',
+      type: 'ellipse',
+      entityIds: [entity.id],
+      allEntityIds: [entity.id],
+      segments: [{ entityId: entity.id, reversed: false }],
+      vertices: sampleEllipse(center, [mx, my], minorRadius, ELLIPSE_VERTEX_SAMPLES),
+      center,
+      area: Math.PI * majorRadius * minorRadius,
+      ellipseMajorEnd: [mx, my],
+      ellipseMinorRadius: minorRadius,
+    });
+  }
+
+  return regions;
+}
+
+/**
+ * A *self-closed* spline (first control point ≈ last) is a closed curve,
+ * so — like a circle or ellipse — it's its own standalone region. Common
+ * in imported art (e.g. a DXF of closed organic shapes). The kernel fits
+ * one periodic B-spline face through the control points.
+ *
+ * Open splines are NOT handled here; they're loop-boundary edges picked
+ * up by `detectCurveLoopRegions` (via `getCurveEdge`).
+ */
+function detectClosedSplineRegions(entities: Record<EntityId, SketchEntity>): SketchRegion[] {
+  const regions: SketchRegion[] = [];
+
+  for (const entity of Object.values(entities)) {
+    if (entity.type !== 'spline' || entity.construction) continue;
+    const pts: [number, number][] = [];
+    let bad = false;
+    for (const p of entity.points) {
+      const px = expressionToNumber(p[0]);
+      const py = expressionToNumber(p[1]);
+      if (px === null || py === null) { bad = true; break; }
+      pts.push([px, py]);
+    }
+    if (bad || pts.length < 3) continue;
+
+    // Closed iff first ≈ last. Drop the duplicate closing point so the
+    // periodic fit doesn't see a doubled vertex.
+    const first = pts[0]!;
+    const last = pts[pts.length - 1]!;
+    if (distance(first, last) > EPSILON) continue; // open spline → handled as an edge
+    const ring = pts.slice(0, -1);
+    if (ring.length < 3) continue;
+
+    regions.push({
+      id: `region:${String(entity.id)}`,
+      label: 'Profile closed spline',
+      type: 'closedSpline',
+      entityIds: [entity.id],
+      allEntityIds: [entity.id],
+      segments: [{ entityId: entity.id, reversed: false }],
+      vertices: ring,
+      center: polygonCenter(ring),
+      area: Math.abs(polygonArea(ring)),
+      splineControlPoints: ring,
+    });
+  }
+
+  return regions;
+}
+
+/**
  * Convert a PlanarFace (from the planar graph detector) into a SketchRegion.
  *
  * Per-segment geometry (start / end / arcCenter / arcRadius / etc.) is
@@ -510,6 +653,8 @@ export function detectSketchRegions(entities: Record<EntityId, SketchEntity>): S
   // through `detectCurveLoopRegions`.
   const simpleRegions = [
     ...detectCircleRegions(entities),
+    ...detectEllipseRegions(entities),
+    ...detectClosedSplineRegions(entities),
     ...detectCurveLoopRegions(entities),
   ];
 
@@ -594,6 +739,8 @@ export function pointInRegion(point: [number, number], region: SketchRegion): bo
   if (region.type === 'circle') {
     return pointInCircleRegion(point, region.center, region.area);
   }
+  // ellipse / closedSpline carry a sampled perimeter in `vertices`, so the
+  // polygon ray-cast works the same as for polygon regions.
   return pointInPolygon(point, region.vertices);
 }
 

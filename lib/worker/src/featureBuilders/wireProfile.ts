@@ -12,8 +12,13 @@
 
 import type { Vec3 } from '@tweakcad/core/src/math.ts';
 import type { SketchRegion } from '@tweakcad/core/src/sketch/profileRegions.ts';
+import { catmullRomSpline } from '@tweakcad/core/src/sketch/curveSampling.ts';
 import type { WireSegment } from '@tweakcad/kernel/src/types.ts';
 import type { ResolvedSketchPlaneData } from './buildSketch.ts';
+
+/** Catmull-Rom samples per control-point span when turning a `spline`
+ *  boundary into kernel B-spline interpolation points. */
+const SPLINE_WIRE_SUBDIVISIONS = 8;
 
 /**
  * Map a sketch-local 2D point through the resolved sketch plane into a
@@ -46,7 +51,7 @@ export function sketchToWorld(
  * cheaper kernel call).
  */
 export function regionHasCurveSegments(region: SketchRegion): boolean {
-  return region.segments.some(s => s.kind === 'arc' || s.kind === 'bezier');
+  return region.segments.some(s => s.kind === 'arc' || s.kind === 'bezier' || s.kind === 'spline');
 }
 
 /**
@@ -67,7 +72,16 @@ export function regionSegmentsToWire(
   const out: WireSegment[] = [];
   for (const seg of region.segments) {
     if (!seg.start || !seg.end) continue; // legacy segment with no geometry
-    if (seg.kind === 'bezier' && seg.bezierCp1 !== undefined && seg.bezierCp2 !== undefined) {
+    if (seg.kind === 'spline' && seg.splinePoints !== undefined && seg.splinePoints.length >= 2) {
+      // Sample the editor's Catmull-Rom curve through the control points
+      // (already oriented in loop order) so the kernel B-spline follows
+      // the same shape the user drew, then map the polyline to world.
+      const sampled = catmullRomSpline(seg.splinePoints, SPLINE_WIRE_SUBDIVISIONS);
+      out.push({
+        kind: 'spline',
+        points: sampled.map(p => sketchToWorld(p, plane)),
+      });
+    } else if (seg.kind === 'bezier' && seg.bezierCp1 !== undefined && seg.bezierCp2 !== undefined) {
       // Cubic Bézier — poles are already oriented in loop order by the
       // curve-loop walker, so map straight through to a native BREP
       // Bézier edge (one lateral face per curve, no polygonalization).
