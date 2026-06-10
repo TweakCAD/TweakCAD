@@ -95,6 +95,37 @@ export function computeSolverPoints(
 }
 
 /**
+ * Extra DOF contributed by points the solver intentionally skipped.
+ *
+ * `computeSolverPoints` omits free spline/bezier control poles (the OOM
+ * guard) — they constrain nothing, so pushing them only bloats the WASM
+ * system. The side effect is that `GcsSystem.dof()` never counts them
+ * either: a sketch made of nothing but free curve poles pushes 0 points,
+ * so `dof()` reports 0 and the "fully constrained" Lock badge becomes a
+ * false positive. Each skipped point still has two free coordinates, so
+ * its real remaining freedom is 2 DOF. This figure is added back to the
+ * REPORTED dof only — it does not change which points are solved (the
+ * skip stays intact).
+ *
+ * Every id in `solverPoints` originates from `points`, so the skipped
+ * set is exactly the points absent from `solverPoints`.
+ *
+ * Note: this treats each skipped pole as fully free (2 DOF). If a future
+ * change lets a constraint reference a pole without pushing it into the
+ * solver, that pole would be over-counted here and this needs revisiting.
+ */
+export function excludedPointDof(
+  points: ReadonlyMap<SketchPointId, SketchPoint>,
+  solverPoints: ReadonlySet<SketchPointId>,
+): number {
+  let excluded = 0;
+  for (const id of points.keys()) {
+    if (!solverPoints.has(id)) excluded++;
+  }
+  return excluded * 2;
+}
+
+/**
  * Tolerance the post-solve residual check uses to decide "satisfied
  * enough." Chosen so over-constraint rejection in
  * `applyConstraintPipeline.ts` behaves predictably (pin two endpoints,
@@ -538,8 +569,17 @@ export class PlaneGCSSolver implements ISketchSolver {
     // free coordinate / radius pinned by some constraint). Defensive `??`
     // for the unlikely path where the underlying solver returns a
     // non-number (e.g. WASM in a partial-failure state mid-rebuild).
+    //
+    // `dof()` only counts points actually pushed into the system, so the
+    // free spline/bezier poles that `computeSolverPoints` skips are
+    // invisible to it. Add their remaining freedom back (2 each) so the
+    // figure reflects the whole sketch — otherwise an all-free-curve
+    // sketch reports dof 0 and the Lock badge falsely reads "fully
+    // constrained".
     const dofRaw = (w as unknown as { gcs?: { dof?: () => number } }).gcs?.dof?.();
-    const dof = typeof dofRaw === 'number' && Number.isFinite(dofRaw) ? Math.max(0, dofRaw) : undefined;
+    const dof = typeof dofRaw === 'number' && Number.isFinite(dofRaw)
+      ? Math.max(0, dofRaw) + excludedPointDof(points, solverPoints)
+      : undefined;
 
     return {
       points: outPoints,

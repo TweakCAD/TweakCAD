@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { computeSolverPoints } from './PlaneGCSSolver.ts';
+import { computeSolverPoints, excludedPointDof } from './PlaneGCSSolver.ts';
 import type {
   SketchPoint,
   SketchGeometry,
@@ -63,5 +63,45 @@ describe('computeSolverPoints', () => {
     const needed = computeSolverPoints(points, geometries, new Map(), new Set());
     expect([...needed].sort()).toEqual(['ac', 'ae', 'as', 'c']);
     expect(needed.has(pid('free'))).toBe(false);
+  });
+});
+
+describe('excludedPointDof', () => {
+  it('reports 2 DOF per skipped free control pole (all-free spline → under-constrained)', () => {
+    // A closed spline of free control poles — the shape an imported DXF of
+    // closed splines produces. None enter the solver, so `dof()` alone would
+    // read 0 and the Lock badge would falsely show "fully constrained".
+    const points = ptMap(['s1', 's2', 's3', 's4']);
+    const geometries = new Map<SketchGeometryId, SketchGeometry>([
+      [gid('S'), { id: gid('S'), type: 'spline', pointIds: [pid('s1'), pid('s2'), pid('s3'), pid('s4')] } as SketchGeometry],
+    ]);
+    const solverPoints = computeSolverPoints(points, geometries, new Map(), new Set());
+    expect(solverPoints.size).toBe(0);
+    // Four free poles × 2 coordinates = 8 DOF of real remaining freedom.
+    expect(excludedPointDof(points, solverPoints)).toBe(8);
+  });
+
+  it('reports 0 when every point is in the solver (genuinely constrained skeleton)', () => {
+    // A line whose endpoints both enter the solver — nothing is skipped, so
+    // the reported dof is exactly what `GcsSystem.dof()` returns (no padding).
+    const points = ptMap(['p1', 'p2']);
+    const geometries = new Map<SketchGeometryId, SketchGeometry>([
+      [gid('L'), { id: gid('L'), type: 'line', startId: pid('p1'), endId: pid('p2') } as SketchGeometry],
+    ]);
+    const solverPoints = computeSolverPoints(points, geometries, new Map(), new Set());
+    expect(solverPoints.size).toBe(2);
+    expect(excludedPointDof(points, solverPoints)).toBe(0);
+  });
+
+  it('counts only the skipped poles in a mixed line + free-spline sketch', () => {
+    // Line endpoints enter the solver; the three free spline poles do not.
+    const points = ptMap(['p1', 'p2', 's1', 's2', 's3']);
+    const geometries = new Map<SketchGeometryId, SketchGeometry>([
+      [gid('L'), { id: gid('L'), type: 'line', startId: pid('p1'), endId: pid('p2') } as SketchGeometry],
+      [gid('S'), { id: gid('S'), type: 'spline', pointIds: [pid('s1'), pid('s2'), pid('s3')] } as SketchGeometry],
+    ]);
+    const solverPoints = computeSolverPoints(points, geometries, new Map(), new Set());
+    // Three skipped poles × 2 = 6 DOF added on top of whatever the line contributes.
+    expect(excludedPointDof(points, solverPoints)).toBe(6);
   });
 });
