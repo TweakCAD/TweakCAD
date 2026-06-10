@@ -82,6 +82,16 @@ export type SketchRegion = {
    * periodic B-spline through these.
    */
   splineControlPoints?: [number, number][];
+  /**
+   * Regions directly nested inside this one — they punch holes through
+   * it. A circle drawn inside a square makes the square's region an
+   * annulus (`holes: [circleRegion]`) while the circle is still its own
+   * separate region. Assigned by `assignHoles` after detection. Selection
+   * and the extrude face both subtract these. One level only (a hole's own
+   * holes live on the hole region), which is enough because each region
+   * holds just its *direct* children.
+   */
+  holes?: SketchRegion[];
 };
 
 // --- Profile Resolution Types ---
@@ -685,7 +695,54 @@ export function detectSketchRegions(entities: Record<EntityId, SketchEntity>): S
     }
   }
 
-  return merged.sort((a, b) => b.area - a.area || a.id.localeCompare(b.id));
+  return assignHoles(merged.sort((a, b) => b.area - a.area || a.id.localeCompare(b.id)));
+}
+
+/**
+ * Turn containment into holes: a region fully inside another *separate*
+ * loop becomes that region's hole, so a circle inside a square makes the
+ * square's region an annulus while the circle stays its own region. This
+ * is the containment analogue of what the planar graph already does for
+ * intersections — every bounded area is an independently-selectable
+ * profile.
+ *
+ * Only loops with **disjoint entity sets** nest: a true inner loop shares
+ * no edges with its container. This is what stops an *intersection*
+ * sub-face (the lens between two overlapping circles shares both circle
+ * entities) from being mistaken for a hole of the full circle — those are
+ * already separate faces from the planar graph, not nested loops.
+ */
+export function assignHoles(regions: SketchRegion[]): SketchRegion[] {
+  const n = regions.length;
+  const entitySets = regions.map(r => new Set(r.allEntityIds.map(String)));
+  const disjoint = (i: number, j: number): boolean => {
+    for (const e of entitySets[i]!) if (entitySets[j]!.has(e)) return false;
+    return true;
+  };
+
+  // parent[i] = the smallest separate region that strictly contains i.
+  const parent: number[] = new Array(n).fill(-1);
+  for (let i = 0; i < n; i++) {
+    let bestArea = Infinity;
+    for (let j = 0; j < n; j++) {
+      if (i === j) continue;
+      if (
+        regions[j]!.area > regions[i]!.area &&
+        regions[j]!.area < bestArea &&
+        disjoint(i, j) &&
+        pointInRegionOuter(regions[i]!.center, regions[j]!)
+      ) {
+        bestArea = regions[j]!.area;
+        parent[i] = j;
+      }
+    }
+  }
+
+  // Each region's holes = its direct children.
+  return regions.map((region, i) => {
+    const holes = regions.filter((_, j) => parent[j] === i);
+    return holes.length > 0 ? { ...region, holes } : region;
+  });
 }
 
 // --- Profile Resolution ---
@@ -733,15 +790,34 @@ function pointInCircleRegion(point: [number, number], center: [number, number], 
 }
 
 /**
- * Test whether a 2D point is inside a detected region.
+ * Test whether a 2D point is inside a region's *outer* boundary, ignoring
+ * any nested holes. Used for containment (during hole assignment) and as
+ * the basis of the hole-aware {@link pointInRegion}.
  */
-export function pointInRegion(point: [number, number], region: SketchRegion): boolean {
+export function pointInRegionOuter(point: [number, number], region: SketchRegion): boolean {
   if (region.type === 'circle') {
     return pointInCircleRegion(point, region.center, region.area);
   }
   // ellipse / closedSpline carry a sampled perimeter in `vertices`, so the
   // polygon ray-cast works the same as for polygon regions.
   return pointInPolygon(point, region.vertices);
+}
+
+/**
+ * Test whether a 2D point is inside a region's *fillable* area — inside its
+ * outer boundary and NOT inside any nested hole. So clicking the gap of an
+ * annulus selects the annulus, while clicking its centre selects the inner
+ * disc region (which is the hole). Only direct holes are checked; deeper
+ * nesting resolves because each hole is itself a region with its own holes.
+ */
+export function pointInRegion(point: [number, number], region: SketchRegion): boolean {
+  if (!pointInRegionOuter(point, region)) return false;
+  if (region.holes) {
+    for (const hole of region.holes) {
+      if (pointInRegionOuter(point, hole)) return false;
+    }
+  }
+  return true;
 }
 
 /**

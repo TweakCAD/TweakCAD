@@ -400,21 +400,22 @@ export class OcctKernel implements CadKernel {
   async createSketchFace(profile: ResolvedProfile): Promise<Result<KernelFace, KernelError>> {
     try {
       const k = this.getKernel();
-      let faceShape: ShapeHandle;
 
-      switch (profile.type) {
-        case 'circle':
-          faceShape = this.makeCircleFace(k, profile);
-          break;
-        case 'polygon':
-          faceShape = this.makePolygonFace(k, profile);
-          break;
-        case 'wire':
-          faceShape = this.makeWireFace(k, profile);
-          break;
-        case 'closedSpline':
-          faceShape = this.makeClosedSplineFace(k, profile);
-          break;
+      const outerWire = this.buildProfileWire(k, profile);
+      let faceShape = k.makeFace(outerWire);
+      k.release(outerWire);
+
+      // Even-odd holes: punch each inner profile's boundary wire through
+      // the face (a washer = square/circle outer + circle hole, in one
+      // operation). The worker decides which selected profiles are holes —
+      // see `profileNesting.ts`.
+      const holes = profile.holes ?? [];
+      if (holes.length > 0) {
+        const holeWires = holes.map(h => this.buildProfileWire(k, h));
+        const holed = k.addHolesInFace(faceShape, holeWires);
+        k.release(faceShape);
+        for (const w of holeWires) k.release(w);
+        faceShape = holed;
       }
 
       return ok(this.storeFace(faceShape, ''));
@@ -426,12 +427,26 @@ export class OcctKernel implements CadKernel {
     }
   }
 
-  // `makeRectangleFace` was retired in task F together with the
-  // worker's `ResolvedRectangle` and the schema's `SketchRectangleEntity`
-  // (invariant #11 — no composite entities). Rectangles arrive as 4 lines
-  // and build via the general polygon / wire face paths.
+  /**
+   * Build the closed boundary wire for a profile, dispatching on type.
+   * Shared by the outer face and by every hole — a hole is just another
+   * profile whose wire gets punched into the face via `addHolesInFace`.
+   *
+   * `makeRectangleFace` was retired in task F (invariant #11 — no composite
+   * entities); rectangles arrive as 4 lines and build via the polygon path.
+   */
+  private buildProfileWire(k: UpstreamKernel, profile: ResolvedProfile): ShapeHandle {
+    switch (profile.type) {
+      case 'circle':       return this.makeCircleWire(k, profile);
+      case 'polygon':      return this.makePolygonWire(k, profile);
+      case 'wire':         return this.makeSegmentWire(k, profile);
+      case 'closedSpline': return this.makeClosedSplineWire(k, profile);
+      default:
+        throw new Error(`Unsupported profile type for wire: ${(profile as ResolvedProfile).type}`);
+    }
+  }
 
-  private makeCircleFace(k: UpstreamKernel, profile: ResolvedProfile): ShapeHandle {
+  private makeCircleWire(k: UpstreamKernel, profile: ResolvedProfile): ShapeHandle {
     const radius = profile.radius ?? (profile.diameter !== undefined ? profile.diameter / 2 : 25);
     if (radius <= 0) {
       throw new Error(`Circle profile radius must be positive, got ${radius}`);
@@ -443,17 +458,15 @@ export class OcctKernel implements CadKernel {
 
     const edge = k.makeCircleEdge({ x: cx, y: cy, z: cz }, { x: nx, y: ny, z: nz }, radius);
     const wire = k.makeWire([edge]);
-    const face = k.makeFace(wire);
-    k.release(wire);
     k.release(edge);
-    return face;
+    return wire;
   }
 
   /**
-   * Build a face from a `'closedSpline'` profile — a standalone closed
-   * loop supplied pre-sampled (in world space) on `profile.vertices`.
-   * OCCT fits a single closed periodic B-spline through the ring via
-   * `interpolatePoints(…, true)`, so the result is one smooth face.
+   * Build the closed boundary wire for a `'closedSpline'` profile — a
+   * standalone closed loop supplied pre-sampled (in world space) on
+   * `profile.vertices`. OCCT fits a single closed periodic B-spline through
+   * the ring via `interpolatePoints(…, true)`.
    *
    * Backs both standalone ellipses and standalone closed splines. For
    * ellipses we sample-and-interpolate rather than call `makeEllipseEdge`
@@ -461,20 +474,18 @@ export class OcctKernel implements CadKernel {
    * major, minor) with no in-plane major-axis direction — it can't
    * represent a rotated ellipse, which our sketches allow.
    */
-  private makeClosedSplineFace(k: UpstreamKernel, profile: ResolvedProfile): ShapeHandle {
+  private makeClosedSplineWire(k: UpstreamKernel, profile: ResolvedProfile): ShapeHandle {
     const ring = dedupePointsForInterpolation(profile.vertices ?? [], true);
     if (ring.length < 3) {
       throw new Error(`closedSpline profile requires at least 3 distinct perimeter points (got ${ring.length})`);
     }
     const edge = k.interpolatePoints(ring.map(p => ({ x: p[0], y: p[1], z: p[2] })), true);
     const wire = k.makeWire([edge]);
-    const face = k.makeFace(wire);
-    k.release(wire);
     k.release(edge);
-    return face;
+    return wire;
   }
 
-  private makePolygonFace(k: UpstreamKernel, profile: ResolvedProfile): ShapeHandle {
+  private makePolygonWire(k: UpstreamKernel, profile: ResolvedProfile): ShapeHandle {
     const vertices = profile.vertices ?? [];
     if (vertices.length < 3) {
       throw new Error('Polygon profile requires at least three vertices');
@@ -488,24 +499,22 @@ export class OcctKernel implements CadKernel {
       );
     }
     const wire = k.makeWire(edgeHandles);
-    const face = k.makeFace(wire);
-    k.release(wire);
     for (const e of edgeHandles) k.release(e);
-    return face;
+    return wire;
   }
 
   /**
-   * Build a closed-loop face from a `'wire'` profile whose segments
-   * preserve their native curve type (line / 3-point arc / cubic Bézier).
+   * Build the closed boundary wire for a `'wire'` profile whose segments
+   * preserve their native curve type (line / 3-point arc / cubic Bézier /
+   * spline).
    *
-   * Uses polymorphic dispatch — each segment knows how to become a
-   * kernel edge. Arc segments use `makeArcEdge` (OCCT's
-   * `GC_MakeArcOfCircle_4`); Bézier segments use `makeBezierEdge`
-   * (OCCT's `Geom_BezierCurve`). Both stay analytic, so the resulting
-   * prism produces one lateral face per curve, not one strip face per
-   * sampled facet.
+   * Uses polymorphic dispatch — each segment knows how to become a kernel
+   * edge. Arc segments use `makeArcEdge` (OCCT's `GC_MakeArcOfCircle_4`);
+   * Bézier segments use `makeBezierEdge` (`Geom_BezierCurve`); spline
+   * segments interpolate a B-spline. All stay analytic, so an extruded
+   * prism produces one lateral face per curve, not one per sampled facet.
    */
-  private makeWireFace(k: UpstreamKernel, profile: ResolvedProfile): ShapeHandle {
+  private makeSegmentWire(k: UpstreamKernel, profile: ResolvedProfile): ShapeHandle {
     const segments = profile.segments ?? [];
     if (segments.length < 2) {
       throw new Error(`Wire profile requires at least 2 segments (got ${segments.length})`);
@@ -553,10 +562,8 @@ export class OcctKernel implements CadKernel {
       }
     }
     const wire = k.makeWire(edgeHandles);
-    const face = k.makeFace(wire);
-    k.release(wire);
     for (const e of edgeHandles) k.release(e);
-    return face;
+    return wire;
   }
 
   // --- Solid creation ---

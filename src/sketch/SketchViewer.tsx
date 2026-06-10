@@ -272,12 +272,23 @@ function createRegionObject(
   hovered: boolean,
   plane: SketchPlaneConfig,
 ): THREE.Object3D | null {
-  const vertices = region.type === 'circle'
-    ? makeCircleRegionVertices(region.center, Math.sqrt(region.area / Math.PI))
-    : region.vertices;
+  const outline = (r: SketchRegion): [number, number][] =>
+    r.type === 'circle'
+      ? makeCircleRegionVertices(r.center, Math.sqrt(r.area / Math.PI))
+      : r.vertices;
+
+  const vertices = outline(region);
   if (vertices.length < 3) return null;
 
   const shape = new THREE.Shape(vertices.map(v => new THREE.Vector2(v[0], v[1])));
+  // Nested holes cut the fill so the annulus highlights as a ring — its
+  // inner profile stays unselected (its own fill, no overlap stacking).
+  for (const hole of region.holes ?? []) {
+    const hv = outline(hole);
+    if (hv.length >= 3) {
+      shape.holes.push(new THREE.Path(hv.map(p => new THREE.Vector2(p[0], p[1]))));
+    }
+  }
   const geometry = new THREE.ShapeGeometry(shape);
   const positions = geometry.attributes.position;
   if (positions) {
@@ -441,7 +452,7 @@ function createEntityObject(
 
 // ---- Hit testing ----
 
-function isPointInRegion(x: number, y: number, region: SketchRegion): boolean {
+function isPointInRegionOutline(x: number, y: number, region: SketchRegion): boolean {
   const vertices = region.type === 'circle'
     ? makeCircleRegionVertices(region.center, Math.sqrt(region.area / Math.PI))
     : region.vertices;
@@ -456,6 +467,16 @@ function isPointInRegion(x: number, y: number, region: SketchRegion): boolean {
     if (intersects) inside = !inside;
   }
   return inside;
+}
+
+/** Hole-aware: inside the outer outline but not inside any nested hole, so
+ *  clicking the centre of an annulus picks the inner profile, not the ring. */
+function isPointInRegion(x: number, y: number, region: SketchRegion): boolean {
+  if (!isPointInRegionOutline(x, y, region)) return false;
+  for (const hole of region.holes ?? []) {
+    if (isPointInRegionOutline(x, y, hole)) return false;
+  }
+  return true;
 }
 
 // ---- Geometry helpers ----

@@ -98,6 +98,14 @@ export type ResolvedProfile = {
   uAxis?: Vec3;
   /** Sketch plane V axis (height direction). If omitted, derived from normal. */
   vAxis?: Vec3;
+  /**
+   * Inner profiles punched through this one as holes (even-odd nesting —
+   * a washer is a circle/polygon outer with a circle hole). Each hole is a
+   * full profile in its own right; the kernel builds its boundary wire the
+   * same way and adds it via `addHolesInFace`. The worker decides nesting
+   * (see `profileNesting.ts`); an empty/absent list is a plain face.
+   */
+  holes?: ResolvedProfile[];
 };
 
 /** Resolved plane in 3D space */

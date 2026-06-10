@@ -117,17 +117,29 @@ export async function buildExtrude(
     targetEntries.map(([, h]) => h),
   );
 
+  // Each selected region already carries its nested holes (assigned at
+  // detection time — a circle inside a square makes that square's region
+  // an annulus). So a profile is just its region's outer boundary plus its
+  // holes; selecting the annulus extrudes a washer with no extra step.
+  const holedProfiles: ResolvedProfile[] = [];
+  for (const resolved of resolvedProfiles) {
+    if (resolved.status !== 'resolved' || !resolved.region) continue;
+    const sid = resolved.profileRef.sketchId as FeatureId;
+    const profile = regionToKernelProfile(resolved.region, sid, context);
+    const holes = resolved.region.holes ?? [];
+    if (holes.length > 0) {
+      profile.holes = holes.map(h => regionToKernelProfile(h, sid, context));
+    }
+    holedProfiles.push(profile);
+  }
+
   // Step 1: build every profile-body. No boolean ops in this loop —
   // applying join/cut per profile against `context.bodies` (the
   // pre-extrude state) is what produced the "monster body" duplicates
   // where each profile emitted its own copy of "previous-state ∪ profile".
   const profileBodies: KernelBody[] = [];
   let profileIndex = 0;
-  for (const resolved of resolvedProfiles) {
-    if (resolved.status !== 'resolved' || !resolved.region) continue;
-
-    const profile = regionToKernelProfile(resolved.region, resolved.profileRef.sketchId, context);
-
+  for (const profile of holedProfiles) {
     // Apply offset, then back-shift by half-distance for symmetric so
     // the body straddles the sketch plane.
     let shifted = profile;
@@ -148,9 +160,9 @@ export async function buildExtrude(
     ];
 
     // `node.id` is forwarded as the topology-tracker origin so stable
-    // face/edge IDs are deterministic per feature. Multi-profile extrudes
-    // use a per-profile suffix so each face gets a unique tag.
-    const extrudeOrigin = inputs.profiles.length > 1
+    // face/edge IDs are deterministic per feature. Multi-face extrudes
+    // use a per-face suffix so each face gets a unique tag.
+    const extrudeOrigin = holedProfiles.length > 1
       ? `${node.id}_${profileIndex}`
       : node.id;
     const bodyResult = await kernel.extrudeFace(faceResult.value, vector, extrudeOrigin);
@@ -562,6 +574,12 @@ function offsetProfile(profile: ResolvedProfile, distance: number): ResolvedProf
           return { ...seg, points: seg.points.map(shiftVec) };
       }
     });
+  }
+  // Holes live at the same plane as their outer profile, so shift them by
+  // the same offset (else a washer's hole stays behind on a symmetric or
+  // offset extrude).
+  if (profile.holes) {
+    result.holes = profile.holes.map(h => offsetProfile(h, distance));
   }
 
   return result;

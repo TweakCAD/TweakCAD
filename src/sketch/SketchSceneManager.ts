@@ -592,12 +592,24 @@ export class SketchSceneManager {
     selected: boolean,
     hovered: boolean,
   ): THREE.Object3D | null {
-    const vertices = region.type === 'circle'
-      ? makeCircleRegionVertices(region.center, Math.sqrt(region.area / Math.PI))
-      : region.vertices;
+    const regionOutline = (r: SketchRegion): [number, number][] =>
+      r.type === 'circle'
+        ? makeCircleRegionVertices(r.center, Math.sqrt(r.area / Math.PI))
+        : r.vertices;
+
+    const vertices = regionOutline(region);
     if (vertices.length < 3) return null;
 
     const shape = new THREE.Shape(vertices.map(vertex => new THREE.Vector2(vertex[0], vertex[1])));
+    // Nested holes (a circle inside this region) cut the fill, so the
+    // annulus highlights as a ring — selecting it doesn't light up the
+    // inner profile.
+    for (const hole of region.holes ?? []) {
+      const hv = regionOutline(hole);
+      if (hv.length >= 3) {
+        shape.holes.push(new THREE.Path(hv.map(v => new THREE.Vector2(v[0], v[1]))));
+      }
+    }
     const geometry = new THREE.ShapeGeometry(shape);
     const positions = geometry.attributes.position;
     if (positions) {
@@ -1198,7 +1210,8 @@ function makeCircleRegionVertices(center: [number, number], radius: number): [nu
   return vertices;
 }
 
-function isPointInRegion(x: number, y: number, region: SketchRegion): boolean {
+/** Ray-cast against a region's outer outline only (ignores holes). */
+function isPointInRegionOutline(x: number, y: number, region: SketchRegion): boolean {
   const vertices = region.type === 'circle'
     ? makeCircleRegionVertices(region.center, Math.sqrt(region.area / Math.PI))
     : region.vertices;
@@ -1213,4 +1226,15 @@ function isPointInRegion(x: number, y: number, region: SketchRegion): boolean {
     if (intersects) inside = !inside;
   }
   return inside;
+}
+
+/** Hole-aware containment: inside the outer outline but NOT inside any
+ *  nested hole, so clicking an annulus's centre selects the inner profile,
+ *  not the annulus. */
+function isPointInRegion(x: number, y: number, region: SketchRegion): boolean {
+  if (!isPointInRegionOutline(x, y, region)) return false;
+  for (const hole of region.holes ?? []) {
+    if (isPointInRegionOutline(x, y, hole)) return false;
+  }
+  return true;
 }
