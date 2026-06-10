@@ -129,6 +129,16 @@ const SketchSplineSchema = z.object({
   construction: z.boolean().optional(),
 });
 
+const SketchBezierSchema = z.object({
+  id: z.string(),
+  type: z.literal('bezier'),
+  start: ExpressionPairSchema,
+  cp1: ExpressionPairSchema,
+  cp2: ExpressionPairSchema,
+  end: ExpressionPairSchema,
+  construction: z.boolean().optional(),
+});
+
 const SketchPointEntitySchema = z.object({
   id: z.string(),
   type: z.literal('point'),
@@ -142,6 +152,7 @@ const SketchEntitySchema = z.discriminatedUnion('type', [
   SketchArcSchema,
   SketchEllipseSchema,
   SketchSplineSchema,
+  SketchBezierSchema,
   SketchPointEntitySchema,
 ]);
 

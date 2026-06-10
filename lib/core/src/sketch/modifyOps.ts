@@ -101,6 +101,7 @@ function geomPointIds(geom: SketchGeometry): SketchPointId[] {
     case 'arc':     return [geom.centerId, geom.startId, geom.endId];
     case 'ellipse': return [geom.centerId, geom.majorId];
     case 'spline':  return [...geom.pointIds];
+    case 'bezier':  return [geom.startId, geom.cp1Id, geom.cp2Id, geom.endId];
     case 'point':   return [geom.pointId];
   }
 }

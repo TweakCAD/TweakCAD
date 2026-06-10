@@ -62,6 +62,7 @@ import {
   drawArc,
   drawEllipse,
   drawSpline,
+  drawBezier,
   addConstraint,
   type EditorState,
   type IdFactory,
@@ -146,6 +147,14 @@ function scalePrimitive(p: DxfPrimitive, f: number): DxfPrimitive {
       };
     case 'spline':
       return { kind: 'spline', points: p.points.map(([x, y]) => [x * f, y * f]) };
+    case 'bezier':
+      return {
+        kind: 'bezier',
+        start: [p.start[0] * f, p.start[1] * f],
+        cp1: [p.cp1[0] * f, p.cp1[1] * f],
+        cp2: [p.cp2[0] * f, p.cp2[1] * f],
+        end: [p.end[0] * f, p.end[1] * f],
+      };
   }
 }
 
@@ -170,7 +179,14 @@ export type DxfPrimitive =
       majorEnd: [number, number];
       minorRadius: number;
     }
-  | { kind: 'spline'; points: Array<[number, number]> };
+  | { kind: 'spline'; points: Array<[number, number]> }
+  | {
+      kind: 'bezier';
+      start: [number, number];
+      cp1: [number, number];
+      cp2: [number, number];
+      end: [number, number];
+    };
 
 export interface DxfImportResult {
   /** Primitives, already scaled to millimetres per `$INSUNITS`. */
@@ -565,6 +581,17 @@ export function buildEditorStateFromPrimitives(
         case 'spline':
           state = drawSpline(state, p.points, base).state;
           break;
+        case 'bezier': {
+          const r = drawBezier(
+            state,
+            { start: p.start, cp1: p.cp1, cp2: p.cp2, end: p.end },
+            { ...base, distinctStart: true, distinctEnd: true },
+          );
+          state = r.state;
+          endpoints.push({ id: r.startId, x: p.start[0], y: p.start[1] });
+          endpoints.push({ id: r.endId, x: p.end[0], y: p.end[1] });
+          break;
+        }
       }
     } catch {
       // Degenerate primitive (zero radius / zero sweep / collinear) —

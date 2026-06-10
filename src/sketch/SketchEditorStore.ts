@@ -142,6 +142,8 @@ function getPointIdsFromGeometry(geom: SketchGeometry): SketchPointId[] {
       return [geom.centerId, geom.majorId];
     case 'spline':
       return [...geom.pointIds];
+    case 'bezier':
+      return [geom.startId, geom.cp1Id, geom.cp2Id, geom.endId];
     case 'point':
       return [geom.pointId];
   }

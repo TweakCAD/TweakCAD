@@ -9,7 +9,10 @@
 
 import { describe, it, expect } from 'vitest';
 import { parseSvg, svgToEditorState } from './svgImport.ts';
+import { sketchToSvg } from './svg.ts';
 import { makeCounterIdFactory } from '../operations.ts';
+import { entityId } from '../../ids.ts';
+import type { SketchEntity } from '../../document/schema.ts';
 
 /** viewBox "0 0 100 100" → flipConst 100, unitScale 1 (no physical width). */
 function svg100(body: string, attrs = 'viewBox="0 0 100 100"'): string {
@@ -78,11 +81,21 @@ describe('parseSvg', () => {
     expect(l.start[0]).toBeCloseTo(5, 9);
   });
 
-  it('flattens a cubic path segment into a spline', () => {
+  it('imports a cubic path segment as one bezier (not flattened)', () => {
     const { primitives } = parseSvg(svg100('<path d="M 0 0 C 0 10 10 10 10 0"/>'));
-    const s = primitives.find((p) => p.kind === 'spline');
-    if (s?.kind !== 'spline') throw new Error('expected spline');
-    expect(s.points.length).toBeGreaterThan(2);
+    expect(primitives).toHaveLength(1);
+    const b = primitives[0]!;
+    if (b.kind !== 'bezier') throw new Error('expected bezier');
+    expect(b.start).toEqual([0, 100]);   // y flips
+    expect(b.end).toEqual([10, 100]);
+    expect(b.cp1).toEqual([0, 90]);      // 100 - 10
+    expect(b.cp2).toEqual([10, 90]);
+  });
+
+  it('elevates a quadratic path segment to a bezier', () => {
+    const { primitives } = parseSvg(svg100('<path d="M 0 0 Q 5 10 10 0"/>'));
+    expect(primitives).toHaveLength(1);
+    expect(primitives[0]!.kind).toBe('bezier');
   });
 
   it('imports a path with line + close as lines', () => {
@@ -98,6 +111,22 @@ describe('parseSvg', () => {
   it('returns empty for non-svg root', () => {
     const r = parseSvg('<html><body/></html>');
     expect(r.primitives).toEqual([]);
+  });
+
+  it('round-trips a bezier through SVG export → import (shape preserved)', () => {
+    const entities: SketchEntity[] = [
+      { id: entityId('b'), type: 'bezier', start: ['0', '0'], cp1: ['0', '10'], cp2: ['20', '10'], end: ['20', '0'] },
+    ];
+    const svg = sketchToSvg(entities, {});
+    const { primitives } = parseSvg(svg);
+    const b = primitives.find((p) => p.kind === 'bezier');
+    if (b?.kind !== 'bezier') throw new Error('bezier lost in round-trip');
+    // Export Y-flips then import flips back, so the shape returns un-mirrored:
+    // the control hull spans the same 20 mm width and 10 mm height.
+    const xs = [b.start[0], b.cp1[0], b.cp2[0], b.end[0]];
+    const ys = [b.start[1], b.cp1[1], b.cp2[1], b.end[1]];
+    expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(20, 6);
+    expect(Math.max(...ys) - Math.min(...ys)).toBeCloseTo(10, 6);
   });
 });
 

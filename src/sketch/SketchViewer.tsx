@@ -32,7 +32,7 @@ import {
   type SketchPlaneConfig,
   type SketchPlaneInput,
 } from './SketchSceneManager.ts';
-import { catmullRomSpline } from './curveTessellation.ts';
+import { catmullRomSpline, sampleCubicBezier } from './curveTessellation.ts';
 
 // ---- Constants ----
 
@@ -419,6 +419,15 @@ function createEntityObject(
       }
       if (ctrl.length < 2) return null;
       const sampled = catmullRomSpline(ctrl, 16);
+      return makeLine2(sampled.map(([x, y]) => toWorld(plane, x, y)), material);
+    }
+    case 'bezier': {
+      const p0x = parseFloat(String(entity.start[0])), p0y = parseFloat(String(entity.start[1]));
+      const c1x = parseFloat(String(entity.cp1[0])), c1y = parseFloat(String(entity.cp1[1]));
+      const c2x = parseFloat(String(entity.cp2[0])), c2y = parseFloat(String(entity.cp2[1]));
+      const p3x = parseFloat(String(entity.end[0])), p3y = parseFloat(String(entity.end[1]));
+      if ([p0x, p0y, c1x, c1y, c2x, c2y, p3x, p3y].some(isNaN)) return null;
+      const sampled = sampleCubicBezier([p0x, p0y], [c1x, c1y], [c2x, c2y], [p3x, p3y], 32);
       return makeLine2(sampled.map(([x, y]) => toWorld(plane, x, y)), material);
     }
     case 'point':

@@ -8,6 +8,31 @@
  */
 
 /**
+ * Sample a cubic Bezier curve (start, two control poles, end) into a polyline
+ * of `samples + 1` points. Used to display/hit-test `bezier` sketch geometry
+ * consistently in the editor scene and the readonly overlay.
+ */
+export function sampleCubicBezier(
+  p0: [number, number],
+  c1: [number, number],
+  c2: [number, number],
+  p3: [number, number],
+  samples: number,
+): [number, number][] {
+  const out: [number, number][] = [];
+  for (let i = 0; i <= samples; i++) {
+    const t = i / samples;
+    const u = 1 - t;
+    const a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
+    out.push([
+      a * p0[0] + b * c1[0] + c * c2[0] + d * p3[0],
+      a * p0[1] + b * c1[1] + c * c2[1] + d * p3[1],
+    ]);
+  }
+  return out;
+}
+
+/**
  * Sample a Catmull-Rom spline through the given control points.
  * For fewer than 3 control points, returns the points unchanged (a single
  * straight segment). Phantom end points make the curve pass through every

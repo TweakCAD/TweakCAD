@@ -49,6 +49,52 @@ const GID = (id: SketchGeometryId): string => `g:${id}`;
 const CID = (id: SketchConstraintId): string => `c:${id}`;
 
 /**
+ * The subset of points that must enter the planegcs system: any point that is
+ * fixed/anchored, is an endpoint/center of a solver-modeled geometry
+ * (line / circle / arc), or is referenced by a constraint. Free points — e.g.
+ * the control points of a spline or bezier with no constraint on them — are
+ * left out: they constrain nothing, so pushing them only bloats the system.
+ * A dense imported sketch (flattened SVG curves → thousands of free points)
+ * would otherwise blow the WASM heap; omitted points pass through `solve()`'s
+ * readback unchanged.
+ *
+ * Constraint point references are found by a generic field scan (any string /
+ * string-array field whose value is a key in `points`), so this stays correct
+ * as constraint variants are added without re-enumerating them here.
+ */
+export function computeSolverPoints(
+  points: ReadonlyMap<SketchPointId, SketchPoint>,
+  geometries: ReadonlyMap<SketchGeometryId, SketchGeometry>,
+  constraints: ReadonlyMap<SketchConstraintId, SketchConstraint>,
+  anchored: ReadonlySet<SketchPointId>,
+): Set<SketchPointId> {
+  const needed = new Set<SketchPointId>();
+  for (const [id, pt] of points) {
+    if (pt.fixed || anchored.has(id)) needed.add(id);
+  }
+  for (const g of geometries.values()) {
+    switch (g.type) {
+      case 'line': needed.add(g.startId); needed.add(g.endId); break;
+      case 'circle': needed.add(g.centerId); break;
+      case 'arc': needed.add(g.centerId); needed.add(g.startId); needed.add(g.endId); break;
+      // ellipse / spline / point / bezier aren't pushed as planegcs primitives,
+      // so their points enter the system only when a constraint references them.
+      default: break;
+    }
+  }
+  const addIfPoint = (v: unknown): void => {
+    if (typeof v === 'string' && points.has(v as SketchPointId)) needed.add(v as SketchPointId);
+  };
+  for (const c of constraints.values()) {
+    for (const v of Object.values(c as Record<string, unknown>)) {
+      if (Array.isArray(v)) v.forEach(addIfPoint);
+      else addIfPoint(v);
+    }
+  }
+  return needed;
+}
+
+/**
  * Tolerance the post-solve residual check uses to decide "satisfied
  * enough." Chosen so over-constraint rejection in
  * `applyConstraintPipeline.ts` behaves predictably (pin two endpoints,
@@ -312,7 +358,12 @@ export class PlaneGCSSolver implements ISketchSolver {
     const ourIdByPlanegcsId = new Map<string, SketchConstraintId>();
 
     // ---- 1. Push points ----
+    // Only points that participate in the system (see `computeSolverPoints`).
+    // Free points — unconstrained spline/bezier control points and the like —
+    // are skipped; readback (step 5) passes them through unchanged.
+    const solverPoints = computeSolverPoints(points, geometries, constraints, anchored);
     for (const [id, pt] of points) {
+      if (!solverPoints.has(id)) continue;
       // planegcs `fixed: true` removes the point's x/y from the param vector,
       // matching the semantics our `anchored` / `fixed` flags have always had.
       const isFixed = pt.fixed || anchored.has(id);
@@ -383,12 +434,17 @@ export class PlaneGCSSolver implements ISketchSolver {
           // TODO: derive focus from center + major endpoint + minor radius.
           break;
         case 'spline':
+        case 'bezier':
         case 'point':
           // Not directly representable as a single planegcs primitive;
-          // these participate only via their underlying points (which were
-          // already pushed in step 1). There are no `slot` / `polygon`
-          // editor geometries; the tools decompose at draw time so the
-          // solver sees their constituent lines + arcs.
+          // these participate only via their underlying points (constrained
+          // ones were pushed in step 1; free control poles are intentionally
+          // omitted by `computeSolverPoints`). Modelling a bezier as a real
+          // planegcs B-spline (control poles + internal alignment, enabling
+          // tangent-to-curve / point-on-curve) is a separate project — the
+          // JS wrapper we use doesn't expose B-splines yet. There are no
+          // `slot` / `polygon` editor geometries; their tools decompose at
+          // draw time so the solver sees the constituent lines + arcs.
           break;
       }
     }

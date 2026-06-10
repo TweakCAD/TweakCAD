@@ -37,7 +37,7 @@ import type {
 } from '@tweakcad/core/src/sketch/types.ts';
 import { ORIGIN_POINT_ID } from '@tweakcad/core/src/sketch/types.ts';
 import type { SketchRegion } from '@tweakcad/core/src/sketch/profileRegions.ts';
-import { catmullRomSpline } from './curveTessellation.ts';
+import { catmullRomSpline, sampleCubicBezier } from './curveTessellation.ts';
 
 // ---- Constants ----
 
@@ -789,6 +789,15 @@ export class SketchSceneManager {
         for (const [x, y] of interpolated) pts.push(this.toWorld(x, y));
         return this.makeLine2(pts, material);
       }
+      case 'bezier': {
+        const p0 = points.get(geom.startId);
+        const c1 = points.get(geom.cp1Id);
+        const c2 = points.get(geom.cp2Id);
+        const p3 = points.get(geom.endId);
+        if (!p0 || !c1 || !c2 || !p3) return null;
+        const sampled = sampleCubicBezier([p0.x, p0.y], [c1.x, c1.y], [c2.x, c2.y], [p3.x, p3.y], 32);
+        return this.makeLine2(sampled.map(([x, y]) => this.toWorld(x, y)), material);
+      }
       case 'point': {
         // Standalone points are rendered via the point sync pass.
         return null;
@@ -1132,6 +1141,20 @@ function isNearGeometry(
         ctrl.push([pt.x, pt.y]);
       }
       const sampled = catmullRomSpline(ctrl, 8);
+      for (let i = 1; i < sampled.length; i++) {
+        const [x1, y1] = sampled[i - 1]!;
+        const [x2, y2] = sampled[i]!;
+        if (distanceToSegment(x, y, x1, y1, x2, y2) <= tolerance) return true;
+      }
+      return false;
+    }
+    case 'bezier': {
+      const p0 = points.get(geom.startId);
+      const c1 = points.get(geom.cp1Id);
+      const c2 = points.get(geom.cp2Id);
+      const p3 = points.get(geom.endId);
+      if (!p0 || !c1 || !c2 || !p3) return false;
+      const sampled = sampleCubicBezier([p0.x, p0.y], [c1.x, c1.y], [c2.x, c2.y], [p3.x, p3.y], 16);
       for (let i = 1; i < sampled.length; i++) {
         const [x1, y1] = sampled[i - 1]!;
         const [x2, y2] = sampled[i]!;

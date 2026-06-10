@@ -38,6 +38,7 @@ import type {
   SketchArcEntity,
   SketchEllipseEntity,
   SketchSplineEntity,
+  SketchBezierEntity,
 } from '../../document/schema.ts';
 import type { ResolvedParams, Expression } from '../../expressions.ts';
 import { evaluateExpression } from '../../expressions.ts';
@@ -66,7 +67,8 @@ type ResolvedEntity =
   | { type: 'circle'; cx: number; cy: number; r: number }
   | { type: 'arc'; cx: number; cy: number; r: number; start: number; end: number }
   | { type: 'ellipse'; cx: number; cy: number; majorVx: number; majorVy: number; majorR: number; minor: number }
-  | { type: 'spline'; pts: Array<[number, number]> };
+  | { type: 'spline'; pts: Array<[number, number]> }
+  | { type: 'bezier'; sx: number; sy: number; c1x: number; c1y: number; c2x: number; c2y: number; ex: number; ey: number };
 
 function resolveLine(e: SketchLineEntity, p: ResolvedParams): ResolvedEntity | null {
   const sx = evalExpr(e.start[0], p), sy = evalExpr(e.start[1], p);
@@ -112,6 +114,18 @@ function resolveSpline(e: SketchSplineEntity, p: ResolvedParams): ResolvedEntity
   return { type: 'spline', pts };
 }
 
+function resolveBezier(e: SketchBezierEntity, p: ResolvedParams): ResolvedEntity | null {
+  const sx = evalExpr(e.start[0], p), sy = evalExpr(e.start[1], p);
+  const c1x = evalExpr(e.cp1[0], p), c1y = evalExpr(e.cp1[1], p);
+  const c2x = evalExpr(e.cp2[0], p), c2y = evalExpr(e.cp2[1], p);
+  const ex = evalExpr(e.end[0], p), ey = evalExpr(e.end[1], p);
+  if (
+    sx === undefined || sy === undefined || c1x === undefined || c1y === undefined ||
+    c2x === undefined || c2y === undefined || ex === undefined || ey === undefined
+  ) return null;
+  return { type: 'bezier', sx, sy, c1x, c1y, c2x, c2y, ex, ey };
+}
+
 /** Accumulate the axis-aligned bounds of a resolved entity into [min,max]. */
 function expandBounds(e: ResolvedEntity, b: { minX: number; minY: number; maxX: number; maxY: number }): void {
   const add = (x: number, y: number) => {
@@ -145,6 +159,13 @@ function expandBounds(e: ResolvedEntity, b: { minX: number; minY: number; maxX: 
     case 'spline':
       for (const [x, y] of e.pts) add(x, y);
       break;
+    case 'bezier':
+      // Control hull bounds the curve (loose but safe).
+      add(e.sx, e.sy);
+      add(e.c1x, e.c1y);
+      add(e.c2x, e.c2y);
+      add(e.ex, e.ey);
+      break;
   }
 }
 
@@ -165,6 +186,7 @@ export function sketchToSvg(entities: SketchEntity[], params: ResolvedParams): s
       case 'arc': r = resolveArc(e, params); break;
       case 'ellipse': r = resolveEllipse(e, params); break;
       case 'spline': r = resolveSpline(e, params); break;
+      case 'bezier': r = resolveBezier(e, params); break;
       case 'point': break; // reference geometry — excluded
     }
     if (r) resolved.push(r);
@@ -241,6 +263,13 @@ export function sketchToSvg(entities: SketchEntity[], params: ResolvedParams): s
         // faithful, lossless representation of what we store.
         const pts = e.pts.map(([x, y]) => `${fmt(x)},${fmt(fy(y))}`).join(' ');
         elements.push(`  <polyline points="${pts}" fill="none" />`);
+        break;
+      }
+      case 'bezier': {
+        // Native cubic path — control points just Y-flip (bezier is affine).
+        elements.push(
+          `  <path d="M ${fmt(e.sx)} ${fmt(fy(e.sy))} C ${fmt(e.c1x)} ${fmt(fy(e.c1y))} ${fmt(e.c2x)} ${fmt(fy(e.c2y))} ${fmt(e.ex)} ${fmt(fy(e.ey))}" />`,
+        );
         break;
       }
     }

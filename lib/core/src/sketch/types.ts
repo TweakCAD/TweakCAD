@@ -86,6 +86,7 @@ export type SketchGeometry =
   | SketchArc
   | SketchEllipse
   | SketchSpline
+  | SketchBezier
   | SketchStandalonePoint;
 
 /** Line segment between two points */
@@ -155,6 +156,27 @@ export type SketchSpline = {
   type: 'spline';
   /** Ordered control point IDs (>=2) */
   pointIds: SketchPointId[];
+  construction: boolean;
+};
+
+/**
+ * Cubic Bezier curve: start + end are on-curve endpoints (constrainable, join
+ * at coincident junctions); cp1 + cp2 are off-curve control poles. This is the
+ * poles-based curve FreeCAD / Fusion / jsketcher all use, and SVG `C`/`Q`
+ * commands map onto it 1:1 — unlike `SketchSpline`, which is a catmull-rom
+ * curve that interpolates its points.
+ */
+export type SketchBezier = {
+  id: SketchGeometryId;
+  type: 'bezier';
+  /** Start (on-curve) point reference */
+  startId: SketchPointId;
+  /** First control pole (off-curve) */
+  cp1Id: SketchPointId;
+  /** Second control pole (off-curve) */
+  cp2Id: SketchPointId;
+  /** End (on-curve) point reference */
+  endId: SketchPointId;
   construction: boolean;
 };
 
@@ -493,6 +515,7 @@ export type SketchGeometryInput =
   | (Omit<SketchArc, 'id'> & { id?: SketchGeometryId })
   | (Omit<SketchEllipse, 'id'> & { id?: SketchGeometryId })
   | (Omit<SketchSpline, 'id'> & { id?: SketchGeometryId })
+  | (Omit<SketchBezier, 'id'> & { id?: SketchGeometryId })
   | (Omit<SketchStandalonePoint, 'id'> & { id?: SketchGeometryId });
 
 // ---- Tool Types ----

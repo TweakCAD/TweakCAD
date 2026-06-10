@@ -995,6 +995,74 @@ export function drawSpline(
   return { state: added.state, splineId: added.id, pointIds };
 }
 
+export interface DrawBezierOptions {
+  /** Coincident-point merge tolerance in mm for the on-curve endpoints. */
+  tolerance?: number;
+  construction?: boolean;
+  idFactory?: IdFactory;
+  /** Allocate the start endpoint as a fresh point (see {@link DrawLineOptions.distinctStart}). */
+  distinctStart?: boolean;
+  /** Same as `distinctStart` for the end endpoint. */
+  distinctEnd?: boolean;
+}
+
+/**
+ * Draw a cubic Bezier curve from 4 control points (start, two poles, end).
+ * `cp1`/`cp2` are always fresh off-curve points; `start`/`end` reuse existing
+ * coincident points unless `distinctStart`/`distinctEnd` force fresh ones
+ * (importers use the distinct form + a coincident constraint at junctions).
+ */
+export function drawBezier(
+  state: EditorState,
+  args: {
+    start: readonly [number, number];
+    cp1: readonly [number, number];
+    cp2: readonly [number, number];
+    end: readonly [number, number];
+  },
+  opts: DrawBezierOptions = {},
+): {
+  state: EditorState;
+  bezierId: SketchGeometryId;
+  startId: SketchPointId;
+  cp1Id: SketchPointId;
+  cp2Id: SketchPointId;
+  endId: SketchPointId;
+} {
+  const ptOpts = opts.idFactory ? { idFactory: opts.idFactory } : {};
+  const findOpts = opts.idFactory
+    ? { idFactory: opts.idFactory, ...(opts.tolerance !== undefined ? { tolerance: opts.tolerance } : {}) }
+    : (opts.tolerance !== undefined ? { tolerance: opts.tolerance } : {});
+  const start = opts.distinctStart
+    ? addPoint(state, args.start[0], args.start[1], ptOpts)
+    : findOrCreatePoint(state, args.start[0], args.start[1], findOpts);
+  const cp1 = addPoint(start.state, args.cp1[0], args.cp1[1], ptOpts);
+  const cp2 = addPoint(cp1.state, args.cp2[0], args.cp2[1], ptOpts);
+  const end = opts.distinctEnd
+    ? addPoint(cp2.state, args.end[0], args.end[1], ptOpts)
+    : findOrCreatePoint(cp2.state, args.end[0], args.end[1], findOpts);
+  const added = addGeometry(
+    end.state,
+    {
+      type: 'bezier',
+      startId: start.id,
+      cp1Id: cp1.id,
+      cp2Id: cp2.id,
+      endId: end.id,
+      construction: opts.construction ?? false,
+    },
+    opts.idFactory ? { idFactory: opts.idFactory } : {},
+  );
+  return {
+    state: added.state,
+    bezierId: added.id,
+    startId: start.id,
+    cp1Id: cp1.id,
+    cp2Id: cp2.id,
+    endId: end.id,
+  };
+}
+
 export interface DrawPolygonOptions {
   /** Coincident-point merge tolerance in mm. Default 1e-6. */
   tolerance?: number;
@@ -1214,6 +1282,7 @@ export function getGeometryPointIds(geom: SketchGeometry): SketchPointId[] {
     case 'arc':     return [geom.centerId, geom.startId, geom.endId];
     case 'ellipse': return [geom.centerId, geom.majorId];
     case 'spline':  return [...geom.pointIds];
+    case 'bezier':  return [geom.startId, geom.cp1Id, geom.cp2Id, geom.endId];
     case 'point':   return [geom.pointId];
   }
 }

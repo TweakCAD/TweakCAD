@@ -304,25 +304,23 @@ function emitPath(d: string, mat: Mat, out: SketchPrimitive[]): void {
   const tokens = tokenizePath(d);
   let cx = 0, cy = 0;       // current point (user coords)
   let sx = 0, sy = 0;       // current subpath start
-  // Spline accumulator for an in-progress run of curve segments — flushed when
-  // a straight segment / close / new subpath interrupts it.
-  let curve: Array<[number, number]> = [];
 
-  const flushCurve = (): void => {
-    if (curve.length >= 2) out.push({ kind: 'spline', points: curve.map(([x, y]) => apply(mat, x, y)) });
-    curve = [];
-  };
   const lineTo = (x: number, y: number): void => {
-    flushCurve();
     out.push({ kind: 'line', start: apply(mat, cx, cy), end: apply(mat, x, y) });
     cx = x; cy = y;
   };
-  const curveThrough = (pts: Array<[number, number]>): void => {
-    // Start a curve run at the current point, then append the samples.
-    if (curve.length === 0) curve.push([cx, cy]);
-    for (const p of pts) curve.push(p);
-    const last = pts[pts.length - 1]!;
-    cx = last[0]; cy = last[1];
+  // Cubic bezier from the current point through two poles to an endpoint —
+  // emitted as ONE bezier primitive (not flattened), so curve-heavy SVGs stay
+  // compact and the curves are editable.
+  const bezierTo = (c1: [number, number], c2: [number, number], ex: number, ey: number): void => {
+    out.push({
+      kind: 'bezier',
+      start: apply(mat, cx, cy),
+      cp1: apply(mat, c1[0], c1[1]),
+      cp2: apply(mat, c2[0], c2[1]),
+      end: apply(mat, ex, ey),
+    });
+    cx = ex; cy = ey;
   };
 
   for (const { cmd, args } of tokens) {
@@ -336,7 +334,7 @@ function emitPath(d: string, mat: Mat, out: SketchPrimitive[]): void {
         for (let i = 0; i + 1 < args.length; i += 2) {
           const x = rel ? cx + args[i]! : args[i]!;
           const y = rel ? cy + args[i + 1]! : args[i + 1]!;
-          if (i === 0) { flushCurve(); cx = x; cy = y; sx = x; sy = y; }
+          if (i === 0) { cx = x; cy = y; sx = x; sy = y; }
           else lineTo(x, y);
         }
         break;
@@ -351,63 +349,47 @@ function emitPath(d: string, mat: Mat, out: SketchPrimitive[]): void {
         for (const v of args) lineTo(cx, ry(v));
         break;
       case 'Z':
-        flushCurve();
         if (cx !== sx || cy !== sy) out.push({ kind: 'line', start: apply(mat, cx, cy), end: apply(mat, sx, sy) });
         cx = sx; cy = sy;
         break;
       case 'C':
         for (let i = 0; i + 5 < args.length; i += 6) {
-          const p1: [number, number] = [rx(args[i]!), ry(args[i + 1]!)];
-          const p2: [number, number] = [rx(args[i + 2]!), ry(args[i + 3]!)];
-          const p3: [number, number] = [rx(args[i + 4]!), ry(args[i + 5]!)];
-          curveThrough(sampleCubic([cx, cy], p1, p2, p3));
+          bezierTo([rx(args[i]!), ry(args[i + 1]!)], [rx(args[i + 2]!), ry(args[i + 3]!)], rx(args[i + 4]!), ry(args[i + 5]!));
         }
         break;
       case 'Q':
+        // Elevate the quadratic (p0, q, p1) to a cubic so it's one bezier:
+        // cp1 = p0 + ⅔(q − p0), cp2 = p1 + ⅔(q − p1).
         for (let i = 0; i + 3 < args.length; i += 4) {
-          const p1: [number, number] = [rx(args[i]!), ry(args[i + 1]!)];
-          const p2: [number, number] = [rx(args[i + 2]!), ry(args[i + 3]!)];
-          curveThrough(sampleQuad([cx, cy], p1, p2));
+          const qx = rx(args[i]!), qy = ry(args[i + 1]!);
+          const ex = rx(args[i + 2]!), ey = ry(args[i + 3]!);
+          const c1: [number, number] = [cx + (2 / 3) * (qx - cx), cy + (2 / 3) * (qy - cy)];
+          const c2: [number, number] = [ex + (2 / 3) * (qx - ex), ey + (2 / 3) * (qy - ey)];
+          bezierTo(c1, c2, ex, ey);
         }
         break;
       case 'A':
+        // SVG elliptical arcs have no native sketch counterpart yet — sample
+        // them into a spline (Phase-A solver keeps these free points out of
+        // the system, so density is cheap).
         for (let i = 0; i + 6 < args.length; i += 7) {
           const arx = args[i]!, ary = args[i + 1]!, rot = args[i + 2]!;
           const large = args[i + 3]! !== 0, sweep = args[i + 4]! !== 0;
           const ex = rx(args[i + 5]!), ey = ry(args[i + 6]!);
-          curveThrough(sampleArc([cx, cy], arx, ary, rot, large, sweep, [ex, ey]));
+          const pts: Array<[number, number]> = [apply(mat, cx, cy)];
+          for (const [x, y] of sampleArc([cx, cy], arx, ary, rot, large, sweep, [ex, ey])) {
+            pts.push(apply(mat, x, y));
+          }
+          if (pts.length >= 2) out.push({ kind: 'spline', points: pts });
+          cx = ex; cy = ey;
         }
         break;
-      // S/T (smooth bezier shorthands) are uncommon in CAD output; treat their
-      // explicit-control variants only via C/Q above. A bare S/T falls through
-      // as an unsupported run, leaving a gap the user can redraw.
+      // S/T (smooth bezier shorthands) are uncommon in CAD output; a bare S/T
+      // falls through as an unsupported run, leaving a gap the user can redraw.
       default:
         break;
     }
   }
-  flushCurve();
-}
-
-function sampleCubic(p0: [number, number], p1: [number, number], p2: [number, number], p3: [number, number]): Array<[number, number]> {
-  const out: Array<[number, number]> = [];
-  for (let i = 1; i <= CURVE_SAMPLES; i++) {
-    const t = i / CURVE_SAMPLES, u = 1 - t;
-    const x = u * u * u * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t * t * t * p3[0];
-    const y = u * u * u * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t * t * t * p3[1];
-    out.push([x, y]);
-  }
-  return out;
-}
-
-function sampleQuad(p0: [number, number], p1: [number, number], p2: [number, number]): Array<[number, number]> {
-  const out: Array<[number, number]> = [];
-  for (let i = 1; i <= CURVE_SAMPLES; i++) {
-    const t = i / CURVE_SAMPLES, u = 1 - t;
-    const x = u * u * p0[0] + 2 * u * t * p1[0] + t * t * p2[0];
-    const y = u * u * p0[1] + 2 * u * t * p1[1] + t * t * p2[1];
-    out.push([x, y]);
-  }
-  return out;
 }
 
 /**
@@ -479,5 +461,7 @@ function finalize(p: SketchPrimitive, flipConst: number, s: number): SketchPrimi
       return { kind: 'ellipse', center: f(p.center), majorEnd: f(p.majorEnd), minorRadius: p.minorRadius * s };
     case 'spline':
       return { kind: 'spline', points: p.points.map(f) };
+    case 'bezier':
+      return { kind: 'bezier', start: f(p.start), cp1: f(p.cp1), cp2: f(p.cp2), end: f(p.end) };
   }
 }

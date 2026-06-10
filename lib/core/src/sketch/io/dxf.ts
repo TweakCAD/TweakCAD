@@ -45,6 +45,7 @@ import type {
   SketchArcEntity,
   SketchEllipseEntity,
   SketchSplineEntity,
+  SketchBezierEntity,
 } from '../../document/schema.ts';
 import type { ResolvedParams, Expression } from '../../expressions.ts';
 import { evaluateExpression } from '../../expressions.ts';
@@ -143,6 +144,31 @@ function writeEllipse(e: SketchEllipseEntity, params: ResolvedParams, out: strin
   group(42, 2 * Math.PI, out); // end parameter — full ellipse
 }
 
+function writeBezier(e: SketchBezierEntity, params: ResolvedParams, out: string[]): void {
+  // A cubic bezier is a degree-3 Bézier curve, exported losslessly as a
+  // degree-3 DXF SPLINE with its 4 control points (start, cp1, cp2, end).
+  const sx = evalExpr(e.start[0], params), sy = evalExpr(e.start[1], params);
+  const c1x = evalExpr(e.cp1[0], params), c1y = evalExpr(e.cp1[1], params);
+  const c2x = evalExpr(e.cp2[0], params), c2y = evalExpr(e.cp2[1], params);
+  const ex = evalExpr(e.end[0], params), ey = evalExpr(e.end[1], params);
+  if (
+    sx === undefined || sy === undefined || c1x === undefined || c1y === undefined ||
+    c2x === undefined || c2y === undefined || ex === undefined || ey === undefined
+  ) return;
+  group(0, 'SPLINE', out);
+  group(8, '0', out);
+  group(70, 8, out); // planar
+  group(71, 3, out); // degree 3
+  group(72, 0, out);
+  group(73, 4, out); // 4 control points
+  group(74, 0, out);
+  for (const [x, y] of [[sx, sy], [c1x, c1y], [c2x, c2y], [ex, ey]] as Array<[number, number]>) {
+    group(10, x, out);
+    group(20, y, out);
+    group(30, 0, out);
+  }
+}
+
 function writeSpline(e: SketchSplineEntity, params: ResolvedParams, out: string[]): void {
   // Resolve control points; bail if any coordinate is unresolvable.
   const pts: Array<[number, number]> = [];
@@ -202,6 +228,9 @@ export function sketchToDxf(entities: SketchEntity[], params: ResolvedParams): s
         break;
       case 'spline':
         writeSpline(e, params, body);
+        break;
+      case 'bezier':
+        writeBezier(e, params, body);
         break;
       case 'point':
         // Reference geometry — never a cut path. Excluded.

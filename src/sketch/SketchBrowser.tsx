@@ -372,6 +372,8 @@ function describeGeometry(g: SketchGeometry, points: Map<SketchPointId, SketchPo
     // decomposed slots / polygons show up as line + arc rows now.
     case 'spline':
       return { id: g.id, icon: <SplineToolIcon size={14} color="#3b82f6" />, label: `Spline${tag}`, sub: `${g.pointIds.length} pts` };
+    case 'bezier':
+      return { id: g.id, icon: <SplineToolIcon size={14} color="#3b82f6" />, label: `Bezier${tag}`, sub: 'cubic' };
     case 'point':
       return { id: g.id, icon: <PointToolIcon size={14} color="#3b82f6" />, label: `Point${tag}` };
   }

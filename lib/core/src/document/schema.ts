@@ -227,6 +227,7 @@ export type SketchEntity =
   | SketchArcEntity
   | SketchEllipseEntity
   | SketchSplineEntity
+  | SketchBezierEntity
   | SketchPointEntity;
 
 export type SketchCircleEntity = {
@@ -279,6 +280,21 @@ export type SketchSplineEntity = {
   id: EntityId;
   type: 'spline';
   points: ReadonlyArray<[Expression, Expression]>;
+  construction?: boolean;
+};
+
+/**
+ * Cubic Bezier curve: `start`/`end` are on-curve endpoints, `cp1`/`cp2` the
+ * off-curve control poles. The document counterpart of the editor's
+ * `SketchBezier`. SVG `C`/`Q` path segments import to this 1:1.
+ */
+export type SketchBezierEntity = {
+  id: EntityId;
+  type: 'bezier';
+  start: [Expression, Expression];
+  cp1: [Expression, Expression];
+  cp2: [Expression, Expression];
+  end: [Expression, Expression];
   construction?: boolean;
 };
 

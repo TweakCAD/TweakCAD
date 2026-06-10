@@ -45,6 +45,7 @@ import type {
   SketchArcEntity,
   SketchEllipseEntity,
   SketchSplineEntity,
+  SketchBezierEntity,
   SketchPointEntity,
 } from '../document/schema.ts';
 import type { EntityId } from '../ids.ts';
@@ -153,6 +154,25 @@ export function editorModelToBuildGeometry(
           id: eId,
           type: 'spline',
           points: pts,
+          ...(geom.construction ? { construction: true as const } : {}),
+        };
+        result[eId] = entity;
+        break;
+      }
+      case 'bezier': {
+        const start = state.points.get(geom.startId);
+        const cp1 = state.points.get(geom.cp1Id);
+        const cp2 = state.points.get(geom.cp2Id);
+        const end = state.points.get(geom.endId);
+        if (!start || !cp1 || !cp2 || !end) continue;
+        const eId = entityId(String(geom.id));
+        const entity: SketchBezierEntity = {
+          id: eId,
+          type: 'bezier',
+          start: [String(start.x), String(start.y)],
+          cp1: [String(cp1.x), String(cp1.y)],
+          cp2: [String(cp2.x), String(cp2.y)],
+          end: [String(end.x), String(end.y)],
           ...(geom.construction ? { construction: true as const } : {}),
         };
         result[eId] = entity;
