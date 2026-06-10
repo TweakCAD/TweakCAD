@@ -20,7 +20,7 @@ import type { ResolvedSketchRegionData } from './buildSketch.ts';
 function makeCircleSketch(diameterExpr: string): FeatureNode {
   const inputs: SketchFeatureInputs = {
     plane: { type: 'defaultPlane', name: 'XY' },
-    entities: {
+    buildGeometry: {
       [entityId('circle_1')]: {
         id: entityId('circle_1'),
         type: 'circle',
@@ -56,7 +56,7 @@ function makeRectSketch(widthExpr: string, heightExpr: string): FeatureNode {
   const negHalfH = `0 - (${heightExpr}) / 2`;
   const inputs: SketchFeatureInputs = {
     plane: { type: 'defaultPlane', name: 'XY' },
-    entities: {
+    buildGeometry: {
       [entityId('rect_bottom')]: {
         id: entityId('rect_bottom'),
         type: 'line',

@@ -18,7 +18,7 @@ import {
   removeGeometry as removeGeometryOp,
   type EditorState,
 } from '../../sketch/operations.ts';
-import { editorStateToEntities } from '../../sketch/serialization.ts';
+import { editorModelToBuildGeometry } from '../../sketch/serialization.ts';
 
 /** Find a part or return a validation error */
 function findPart(state: Readonly<CadProject>, id: PartId): Result<void, ValidationError> {
@@ -147,8 +147,8 @@ export const createSketchHandler: CommandHandler = {
     // there's no collision risk.
     const inputs: SketchFeatureInputs = {
       plane: command.plane,
-      entities: {},
-      _editorState: {
+      buildGeometry: {},
+      editorModel: {
         points: [{ id: ORIGIN_POINT_ID, x: 0, y: 0, fixed: true }],
         geometries: [],
         constraints: [{
@@ -165,6 +165,85 @@ export const createSketchHandler: CommandHandler = {
       id,
       type: 'sketch',
       name: `Sketch ${part.timeline.filter(f => f.type === 'sketch').length + 1}`,
+      version: 1,
+      enabled: true,
+      visible: true,
+      inputs: inputs as unknown as Record<string, unknown>,
+      dependsOn: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    part.timeline.push(feature);
+    draft.metadata.updatedAt = now;
+  },
+};
+
+/**
+ * Create a sketch pre-populated from an imported `EditorState` snapshot
+ * (DXF import). Mirrors `createSketchHandler` for the plane / feature
+ * half, but seeds the supplied `editorState` instead of just the origin
+ * and derives `inputs.buildGeometry` from it via the canonical serializer — so
+ * the whole import is ONE undo entry.
+ */
+export const createSketchFromImportHandler: CommandHandler = {
+  validate(command: CadCommand, state: Readonly<CadProject>): Result<void, ValidationError> {
+    if (command.type !== 'CreateSketchFromImport') {
+      return err({ code: 'WRONG_TYPE', message: 'Expected CreateSketchFromImport command' });
+    }
+    const partCheck = findPart(state, command.partId);
+    if (!partCheck.ok) return partCheck;
+    const planeCheck = validatePlaneRef(command.plane, 'plane');
+    if (!planeCheck.ok) return planeCheck;
+    const snap = command.editorState as unknown;
+    if (
+      !snap || typeof snap !== 'object' ||
+      !Array.isArray((snap as { points?: unknown }).points) ||
+      !Array.isArray((snap as { geometries?: unknown }).geometries) ||
+      !Array.isArray((snap as { constraints?: unknown }).constraints)
+    ) {
+      return err({
+        code: 'INVALID_INPUT',
+        message: 'editorState must be a snapshot with points / geometries / constraints arrays',
+        field: 'editorState',
+      });
+    }
+    if ((snap as { geometries: unknown[] }).geometries.length === 0) {
+      return err({
+        code: 'INVALID_INPUT',
+        message: 'editorState has no geometry — nothing to import',
+        field: 'editorState',
+      });
+    }
+    return ok(undefined);
+  },
+
+  execute(draft: CadProject, command: CadCommand): void {
+    if (command.type !== 'CreateSketchFromImport') return;
+    const part = draft.parts[command.partId];
+    if (!part) return;
+
+    const id = featureId(generateId('sketch'));
+    const now = new Date().toISOString();
+    // Reconstitute the supplied snapshot into a working EditorState so we
+    // can derive the canonical `buildGeometry` map from the SAME source — the
+    // two views can't drift (same guarantee as the draw-command handlers).
+    const editorState = fromSnapshot(command.editorState as unknown as {
+      points?: readonly unknown[];
+      geometries?: readonly unknown[];
+      constraints?: readonly unknown[];
+    });
+
+    const inputs: SketchFeatureInputs = {
+      plane: command.plane,
+      buildGeometry: editorModelToBuildGeometry(editorState),
+      editorModel: toSnapshot(editorState) as unknown as SketchEditorSnapshot,
+    };
+
+    const feature: FeatureNode = {
+      id,
+      type: 'sketch',
+      name: command.name ?? `Sketch ${part.timeline.filter(f => f.type === 'sketch').length + 1}`,
       version: 1,
       enabled: true,
       visible: true,
@@ -203,7 +282,7 @@ export const addSketchEntityHandler: CommandHandler = {
       const sketch = part.timeline.find(f => f.id === command.sketchId);
       if (sketch && sketch.type === 'sketch') {
         const inputs = sketch.inputs as unknown as SketchFeatureInputs;
-        inputs.entities[command.entity.id as EntityId] = command.entity;
+        inputs.buildGeometry[command.entity.id as EntityId] = command.entity;
         sketch.updatedAt = new Date().toISOString();
         return;
       }
@@ -214,8 +293,8 @@ export const addSketchEntityHandler: CommandHandler = {
 // `replaceSketchEntitiesHandler` was retired during the sketch-commands
 // unification. Its sole caller
 // (Shell.tsx `syncSketchToDocument`) is gone; the per-primitive
-// `Sketch*` handlers already rebuild `inputs.entities` and snapshot
-// `_editorState` after every mutation, so a "replace all" command had
+// `Sketch*` handlers already rebuild `inputs.buildGeometry` and snapshot
+// `editorModel` after every mutation, so a "replace all" command had
 // nothing to add. See `ReplaceSketchEntitiesCommand`'s retirement note
 // in commands/types.ts for the migration path if a future flow needs
 // atomic sketch swap.
@@ -239,22 +318,22 @@ export const removeSketchEntityHandler: CommandHandler = {
 
   /**
    * Remove the entity from the sketch's editor state and rebuild both
-   * `inputs.entities` (the canonical dictionary) and `inputs._editorState`
+   * `inputs.buildGeometry` (the canonical dictionary) and `inputs.editorModel`
    * (snapshot the in-app editor hydrates from) from the resulting state.
    *
    * **Why this is the only correct shape.** The handler used to do just
-   * `delete inputs.entities[command.entityId]` and leave `_editorState`
+   * `delete inputs.buildGeometry[command.entityId]` and leave `editorModel`
    * intact. That broke the editor's source-of-truth contract: the
-   * hydration subscriber reads `_editorState`, so it never saw the
-   * deletion, and the next dispatch that did touch `_editorState` (a
-   * drag-end, a new circle, anything) rebuilt `entities` *from*
-   * `_editorState` — putting the "deleted" entry back. Routing through
+   * hydration subscriber reads `editorModel`, so it never saw the
+   * deletion, and the next dispatch that did touch `editorModel` (a
+   * drag-end, a new circle, anything) rebuilt `buildGeometry` *from*
+   * `editorModel` — putting the "deleted" entry back. Routing through
    * the shared `removeGeometry` op (operations.ts) keeps both fields
    * derived from the same `EditorState`, identical to how
    * `sketchRemoveConstraintHandler` already worked.
    *
    * `entityId` on this command is the geometry id (per
-   * `editorStateToEntities`, which emits one entity per geometry with
+   * `editorModelToBuildGeometry`, which emits one entity per geometry with
    * matching ids). Non-existent ids are a silent no-op.
    */
   execute(draft: CadProject, command: CadCommand): void {
@@ -264,12 +343,12 @@ export const removeSketchEntityHandler: CommandHandler = {
       if (!sketch || sketch.type !== 'sketch') continue;
 
       const inputs = sketch.inputs as unknown as SketchFeatureInputs;
-      const current: EditorState = fromSnapshot(inputs._editorState);
+      const current: EditorState = fromSnapshot(inputs.editorModel);
       const result = removeGeometryOp(current, command.entityId as unknown as SketchGeometryId);
       if (!result.removedGeometry) return; // idempotent no-op
 
-      inputs.entities = editorStateToEntities(result.state);
-      inputs._editorState = toSnapshot(result.state) as unknown as SketchEditorSnapshot;
+      inputs.buildGeometry = editorModelToBuildGeometry(result.state);
+      inputs.editorModel = toSnapshot(result.state) as unknown as SketchEditorSnapshot;
       const now = new Date().toISOString();
       sketch.updatedAt = now;
       draft.metadata.updatedAt = now;
@@ -804,7 +883,7 @@ export const createImportedGeometryHandler: CommandHandler = {
     if (!command.inputs.fileName?.trim()) {
       return err({ code: 'INVALID_INPUT', message: 'Imported geometry requires a fileName' });
     }
-    if (command.inputs.format !== 'step' && command.inputs.format !== 'stl') {
+    if (command.inputs.format !== 'step' && command.inputs.format !== 'stl' && command.inputs.format !== 'brep') {
       return err({ code: 'INVALID_INPUT', message: `Unsupported format: ${command.inputs.format}` });
     }
     if (!command.inputs.data || command.inputs.data.length === 0) {

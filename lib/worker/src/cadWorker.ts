@@ -150,6 +150,26 @@ const api = {
   },
 
   /**
+   * Export a part as binary BREP (OCCT's native B-Rep format).
+   * Returns the raw ArrayBuffer (transferable for zero-copy).
+   */
+  async exportBrep(
+    part: CadPart,
+    project: CadProject,
+  ): Promise<ArrayBuffer> {
+    const k = await ensureKernel();
+    const result = await incrementalRebuild(part, project, k, 0);
+
+    const bodyHandles = result.bodies.map(b => b.handle);
+    if (bodyHandles.length === 0) {
+      return new ArrayBuffer(0);
+    }
+
+    const blob = await k.exportBrep(bodyHandles);
+    return blob.arrayBuffer();
+  },
+
+  /**
    * Export a part as 3MF (mesh-based, ZIP archive).
    * Returns the raw ArrayBuffer (transferable for zero-copy).
    */

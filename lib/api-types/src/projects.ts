@@ -1,16 +1,30 @@
 // GENERATED — DO NOT EDIT HERE.
-// Client-safe subset of the server API contract, vendored into this repo.
-// This repo has no sync script and cannot regenerate this file. To propose a
-// change, open an issue/PR here; a maintainer updates the upstream source and
+// Client-safe subset vendored from the private TweakCAD-Site repo. This repo
+// has no sync script and cannot regenerate this file. To propose a change,
+// open an issue/PR here; a maintainer updates the source in TweakCAD-Site and
 // re-syncs. Local edits are overwritten on the next sync.
 
 import { z } from 'zod';
 
-// Client-safe project surface. Keep this limited to the DTOs the CAD app
-// legitimately receives at runtime (project metadata it reads/creates).
-// Server-only types — taxonomy, publish/visibility, the model-card feed,
-// remix, and comments + moderation — live elsewhere and must NOT be added
-// here.
+// CLIENT-SAFE project surface — mirrored into the public cad repo. Keep this
+// limited to the DTOs the CAD app legitimately receives at runtime (project
+// metadata it reads/creates). Site-private types — taxonomy, publish/
+// visibility, the model-card feed, remix, and comments + moderation — live in
+// `projects-publishing.ts` and `comments.ts` and must NOT be added here.
+
+/**
+ * URL field restricted to the http(s) schemes. `z.string().url()` alone still
+ * accepts `javascript:` / `data:` URLs (they parse as valid URLs), which become
+ * a stored-XSS vector once rendered into an anchor `href` — React does not block
+ * those schemes. Use this for any user-supplied URL that may reach the DOM.
+ */
+export const httpUrl = (opts?: { max?: number }) => {
+  let s = z.string().url();
+  if (opts?.max != null) s = s.max(opts.max);
+  return s.refine((u) => /^https?:\/\//i.test(u), {
+    message: 'URL must use http or https',
+  });
+};
 
 export const Visibility = z.enum(['private', 'org', 'unlisted', 'public']);
 export type Visibility = z.infer<typeof Visibility>;
@@ -103,7 +117,7 @@ export type Project = z.infer<typeof Project>;
  * making it public).
  */
 export const ExternalAttribution = z.object({
-  externalSourceUrl: z.string().url().max(1000).optional(),
+  externalSourceUrl: httpUrl({ max: 1000 }).optional(),
   externalSourceLabel: z.string().max(200).optional(),
   originalAuthorName: z.string().max(200).optional(),
 });

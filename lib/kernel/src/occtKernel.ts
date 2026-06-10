@@ -1524,6 +1524,24 @@ export class OcctKernel implements CadKernel {
     }
   }
 
+  async importBrep(data: ArrayBuffer, origin?: string): Promise<Result<KernelBody[], KernelError>> {
+    try {
+      const k = this.getKernel();
+      // occt-wasm's fromBREPBinary takes the raw BREP bytes. Same
+      // decomposition path as STEP — single-solid files come back as a
+      // 1-element body array; a compound is split per solid.
+      const root = k.fromBREPBinary(new Uint8Array(data));
+      try {
+        return ok(this.decomposeToBodies(root, origin ?? 'brep-import'));
+      } finally {
+        k.release(root);
+      }
+    } catch (e) {
+      console.error('[OcctKernel] importBrep failed:', e);
+      return err(kernelError('kernel', 'BREP_IMPORT_FAILED', e instanceof Error ? e.message : String(e)));
+    }
+  }
+
   /**
    * Decompose an imported root shape into one or more KernelBody
    * entries. STEP files often arrive as a compound containing
@@ -1579,6 +1597,32 @@ export class OcctKernel implements CadKernel {
     try {
       const text = k.exportStep(target);
       return new Blob([text], { type: EXPORT_MIME.step });
+    } finally {
+      if (release) k.release(target);
+    }
+  }
+
+  async exportBrep(bodies: KernelBody[]): Promise<Blob> {
+    if (bodies.length === 0) throw new Error('exportBrep: no bodies provided');
+    const k = this.getKernel();
+    // occt-wasm's toBREPBinary takes a single shape; wrap multi-body exports
+    // in a transient compound, same as exportStep.
+    const shapes = bodies.map(b => this.getBodyShape(b));
+    let target: ShapeHandle;
+    let release = false;
+    if (shapes.length === 1) {
+      target = shapes[0]!;
+    } else {
+      target = k.makeCompound(shapes);
+      release = true;
+    }
+    try {
+      const bytes = k.toBREPBinary(target);
+      // Copy through an ArrayBuffer so Blob accepts it regardless of whether
+      // the source view is backed by a SharedArrayBuffer.
+      const ab = new ArrayBuffer(bytes.byteLength);
+      new Uint8Array(ab).set(bytes);
+      return new Blob([ab], { type: EXPORT_MIME.brep });
     } finally {
       if (release) k.release(target);
     }

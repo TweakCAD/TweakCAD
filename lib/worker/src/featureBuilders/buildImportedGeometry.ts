@@ -2,8 +2,9 @@
  * Imported geometry feature builder.
  *
  * Reads the base64-encoded file bytes out of `inputs.data`, decodes
- * to ArrayBuffer, and calls `kernel.importStep` or `kernel.importStl`
- * depending on `inputs.format`. The kernel decomposes STEP compounds
+ * to ArrayBuffer, and calls `kernel.importStep`, `kernel.importStl`,
+ * or `kernel.importBrep` depending on `inputs.format`. The kernel
+ * decomposes STEP compounds
  * into per-solid bodies (see `decomposeToBodies` in occtKernel.ts);
  * a single-solid file returns a one-body result.
  *
@@ -34,7 +35,7 @@ export async function buildImportedGeometry(
   if (!inputs.data || inputs.data.length === 0) {
     throw new Error(`Imported geometry "${inputs.fileName}" has empty data`);
   }
-  if (inputs.format !== 'step' && inputs.format !== 'stl') {
+  if (inputs.format !== 'step' && inputs.format !== 'stl' && inputs.format !== 'brep') {
     throw new Error(`Unsupported import format: ${inputs.format}`);
   }
 
@@ -50,7 +51,9 @@ export async function buildImportedGeometry(
   const origin = `import_${node.id}`;
   const importResult = inputs.format === 'step'
     ? await kernel.importStep(buf, origin)
-    : await kernel.importStl(buf, origin);
+    : inputs.format === 'brep'
+      ? await kernel.importBrep(buf, origin)
+      : await kernel.importStl(buf, origin);
 
   if (!importResult.ok) {
     throw new Error(`Import "${inputs.fileName}" failed: ${importResult.error.message}`);

@@ -32,6 +32,7 @@ import {
   type SketchPlaneConfig,
   type SketchPlaneInput,
 } from './SketchSceneManager.ts';
+import { catmullRomSpline } from './curveTessellation.ts';
 
 // ---- Constants ----
 
@@ -107,7 +108,7 @@ export function SketchViewer({
   // in the selection. `resolveProfile` disambiguates via the stored
   // `interiorPoint`, picking the one region that actually contains it.
   useEffect(() => {
-    const regions = detectSketchRegions(sketchInputs.entities);
+    const regions = detectSketchRegions(sketchInputs.buildGeometry);
     regionsRef.current = regions;
 
     const initialIds = new Set<string>();
@@ -153,7 +154,7 @@ export function SketchViewer({
     });
 
     // Render entity geometry
-    renderEntities(root, sketchInputs.entities, plane, lineMaterial, constructionMaterial);
+    renderEntities(root, sketchInputs.buildGeometry, plane, lineMaterial, constructionMaterial);
 
     // Region group (for picker mode)
     const regionGroup = new THREE.Group();
@@ -386,6 +387,44 @@ function createEntityObject(
       }
       return makeLine2(points, material);
     }
+    case 'ellipse': {
+      const cx = parseFloat(String(entity.center[0]));
+      const cy = parseFloat(String(entity.center[1]));
+      const mx = parseFloat(String(entity.majorEnd[0]));
+      const my = parseFloat(String(entity.majorEnd[1]));
+      const minor = parseFloat(String(entity.minorRadius));
+      if (isNaN(cx) || isNaN(cy) || isNaN(mx) || isNaN(my) || isNaN(minor)) return null;
+      const majorAngle = Math.atan2(my - cy, mx - cx);
+      const majorRadius = Math.hypot(mx - cx, my - cy);
+      if (majorRadius === 0) return null;
+      const points: THREE.Vector3[] = [];
+      for (let i = 0; i <= CIRCLE_SEGMENTS; i++) {
+        const theta = (i / CIRCLE_SEGMENTS) * Math.PI * 2;
+        // Parameterize in the local (major, minor) frame, then rotate.
+        const localX = majorRadius * Math.cos(theta);
+        const localY = minor * Math.sin(theta);
+        const x = cx + localX * Math.cos(majorAngle) - localY * Math.sin(majorAngle);
+        const y = cy + localX * Math.sin(majorAngle) + localY * Math.cos(majorAngle);
+        points.push(toWorld(plane, x, y));
+      }
+      return makeLine2(points, material);
+    }
+    case 'spline': {
+      const ctrl: [number, number][] = [];
+      for (const [xe, ye] of entity.points) {
+        const x = parseFloat(String(xe));
+        const y = parseFloat(String(ye));
+        if (isNaN(x) || isNaN(y)) return null;
+        ctrl.push([x, y]);
+      }
+      if (ctrl.length < 2) return null;
+      const sampled = catmullRomSpline(ctrl, 16);
+      return makeLine2(sampled.map(([x, y]) => toWorld(plane, x, y)), material);
+    }
+    case 'point':
+      // Standalone reference point — not drawn in the readonly overlay
+      // (matches the DXF/SVG export, which excludes reference points).
+      return null;
     default:
       return null;
   }

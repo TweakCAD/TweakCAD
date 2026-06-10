@@ -6,6 +6,13 @@ import { getAppState } from '../appInit.ts';
 import type { PartId, FeatureId, BodyId } from '@tweakcad/core/src/ids.ts';
 import type { ProfileRef, SketchFeatureInputs, SketchEntity, ExtrudeFeatureInputs, PlaneRef, ConstructionPlaneDisplay } from '@tweakcad/core/src/document/schema.ts';
 import { regionToProfileRef } from '@tweakcad/core/src/sketch/profileRegions.ts';
+import { sketchToDxf } from '@tweakcad/core/src/sketch/io/dxf.ts';
+import { dxfToEditorState } from '@tweakcad/core/src/sketch/io/dxfImport.ts';
+import { toSnapshot } from '@tweakcad/core/src/sketch/operations.ts';
+import { sketchToSvg } from '@tweakcad/core/src/sketch/io/svg.ts';
+import { resolveAllParameters } from '@tweakcad/core/src/parameters/evaluator.ts';
+import { applyActiveConfiguration } from '@tweakcad/core/src/commands/handlers/configurationCommands.ts';
+import { downloadText, pickDxfForImport } from '../storage/diskAdapter.ts';
 import { computeSketchDof } from '../sketch/sketchDof.ts';
 import type { SavedCameraState } from '@tweakcad/core/src/store/sketchStore.ts';
 import type { SketchGeometry, SketchToolId } from '@tweakcad/core/src/sketch/types.ts';
@@ -98,8 +105,8 @@ import { registerThumbnailCapture } from '../storage/thumbnailCapture.ts';
 //     shapes are primitives + constraints (invariant #11).
 //   - There is no `syncSketchToDocument`. Every sketch UI gesture
 //     dispatches a `Sketch*` CadCommand through the bus, and each
-//     handler rebuilds `inputs.entities` via the canonical
-//     `editorStateToEntities` serializer before the patch lands. The
+//     handler rebuilds `inputs.buildGeometry` via the canonical
+//     `editorModelToBuildGeometry` serializer before the patch lands. The
 //     doc is always current; there is no exit-time sync.
 
 /**
@@ -171,11 +178,11 @@ export type ShellProps = {
   onFileNew?: () => void;
   onFileOpen?: () => void;
   /**
-   * Import a STEP / STL file as a new feature in the current document.
+   * Import a STEP / STL / BREP file as a new feature in the current document.
    * The optional `format` hint lets the dropdown items narrow the file
-   * picker to a single format; omitted = accept both.
+   * picker to a single format; omitted = accept all.
    */
-  onFileImport?: (format?: 'step' | 'stl') => void;
+  onFileImport?: (format?: 'step' | 'stl' | 'brep') => void;
   /**
    * Import a parametric component (.cadcomponent / .cadjson) and embed it
    * as an `importedComponent` feature in the active part's timeline.
@@ -184,7 +191,7 @@ export type ShellProps = {
   onFileSave?: () => void;
   onFileSaveAs?: () => void;
   /** Export the current part to a downloadable geometry format. */
-  onFileExport?: (format: 'stl' | 'step' | '3mf') => Promise<void> | void;
+  onFileExport?: (format: 'stl' | 'step' | 'brep' | '3mf') => Promise<void> | void;
   /** SaaS availability — drives the account chip in the title bar. */
   saas?: import('../storage/index.ts').SaasState;
   /** Open the inline sign-in modal. */
@@ -502,6 +509,17 @@ export function Shell({
   // button; cleared when the user picks a plane or cancels (Esc / Cancel).
   const [sketchPickingPlane, setSketchPickingPlane] = useState(false);
 
+  // Pending DXF import: when the user picks a DXF file, we parse it into an
+  // EditorState snapshot up-front, then reuse the SAME plane-picker overlay
+  // as a fresh sketch. On plane-pick, `handlePlanePicked` dispatches
+  // `CreateSketchFromImport` with this snapshot instead of `CreateSketch`.
+  // Held in a ref so the picker callback reads the latest value without a
+  // re-render dependency. Cleared on pick / cancel.
+  const pendingDxfImportRef = useRef<{
+    snapshot: import('@tweakcad/core/src/document/schema.ts').SketchEditorSnapshot;
+    name: string;
+  } | null>(null);
+
   // Section view (Inspect): non-destructive clip-plane cut so you can see
   // inside bodies, with a drag handle to slide the cut. View-only — no
   // document change. `sectionActive` toggles the mode; orientation picks
@@ -675,7 +693,53 @@ export function Shell({
 
   const handleCancelPlanePick = useCallback(() => {
     setSketchPickingPlane(false);
+    pendingDxfImportRef.current = null;
   }, []);
+
+  /**
+   * File → Import DXF (sketch). Picks a `.dxf` file, parses it to sketch
+   * primitives, builds the EditorState, and — if any supported geometry
+   * was found — opens the SAME plane picker as a fresh sketch with the
+   * parsed snapshot stashed in `pendingDxfImportRef`. On plane-pick,
+   * `handlePlanePicked` dispatches `CreateSketchFromImport`.
+   *
+   * Distinct from the 3D STEP/STL/BREP import (which produces an
+   * `importedGeometry` body) — DXF becomes 2D sketch geometry.
+   */
+  const handleImportSketchDxf = useCallback(async () => {
+    if (sketchActive) {
+      consoleLog('warn', 'Exit the current sketch before importing a DXF', 'sketch');
+      return;
+    }
+    let pick: Awaited<ReturnType<typeof pickDxfForImport>>;
+    try {
+      pick = await pickDxfForImport();
+    } catch (err) {
+      consoleLog('error', `DXF read failed: ${(err as Error).message}`, 'sketch');
+      return;
+    }
+    if (!pick) return; // user cancelled
+
+    const { state, skipped, unitName } = dxfToEditorState(pick.text);
+    if (skipped.length > 0) {
+      consoleLog('warn', `DXF: skipped unsupported entities: ${skipped.join(', ')}`, 'sketch');
+    }
+    if (state.geometries.size === 0) {
+      consoleLog('warn', `DXF "${pick.fileName}" had no supported geometry — nothing imported`, 'sketch');
+      return;
+    }
+    if (unitName) {
+      consoleLog('info', `DXF "${pick.fileName}": units were ${unitName}, scaled to mm`, 'sketch');
+    }
+
+    const baseName = pick.fileName.replace(/\.dxf$/i, '');
+    pendingDxfImportRef.current = {
+      snapshot: toSnapshot(state) as unknown as import('@tweakcad/core/src/document/schema.ts').SketchEditorSnapshot,
+      name: baseName || 'Imported sketch',
+    };
+    consoleLog('info', `DXF "${pick.fileName}": ${state.geometries.size} curve(s) — pick a plane`, 'sketch');
+    setSketchPickingPlane(true);
+  }, [sketchActive]);
 
   /** Create a sketch on the chosen plane (default or construction) and enter sketch mode. */
   const handlePlanePicked = useCallback((pick: SketchPlanePick) => {
@@ -694,13 +758,29 @@ export function Shell({
         ? { type: 'defaultPlane', name: pick.name }
         : { type: 'constructionPlane', planeId: pick.featureId };
 
-    const result = commandBus.dispatch({
-      type: 'CreateSketch',
-      partId,
-      plane: planeRef,
-    });
+    // A pending DXF import dispatches `CreateSketchFromImport` (seeds the
+    // parsed geometry as one undo entry); otherwise a fresh `CreateSketch`.
+    const pendingImport = pendingDxfImportRef.current;
+    pendingDxfImportRef.current = null;
 
-    if (!result.ok) return;
+    const result = pendingImport
+      ? commandBus.dispatch({
+          type: 'CreateSketchFromImport',
+          partId,
+          plane: planeRef,
+          editorState: pendingImport.snapshot,
+          name: pendingImport.name,
+        })
+      : commandBus.dispatch({
+          type: 'CreateSketch',
+          partId,
+          plane: planeRef,
+        });
+
+    if (!result.ok) {
+      if (pendingImport) consoleLog('error', `DXF import failed: ${result.error.message}`, 'sketch');
+      return;
+    }
 
     const updatedProject = getAppState().documentStore.getState();
     const updatedPart = updatedProject.parts[partId];
@@ -743,8 +823,8 @@ export function Shell({
   }, [project.parts, commandBus, sketchActions, constructionPlanes]);
 
   // There is no exit-time sketch sync. Every sketch mutation goes
-  // through the bus, and every handler rebuilds `inputs.entities` via
-  // `editorStateToEntities` (the canonical serializer in
+  // through the bus, and every handler rebuilds `inputs.buildGeometry` via
+  // `editorModelToBuildGeometry` (the canonical serializer in
   // @tweakcad/core/src/sketch/serialization.ts) before the patch lands.
   // The doc is always current, so exit-sketch is pure UI teardown:
   // clear the editor store, exit sketch mode, log.
@@ -799,7 +879,7 @@ export function Shell({
     // Preferred path: restore the editor's native snapshot (points,
     // geometries, constraints) if the sketch was saved with one. This keeps
     // point IDs, constraint IDs, and all constraint references intact across
-    // edit cycles. Legacy sketches (no _editorState) fall through to the
+    // edit cycles. Legacy sketches (no editorModel) fall through to the
     // entity-based reconstruction below.
     const inputs = sketchFeature.inputs as SketchFeatureInputs;
     // Resolve the sketch's plane (default-plane name or construction-plane
@@ -811,8 +891,8 @@ export function Shell({
     const viewName = viewNameForPlaneInput(planeInput);
     const planeConfig = typeof planeInput === 'string' ? null : planeInput;
     const planeRefForEnter: PlaneRef = inputs.plane ?? { type: 'defaultPlane', name: viewName };
-    if (inputs._editorState) {
-      const snap = inputs._editorState;
+    if (inputs.editorModel) {
+      const snap = inputs.editorModel;
       editorStore.loadFromDocument(
         snap.points as Parameters<typeof editorStore.loadFromDocument>[0],
         snap.geometries as Parameters<typeof editorStore.loadFromDocument>[1],
@@ -838,12 +918,12 @@ export function Shell({
     }
 
     // Convert document model entities to point-based sketch entities
-    // (legacy fallback for sketches that lack `_editorState`). There are
+    // (legacy fallback for sketches that lack `editorModel`). There are
     // no composite shape entities — only true primitive curves
     // (line / circle / arc) reach this fallback.
     let loadedCount = 0;
-    if (inputs.entities) {
-      for (const [, ent] of Object.entries(inputs.entities)) {
+    if (inputs.buildGeometry) {
+      for (const [, ent] of Object.entries(inputs.buildGeometry)) {
         const skEnt = ent as SketchEntity;
         try {
           if (skEnt.type === 'circle') {
@@ -871,7 +951,7 @@ export function Shell({
           // and the editor uses point refs. Round-tripping it through
           // the legacy fallback needs a (centerId, startPt, endPt)
           // reconstruction that's not yet wired here; sketches authored
-          // with arcs always have `_editorState` so the fast path covers
+          // with arcs always have `editorModel` so the fast path covers
           // them.
         } catch {
           // Skip entities that can't be resolved
@@ -955,7 +1035,7 @@ export function Shell({
         sketchName = feature.name;
         if (feature.type === 'sketch') {
           const sketchInputs = feature.inputs as unknown as SketchFeatureInputs;
-          const regions = detectSketchRegions(sketchInputs.entities);
+          const regions = detectSketchRegions(sketchInputs.buildGeometry);
           hasProfiles = regions.length > 0;
         }
         break;
@@ -1079,6 +1159,50 @@ export function Shell({
     consoleLog('info', 'Extrude cancelled', 'extrude');
   }, []);
 
+  /**
+   * Export a sketch feature's 2D profile geometry as DXF or SVG.
+   *
+   * Resolves the sketch's entities (the canonical `inputs.buildGeometry`
+   * projection the worker rebuilds from) and the part's resolved parameter
+   * table — same `resolveAllParameters(project.parameters,
+   * applyActiveConfiguration(part))` pairing buildSketch/rebuilder use — then
+   * runs the pure serializer and triggers a browser download. No 3D body is
+   * involved.
+   */
+  const handleExportSketch = useCallback((sketchFeatureId: string, format: 'dxf' | 'svg') => {
+    let sketchPart = null;
+    let sketchFeature = null;
+    for (const part of Object.values(project.parts)) {
+      const feature = part.timeline.find(f => f.id === sketchFeatureId && f.type === 'sketch');
+      if (feature) {
+        sketchPart = part;
+        sketchFeature = feature;
+        break;
+      }
+    }
+    if (!sketchPart || !sketchFeature) {
+      consoleLog('error', `Sketch not found: ${sketchFeatureId}`, 'sketch');
+      return;
+    }
+
+    const inputs = sketchFeature.inputs as unknown as SketchFeatureInputs;
+    const entities = Object.values(inputs.buildGeometry ?? {}) as SketchEntity[];
+
+    const paramResult = resolveAllParameters(
+      project.parameters,
+      applyActiveConfiguration(sketchPart),
+    );
+    const params = paramResult.ok ? paramResult.value : {};
+
+    const safeName = sketchFeature.name.replace(/[\\/:*?"<>|]/g, '_') || 'sketch';
+    if (format === 'dxf') {
+      downloadText(`${safeName}.dxf`, 'image/vnd.dxf', sketchToDxf(entities, params));
+    } else {
+      downloadText(`${safeName}.svg`, 'image/svg+xml', sketchToSvg(entities, params));
+    }
+    consoleLog('info', `Exported sketch "${sketchFeature.name}" as ${format.toUpperCase()}`, 'sketch');
+  }, [project.parts, project.parameters]);
+
   // ---- Context menu handler ----
 
   const handleContextAction = useCallback((action: ContextMenuAction, featureId: string) => {
@@ -1145,6 +1269,12 @@ export function Shell({
       }
       case 'editSketch':
         handleEditSketch(featureId);
+        break;
+      case 'exportSketchDxf':
+        handleExportSketch(featureId, 'dxf');
+        break;
+      case 'exportSketchSvg':
+        handleExportSketch(featureId, 'svg');
         break;
       case 'delete': {
         const parts = Object.values(project.parts);
@@ -1360,7 +1490,7 @@ export function Shell({
         // Not implemented yet
         break;
     }
-  }, [project.parts, commandBus, handleStartExtrude, handleEditSketch, openImportedComponentEditor, selectedBodyId, sketchActive, sketchActions, bodyToFeatureMap]);
+  }, [project.parts, commandBus, handleStartExtrude, handleEditSketch, handleExportSketch, openImportedComponentEditor, selectedBodyId, sketchActive, sketchActions, bodyToFeatureMap]);
 
   // ---- Toolbar extrude click: use selected sketch ----
 
@@ -1409,7 +1539,7 @@ export function Shell({
         sketchName = feature.name;
         if (feature.type === 'sketch') {
           const sketchInputs = feature.inputs as unknown as SketchFeatureInputs;
-          const regions = detectSketchRegions(sketchInputs.entities);
+          const regions = detectSketchRegions(sketchInputs.buildGeometry);
           hasProfiles = regions.length > 0;
         }
         break;
@@ -3164,7 +3294,7 @@ export function Shell({
         // Skip the sketch being actively edited — SketchEditor renders it
         if (sketchActive && feature.id === activeSketchId) continue;
         const inputs = feature.inputs as unknown as SketchFeatureInputs;
-        if (!inputs.entities || Object.keys(inputs.entities).length === 0) continue;
+        if (!inputs.buildGeometry || Object.keys(inputs.buildGeometry).length === 0) continue;
         const plane = resolveSketchPlaneInput(inputs.plane, constructionPlanes);
         result.push({ id: feature.id, inputs, plane });
       }
@@ -3192,6 +3322,7 @@ export function Shell({
         onOpen={onFileOpen}
         onImport={onFileImport}
         onImportComponent={onComponentImport}
+        onImportSketchDxf={handleImportSketchDxf}
         onSave={onFileSave}
         onSaveAs={onFileSaveAs}
         onExport={onFileExport ? (fmt) => { void onFileExport(fmt); } : undefined}

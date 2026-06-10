@@ -305,8 +305,33 @@ export interface CadKernel {
    */
   importStl(data: ArrayBuffer, origin?: string): Promise<Result<KernelBody[], KernelError>>;
 
+  /**
+   * Import a binary BREP file (.brep / .brp) as one or more bodies.
+   *
+   * BREP is OCCT's native serialization — `fromBREPBinary` returns a
+   * single `ShapeHandle` which the implementation decomposes into
+   * per-solid bodies via the same `decomposeToBodies` path as STEP, so
+   * a compound with 8 solids becomes 8 `KernelBody` entries under one
+   * feature. Single-solid files return a one-element array.
+   *
+   * @param data    Raw BREP bytes (binary — read as ArrayBuffer).
+   * @param origin  Topology-tracker tag; feature id makes IDs deterministic.
+   */
+  importBrep(data: ArrayBuffer, origin?: string): Promise<Result<KernelBody[], KernelError>>;
+
   /** Export bodies to 3MF format (mesh-based, ZIP-packaged). */
   export3MF(bodies: KernelBody[], options?: ThreeMfExportOptions): Promise<Blob>;
+
+  /**
+   * Export bodies to binary BREP (OpenCASCADE's native BRep format).
+   *
+   * BREP preserves the full analytical B-Rep (curves, surfaces,
+   * topology) like STEP, but is OCCT's own serialization — written and
+   * read as raw bytes via occt-wasm's `toBREPBinary`/`fromBREPBinary`,
+   * not text. Multi-body exports wrap the bodies in a transient
+   * compound, same as `exportStep`.
+   */
+  exportBrep(bodies: KernelBody[]): Promise<Blob>;
 
   // --- Lifecycle ---
 

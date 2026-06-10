@@ -1,19 +1,19 @@
 /**
- * Editor-state → document-entities serialization.
+ * Editor-model → build-geometry serialization.
  *
  * The sketch has two parallel representations in a feature's inputs:
  *
- *   1. `_editorState` (`SketchEditorSnapshot`) — point-based with
+ *   1. `editorModel` (`SketchEditorSnapshot`) — point-based with
  *      shared IDs. What the in-browser sketch editor manipulates.
  *      Round-tripped across edit cycles so constraint references survive.
  *
- *   2. `entities` (`Record<EntityId, SketchEntity>`) — flat per-curve
+ *   2. `buildGeometry` (`Record<EntityId, SketchEntity>`) — flat per-curve
  *      records with coordinates baked in as `Expression` strings.
  *      What the worker rebuilds from. The region detector
  *      (`profileRegions.detectSketchRegions`) reads this form.
  *
  * Both must be present and consistent. Every command handler that
- * mutates `_editorState` rebuilds `entities` through this serializer
+ * mutates `editorModel` rebuilds `buildGeometry` through this serializer
  * (see [sketchDrawCommands.execute](../commands/handlers/sketchDrawCommands.ts))
  * so they stay in sync without a separate exit-time sync.
  *
@@ -24,7 +24,7 @@
  * there are no composite schema types or naming-convention plumbing for
  * them. A rectangle in the document is 4
  * SketchLineEntity records held together by the constraints stored in
- * `_editorState`. The region detector still finds the closed loop and
+ * `editorModel`. The region detector still finds the closed loop and
  * the worker still builds the right face.
  *
  * The projection covers **ellipse, spline, and standalone point** in
@@ -52,7 +52,7 @@ import { entityId } from '../ids.ts';
 import type { EditorState } from './operations.ts';
 
 /**
- * Convert an `EditorState` into the document's flat `entities` Record.
+ * Convert an `EditorState` into the document's flat `buildGeometry` Record.
  * Pure function — produces the same output for the same input.
  *
  * The output map's keys are `EntityId`s matching the source geometry
@@ -60,7 +60,7 @@ import type { EditorState } from './operations.ts';
  * it, save it — the same lines re-emit the same entity ids so
  * downstream `ProfileRef.wireEntityIds` references survive.
  */
-export function editorStateToEntities(
+export function editorModelToBuildGeometry(
   state: EditorState,
 ): Record<EntityId, SketchEntity> {
   const result: Record<EntityId, SketchEntity> = {};
@@ -172,7 +172,7 @@ export function editorStateToEntities(
         break;
       }
       // Any editor-side slot/polygon previews have no document-entity
-      // counterpart and round-trip via `_editorState` only.
+      // counterpart and round-trip via `editorModel` only.
       default:
         break;
     }

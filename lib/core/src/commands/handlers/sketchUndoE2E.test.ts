@@ -103,30 +103,30 @@ describe('Sketch undo — step-by-step (task #36 fix)', () => {
 
     // After 3 draws: 1 line + 1 circle + 4 rectangle edges = 6 entities.
     const after3 = sketchInputs(store, partId, sketchId);
-    expect(Object.values(after3.entities)).toHaveLength(6);
-    expect(after3._editorState!.geometries).toHaveLength(6);
+    expect(Object.values(after3.buildGeometry)).toHaveLength(6);
+    expect(after3.editorModel!.geometries).toHaveLength(6);
     // Sketch lives on; the rectangle owns the most recent undo step.
     expect(store.undoLabel()).toBe('Draw Rectangle');
 
     // Undo the rectangle → only the line + circle remain.
     store.undo();
     const after2 = sketchInputs(store, partId, sketchId);
-    expect(Object.values(after2.entities)).toHaveLength(2);
-    expect(after2._editorState!.geometries).toHaveLength(2);
+    expect(Object.values(after2.buildGeometry)).toHaveLength(2);
+    expect(after2.editorModel!.geometries).toHaveLength(2);
     expect(store.undoLabel()).toBe('Draw Circle');
 
     // Undo the circle → only the line remains.
     store.undo();
     const after1 = sketchInputs(store, partId, sketchId);
-    expect(Object.values(after1.entities)).toHaveLength(1);
-    expect((Object.values(after1.entities)[0]!).type).toBe('line');
+    expect(Object.values(after1.buildGeometry)).toHaveLength(1);
+    expect((Object.values(after1.buildGeometry)[0]!).type).toBe('line');
     expect(store.undoLabel()).toBe('Draw Line');
 
     // Undo the line → sketch is empty but still exists.
     store.undo();
     const after0 = sketchInputs(store, partId, sketchId);
-    expect(Object.values(after0.entities)).toHaveLength(0);
-    expect(after0._editorState?.geometries ?? []).toHaveLength(0);
+    expect(Object.values(after0.buildGeometry)).toHaveLength(0);
+    expect(after0.editorModel?.geometries ?? []).toHaveLength(0);
     expect(sketchExists(store, partId, sketchId)).toBe(true);
     expect(store.undoLabel()).toBe('Create Sketch');
   });
@@ -141,21 +141,21 @@ describe('Sketch undo — step-by-step (task #36 fix)', () => {
     // Undo twice → empty sketch.
     store.undo();
     store.undo();
-    expect(Object.values(sketchInputs(store, partId, sketchId).entities)).toHaveLength(0);
+    expect(Object.values(sketchInputs(store, partId, sketchId).buildGeometry)).toHaveLength(0);
     expect(store.canRedo()).toBe(true);
     expect(store.redoLabel()).toBe('Draw Line');
 
     // Redo the line.
     store.redo();
     const afterRedoLine = sketchInputs(store, partId, sketchId);
-    expect(Object.values(afterRedoLine.entities)).toHaveLength(1);
-    expect((Object.values(afterRedoLine.entities)[0]!).type).toBe('line');
+    expect(Object.values(afterRedoLine.buildGeometry)).toHaveLength(1);
+    expect((Object.values(afterRedoLine.buildGeometry)[0]!).type).toBe('line');
 
     // Redo the circle.
     store.redo();
     const afterRedoCircle = sketchInputs(store, partId, sketchId);
-    expect(Object.values(afterRedoCircle.entities)).toHaveLength(2);
-    const types = Object.values(afterRedoCircle.entities).map((e) => e.type).sort();
+    expect(Object.values(afterRedoCircle.buildGeometry)).toHaveLength(2);
+    const types = Object.values(afterRedoCircle.buildGeometry).map((e) => e.type).sort();
     expect(types).toEqual(['circle', 'line']);
   });
 
@@ -169,11 +169,11 @@ describe('Sketch undo — step-by-step (task #36 fix)', () => {
 
     bus.dispatch({ type: 'SketchDrawLine', sketchId, from: [0, 0], to: [10, 0] });
     const before = sketchInputs(store, partId, sketchId);
-    const line = (before._editorState!.geometries as Array<{
+    const line = (before.editorModel!.geometries as Array<{
       id: SketchGeometryId; type: string;
       startId: SketchPointId; endId: SketchPointId;
     }>).find((g) => g.type === 'line')!;
-    const beforePoints = before._editorState!.points as Array<{ id: SketchPointId; x: number; y: number }>;
+    const beforePoints = before.editorModel!.points as Array<{ id: SketchPointId; x: number; y: number }>;
     const beforeEnd = beforePoints.find((p) => p.id === line.endId)!;
     expect(beforeEnd.x).toBe(10);
     expect(beforeEnd.y).toBe(0);
@@ -189,7 +189,7 @@ describe('Sketch undo — step-by-step (task #36 fix)', () => {
     });
 
     const afterMove = sketchInputs(store, partId, sketchId);
-    const afterPoints = afterMove._editorState!.points as Array<{ id: SketchPointId; x: number; y: number }>;
+    const afterPoints = afterMove.editorModel!.points as Array<{ id: SketchPointId; x: number; y: number }>;
     const movedEnd = afterPoints.find((p) => p.id === line.endId)!;
     expect(movedEnd.x).toBeCloseTo(15, 5);
     expect(movedEnd.y).toBeCloseTo(5, 5);
@@ -197,7 +197,7 @@ describe('Sketch undo — step-by-step (task #36 fix)', () => {
     // One undo step — the entire batch — restores the pre-drag coords.
     store.undo();
     const undone = sketchInputs(store, partId, sketchId);
-    const undonePoints = undone._editorState!.points as Array<{ id: SketchPointId; x: number; y: number }>;
+    const undonePoints = undone.editorModel!.points as Array<{ id: SketchPointId; x: number; y: number }>;
     const restoredEnd = undonePoints.find((p) => p.id === line.endId)!;
     expect(restoredEnd.x).toBeCloseTo(10, 5);
     expect(restoredEnd.y).toBeCloseTo(0, 5);
@@ -271,7 +271,7 @@ describe('Sketch removal via undo', () => {
     store.undo();
     expect(sketchExists(store, partId, sketchId)).toBe(true);
     const inputs = sketchInputs(store, partId, sketchId);
-    expect(Object.values(inputs.entities)).toHaveLength(1);
+    expect(Object.values(inputs.buildGeometry)).toHaveLength(1);
   });
 });
 
@@ -288,7 +288,7 @@ describe('SketchApplyConstraint pipeline — outcomes via the bus', () => {
     const sketchId = createSketch(bus, store, partId);
     bus.dispatch({ type: 'SketchDrawLine', sketchId, from: [0, 0], to: [10, 0] });
     const inputs = sketchInputs(store, partId, sketchId);
-    const line = (inputs._editorState!.geometries as Array<{
+    const line = (inputs.editorModel!.geometries as Array<{
       id: SketchGeometryId; type: string;
       startId: SketchPointId; endId: SketchPointId;
     }>).find((g) => g.type === 'line')!;
@@ -349,14 +349,14 @@ describe('SketchApplyConstraint pipeline — outcomes via the bus', () => {
     const sketchId = createSketch(bus, store, partId);
     bus.dispatch({ type: 'SketchDrawLine', sketchId, from: [0, 0], to: [10, 5] });
     const inputs = sketchInputs(store, partId, sketchId);
-    const line = (inputs._editorState!.geometries as Array<{
+    const line = (inputs.editorModel!.geometries as Array<{
       id: SketchGeometryId; type: string;
       startId: SketchPointId; endId: SketchPointId;
     }>).find((g) => g.type === 'line')!;
     const { startId, endId } = line;
-    const start = (inputs._editorState!.points as Array<{ id: SketchPointId; x: number; y: number }>)
+    const start = (inputs.editorModel!.points as Array<{ id: SketchPointId; x: number; y: number }>)
       .find((p) => p.id === startId)!;
-    const end = (inputs._editorState!.points as Array<{ id: SketchPointId; x: number; y: number }>)
+    const end = (inputs.editorModel!.points as Array<{ id: SketchPointId; x: number; y: number }>)
       .find((p) => p.id === endId)!;
 
     // Pin both endpoints at their current (different-y) coordinates.
@@ -397,7 +397,7 @@ describe('SketchApplyConstraint pipeline — outcomes via the bus', () => {
 
     // And the document still doesn't contain the rejected horizontal.
     const finalConstraints = sketchInputs(store, partId, sketchId)
-      ._editorState!.constraints as Array<{ type: string }>;
+      .editorModel!.constraints as Array<{ type: string }>;
     expect(finalConstraints.some((c) => c.type === 'horizontal')).toBe(false);
   });
 
@@ -410,20 +410,20 @@ describe('SketchApplyConstraint pipeline — outcomes via the bus', () => {
     const sketchId = createSketch(bus, store, partId);
     bus.dispatch({ type: 'SketchDrawLine', sketchId, from: [0, 0], to: [10, 5] });
     const inputs = sketchInputs(store, partId, sketchId);
-    const line = (inputs._editorState!.geometries as Array<{
+    const line = (inputs.editorModel!.geometries as Array<{
       id: SketchGeometryId; type: string;
       startId: SketchPointId; endId: SketchPointId;
     }>).find((g) => g.type === 'line')!;
-    const start = (inputs._editorState!.points as Array<{ id: SketchPointId; x: number; y: number }>)
+    const start = (inputs.editorModel!.points as Array<{ id: SketchPointId; x: number; y: number }>)
       .find((p) => p.id === line.startId)!;
-    const end = (inputs._editorState!.points as Array<{ id: SketchPointId; x: number; y: number }>)
+    const end = (inputs.editorModel!.points as Array<{ id: SketchPointId; x: number; y: number }>)
       .find((p) => p.id === line.endId)!;
     bus.dispatch({ type: 'SketchApplyConstraint', sketchId, constraint: { type: 'fixed', pointId: line.startId, x: start.x, y: start.y } });
     bus.dispatch({ type: 'SketchApplyConstraint', sketchId, constraint: { type: 'fixed', pointId: line.endId, x: end.x, y: end.y } });
 
     const labelBefore = store.undoLabel();
     const undoCountBefore = countUndoSteps(store);
-    const constraintsBefore = (sketchInputs(store, partId, sketchId)._editorState!.constraints as unknown[]).length;
+    const constraintsBefore = (sketchInputs(store, partId, sketchId).editorModel!.constraints as unknown[]).length;
 
     for (let i = 0; i < 5; i++) {
       const r = bus.dispatch({
@@ -436,7 +436,7 @@ describe('SketchApplyConstraint pipeline — outcomes via the bus', () => {
 
     expect(store.undoLabel()).toBe(labelBefore);
     expect(countUndoSteps(store)).toBe(undoCountBefore);
-    const constraintsAfter = (sketchInputs(store, partId, sketchId)._editorState!.constraints as unknown[]).length;
+    const constraintsAfter = (sketchInputs(store, partId, sketchId).editorModel!.constraints as unknown[]).length;
     expect(constraintsAfter).toBe(constraintsBefore);
   });
 });

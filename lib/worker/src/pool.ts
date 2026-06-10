@@ -176,6 +176,23 @@ export class WorkerPool {
   }
 
   /**
+   * Export a part to binary BREP format.
+   * Runs on the export worker (does not block rebuilds).
+   */
+  async requestExportBrep(
+    part: CadPart,
+    project: CadProject,
+  ): Promise<ArrayBuffer> {
+    const worker = await this.ensureExportWorker();
+    this.exportStatus = 'busy';
+    try {
+      return await worker.exportBrep(part, project);
+    } finally {
+      this.exportStatus = 'idle';
+    }
+  }
+
+  /**
    * Export a part to 3MF format.
    * Runs on the export worker (does not block rebuilds).
    */

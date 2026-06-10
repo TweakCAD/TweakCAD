@@ -27,8 +27,8 @@ importers:
         specifier: ^1.16.0
         version: 1.17.0(react@19.2.6)
       occt-wasm:
-        specifier: 3.2.0
-        version: 3.2.0
+        specifier: 3.3.1
+        version: 3.3.1
       react:
         specifier: ^19.0.0
         version: 19.2.6
@@ -949,8 +949,8 @@ packages:
     resolution: {integrity: sha512-GYVXHE2KnrzAfsAjl4uP++evGFCrAU1jta4ubEjIG7YWt/64Gqv66a30yKwWczVjA6j3bM4nBwH7Pk1JmDHaxQ==}
     engines: {node: '>=18'}
 
-  occt-wasm@3.2.0:
-    resolution: {integrity: sha512-qAElY+CWhkMPd0ZE0yjVcTM+nJkUey0lruufe4hPqrX9Ux6jp+Xwi9uPD8gcLgTdeCgd/HHhDNZaUHWaaxhLxg==}
+  occt-wasm@3.3.1:
+    resolution: {integrity: sha512-wjR+0iHv/GHnZat8+YbDvPED15DPxicR9uXzKpHedoi1RiKD5dwyCkGETf8CNE/OVmPIsMu2Y7fj7/Bz8cXGDA==}
 
   pathe@1.1.2:
     resolution: {integrity: sha512-whLdWMYL2TwI08hn8/ZqAbrVemu0LNaNNJZX73O6qaIdCTfXutsLhMkjdENX0qhsQ9uIimo4/aQOmXkoon2nDQ==}
@@ -1889,7 +1889,7 @@ snapshots:
 
   node-releases@2.0.46: {}
 
-  occt-wasm@3.2.0:
+  occt-wasm@3.3.1:
     dependencies:
       comlink: 4.4.2
 

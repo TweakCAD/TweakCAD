@@ -13,7 +13,7 @@
  *      `get_document` just to learn an id it just minted.
  *
  *   3. **Convenience defaults.** `feature_extrude` auto-fills
- *      `profiles` from `detectSketchRegions(sketch.entities)` when the
+ *      `profiles` from `detectSketchRegions(sketch.buildGeometry)` when the
  *      caller omits them — the common case where a sketch has exactly
  *      one shape to extrude.
  *
@@ -140,7 +140,7 @@ function sketchEntities(
   const loc = findFeatureLocation(doc, sketchId);
   if (!loc || loc.feature.type !== 'sketch') return {};
   const inputs = loc.feature.inputs as unknown as SketchFeatureInputs;
-  return inputs.entities ?? {};
+  return inputs.buildGeometry ?? {};
 }
 
 /**
@@ -194,7 +194,7 @@ function sketchGeometryIds(
   const loc = findFeatureLocation(doc, sketchId);
   if (!loc || loc.feature.type !== 'sketch') return new Set();
   const inputs = loc.feature.inputs as unknown as SketchFeatureInputs;
-  const geoms = (inputs._editorState?.geometries ?? []) as Array<{ id: string }>;
+  const geoms = (inputs.editorModel?.geometries ?? []) as Array<{ id: string }>;
   return new Set(geoms.map((g) => g.id));
 }
 
@@ -1581,7 +1581,7 @@ export async function executeListSketchRegions(
   if (loc.feature.type !== 'sketch') {
     return err(invalidInput(`Feature is not a sketch: ${sketchId}`));
   }
-  const entities = (loc.feature.inputs as unknown as SketchFeatureInputs).entities ?? {};
+  const entities = (loc.feature.inputs as unknown as SketchFeatureInputs).buildGeometry ?? {};
   const regions = detectSketchRegions(entities);
   return ok(
     regions.map((r) => ({
@@ -2057,7 +2057,7 @@ function readEditorSnapshot(
 } {
   const loc = findFeatureLocation(doc, sketchId);
   if (!loc || loc.feature.type !== 'sketch') return { points: [], geometries: [], constraints: [] };
-  const snap = (loc.feature.inputs as unknown as SketchFeatureInputs)._editorState;
+  const snap = (loc.feature.inputs as unknown as SketchFeatureInputs).editorModel;
   if (!snap) return { points: [], geometries: [], constraints: [] };
   // Document layer stores these as unknown[] (see SketchEditorSnapshot
   // docstring) — narrow at the boundary.
@@ -2237,7 +2237,7 @@ function constraintGeometryRefs(c: Record<string, unknown>): SketchGeometryId[] 
 // pipeline (the pure-read pick) or by dispatching one of the bus commands.
 
 /**
- * sketch_pick_geometry — pure read over `_editorState`. Wraps `fromSnapshot`
+ * sketch_pick_geometry — pure read over `editorModel`. Wraps `fromSnapshot`
  * (already used by every other editor-state-aware executor) and calls the
  * shared `pickGeometryAt`. Returns the topmost geometry id under (x, y) or
  * null. Same tolerance band as the in-app modify tools.
@@ -2262,7 +2262,7 @@ export async function executeSketchPickGeometry(
   if (loc.feature.type !== 'sketch') return err(invalidInput(`Feature is not a sketch: ${sketchId}`));
 
   const inputs = loc.feature.inputs as unknown as SketchFeatureInputs;
-  const state = fromSnapshot(inputs._editorState);
+  const state = fromSnapshot(inputs.editorModel);
   const gid = pickGeometryAt(state, x, y);
   if (!gid) return ok({ geometryId: null, type: null });
   const geom = state.geometries.get(gid);

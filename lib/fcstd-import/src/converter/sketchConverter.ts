@@ -1,11 +1,14 @@
 /**
  * Convert a parsed FreeCAD sketch into a CadProject SketchFeatureInputs.
  *
- * Geometry mapping:
- *   - Part::GeomLineSegment  → SketchLineEntity
- *   - Part::GeomCircle       → SketchCircleEntity (diameter = Radius * 2)
- *   - Part::GeomArcOfCircle  → SketchArcEntity
- * Construction flag preserved verbatim.
+ * Geometry is built through the editor's `operations.ts` builders (the same
+ * path the DXF importer and the live editor use), so the sketch carries a
+ * full `editorModel` (editing source of truth) and a derived `buildGeometry`:
+ *   - Part::GeomLineSegment  → drawLine   → line
+ *   - Part::GeomCircle       → drawCircle → circle (diameter = Radius * 2)
+ *   - Part::GeomArcOfCircle  → drawArc    → arc
+ * Construction flag preserved verbatim. Ellipse / spline / point geometry is
+ * not yet imported (FreeCAD-import follow-up); such geometry is skipped.
  *
  * Plane mapping: Support link target XY_Plane / XZ_Plane / YZ_Plane
  * maps directly to defaultPlane. Anything else falls back to XY with a
@@ -21,13 +24,19 @@ import type { EntityId, FeatureId } from '@tweakcad/core/src/ids.ts';
 import { entityId, featureId, generateId } from '@tweakcad/core/src/ids.ts';
 import type {
   SketchFeatureInputs,
-  SketchEntity,
-  SketchLineEntity,
-  SketchCircleEntity,
-  SketchArcEntity,
   PlaneRef,
   FeatureNode,
+  SketchEditorSnapshot,
 } from '@tweakcad/core/src/document/schema.ts';
+import {
+  emptyEditorState,
+  drawLine,
+  drawCircle,
+  drawArc,
+  toSnapshot,
+  type EditorState,
+} from '@tweakcad/core/src/sketch/operations.ts';
+import { editorModelToBuildGeometry } from '@tweakcad/core/src/sketch/serialization.ts';
 import type { FcSketchObject, FcGeometry } from '../types/fcstdTypes.ts';
 
 export type SketchConversionResult = {
@@ -50,27 +59,35 @@ export function convertSketch(
   sketch: FcSketchObject,
   createdAt: string,
 ): SketchConversionResult {
-  const entities: Record<EntityId, SketchEntity> = {};
+  // Build the editor model (the editing source of truth) by routing each
+  // FreeCAD geometry through the same `operations.ts` builders the editor and
+  // the DXF importer use, then derive `buildGeometry` from it. Shared
+  // endpoints merge via the builders' `findOrCreatePoint`, so a closed
+  // FreeCAD profile imports as a connected, editable loop.
+  let state: EditorState = emptyEditorState();
   const entityOrder: EntityId[] = [];
   const wireEntityIds: EntityId[] = [];
   const skipped: { index: number; rawType: string }[] = [];
 
   sketch.geometry.forEach((geom, idx) => {
-    const id = entityId(generateId('ent'));
-    const entity = geometryToEntity(geom, id);
-    if (!entity) {
+    const drawn = drawFcGeometry(state, geom);
+    if (!drawn) {
       skipped.push({ index: idx, rawType: (geom as { rawType?: string }).rawType ?? geom.kind });
       return;
     }
-    entities[id] = entity;
-    entityOrder.push(id);
-    if (entity.construction !== true) wireEntityIds.push(id);
+    state = drawn.state;
+    // `editorModelToBuildGeometry` keys each entity by its geometry id, so the
+    // wire / order references use that same id.
+    const eid = entityId(String(drawn.geometryId));
+    entityOrder.push(eid);
+    if (geom.construction !== true) wireEntityIds.push(eid);
   });
 
   const inputs: SketchFeatureInputs = {
     plane: planeFromSupport(sketch.supportName),
-    entities,
+    buildGeometry: editorModelToBuildGeometry(state),
     entityOrder,
+    editorModel: toSnapshot(state) as unknown as SketchEditorSnapshot,
   };
 
   const fid = featureId(generateId('feat'));
@@ -90,43 +107,48 @@ export function convertSketch(
   return { feature, wireEntityIds, skippedGeometry: skipped };
 }
 
-function geometryToEntity(geom: FcGeometry, id: EntityId): SketchEntity | undefined {
-  switch (geom.kind) {
-    case 'lineSegment': {
-      const line: SketchLineEntity = {
-        id,
-        type: 'line',
-        start: [String(geom.startX), String(geom.startY)],
-        end: [String(geom.endX), String(geom.endY)],
-      };
-      if (geom.construction) line.construction = true;
-      return line;
+/**
+ * Route one FreeCAD geometry through the matching editor builder. Returns the
+ * updated state plus the new geometry's id, or `undefined` for an unsupported
+ * kind or degenerate input (the builders throw on zero radius / zero-length,
+ * which we treat as "skip and keep importing the rest").
+ *
+ * Ellipse / spline / point geometry and FreeCAD constraints are not yet
+ * imported — that's the FreeCAD-import follow-up.
+ */
+function drawFcGeometry(
+  state: EditorState,
+  geom: FcGeometry,
+): { state: EditorState; geometryId: string } | undefined {
+  const construction = geom.construction === true;
+  try {
+    switch (geom.kind) {
+      case 'lineSegment': {
+        const r = drawLine(state, [geom.startX, geom.startY], [geom.endX, geom.endY], { construction });
+        return { state: r.state, geometryId: r.lineId };
+      }
+      case 'circle': {
+        const r = drawCircle(state, { center: [geom.centerX, geom.centerY], radius: geom.radius }, { construction });
+        return { state: r.state, geometryId: r.circleId };
+      }
+      case 'arcOfCircle': {
+        const r = drawArc(
+          state,
+          {
+            center: [geom.centerX, geom.centerY],
+            radius: geom.radius,
+            startAngle: geom.startAngle,
+            endAngle: geom.endAngle,
+          },
+          { construction },
+        );
+        return { state: r.state, geometryId: r.arcId };
+      }
+      case 'unsupported':
+        return undefined;
     }
-    case 'circle': {
-      const diameter = geom.radius * 2;
-      const circle: SketchCircleEntity = {
-        id,
-        type: 'circle',
-        center: [String(geom.centerX), String(geom.centerY)],
-        diameter: String(diameter),
-      };
-      if (geom.construction) circle.construction = true;
-      return circle;
-    }
-    case 'arcOfCircle': {
-      const arc: SketchArcEntity = {
-        id,
-        type: 'arc',
-        center: [String(geom.centerX), String(geom.centerY)],
-        radius: String(geom.radius),
-        startAngle: String(geom.startAngle),
-        endAngle: String(geom.endAngle),
-      };
-      if (geom.construction) arc.construction = true;
-      return arc;
-    }
-    case 'unsupported':
-      return undefined;
+  } catch {
+    return undefined;
   }
 }
 

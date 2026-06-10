@@ -6,11 +6,11 @@
  *
  * Cost: one synchronous solver call (typically a few ms per sketch).
  * Safe to call inline during render — the document store changes its
- * `_editorState` reference only on real mutations, so React memoisation
+ * `editorModel` reference only on real mutations, so React memoisation
  * cuts the call rate to actual changes.
  *
  * Returns `undefined` when:
- *   - the sketch has no `_editorState` snapshot yet (legacy `.cadjson`)
+ *   - the sketch has no `editorModel` snapshot yet (legacy `.cadjson`)
  *   - planegcs WASM isn't ready (`PlaneGCSNotReadyError`)
  *   - the solver throws for any other reason (defensive: a tree-render
  *     bug should never crash the whole UI)
@@ -28,7 +28,7 @@ import type {
 import type { SketchFeatureInputs } from '@tweakcad/core/src/document/schema.ts';
 
 export function computeSketchDof(inputs: SketchFeatureInputs): number | undefined {
-  const ed = inputs._editorState;
+  const ed = inputs.editorModel;
   if (!ed) return undefined;
   try {
     const points = new Map<SketchPointId, SketchPoint>();

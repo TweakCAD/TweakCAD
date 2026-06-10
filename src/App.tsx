@@ -195,7 +195,7 @@ export function App() {
   }, [fileHandles]);
 
   /**
-   * File → Import. Prompts for a STEP / STL file, base64-encodes it,
+   * File → Import. Prompts for a STEP / STL / BREP file, base64-encodes it,
    * and dispatches a `CreateImportedGeometry` command that appends a
    * new feature to the active part's timeline. The rebuilder then
    * picks it up on the next pass and the kernel decomposes the file
@@ -206,7 +206,7 @@ export function App() {
    * surface already logs failures to the in-app console via the
    * standard rebuild diagnostics path.
    */
-  const onFileImport = useCallback(async (format?: 'step' | 'stl') => {
+  const onFileImport = useCallback(async (format?: 'step' | 'stl' | 'brep') => {
     try {
       const pick = await pickGeometryForImport(format);
       if (!pick) return; // user cancelled
@@ -300,12 +300,12 @@ export function App() {
   }, [fileHandles]);
 
   /**
-   * File → Export. Runs the kernel's STL / STEP / 3MF exporter on the
+   * File → Export. Runs the kernel's STL / STEP / BREP / 3MF exporter on the
    * dedicated export worker and triggers a browser download. Filename
    * mirrors the project name plus the canonical extension.
    */
   const onFileExport = useCallback(
-    async (format: 'stl' | 'step' | '3mf') => {
+    async (format: 'stl' | 'step' | 'brep' | '3mf') => {
       try {
         const ab = await exportActivePart(appState.documentStore, format);
         if (ab.byteLength === 0) {
@@ -317,7 +317,9 @@ export function App() {
             ? 'model/stl'
             : format === 'step'
               ? 'application/step'
-              : 'application/vnd.ms-package.3dmanufacturing-3dmodel+xml';
+              : format === 'brep'
+                ? 'model/brep'
+                : 'application/vnd.ms-package.3dmanufacturing-3dmodel+xml';
         const blob = new Blob([ab], { type: mime });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');

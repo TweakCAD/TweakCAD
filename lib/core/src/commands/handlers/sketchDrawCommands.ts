@@ -5,17 +5,17 @@
  * `@tweakcad/core/src/sketch/operations.ts`. Each handler:
  *
  *   1. Validates the command shape and that the target sketch exists.
- *   2. Loads the sketch's current `_editorState` into a working
+ *   2. Loads the sketch's current `editorModel` into a working
  *      EditorState (or empty for a fresh sketch).
  *   3. Calls the matching `drawLine` / `drawRectangle` / `drawCircle`
  *      primitive.
- *   4. Serializes the result back into BOTH `_editorState` (round-trip
- *      target for the in-browser editor) and `entities` (canonical
+ *   4. Serializes the result back into BOTH `editorModel` (round-trip
+ *      target for the in-browser editor) and `buildGeometry` (canonical
  *      document model the worker rebuilds from). The two views are
  *      computed from one source of truth so they can't drift.
  *
  * IMPORTANT: handlers MUST NOT invent point/geometry ids directly or
- * write entities by hand — only call `sketchOps` / `editorStateToEntities`.
+ * write entities by hand — only call `sketchOps` / `editorModelToBuildGeometry`.
  * This is the rule that prevents the same logic ending up in 10 places.
  */
 
@@ -62,7 +62,7 @@ import {
   offsetCurveAt,
   mirrorSelection,
 } from '../../sketch/modifyOps.ts';
-import { editorStateToEntities } from '../../sketch/serialization.ts';
+import { editorModelToBuildGeometry } from '../../sketch/serialization.ts';
 import { applyConstraintWithSolver } from '../../sketch/applyConstraintPipeline.ts';
 import { getSolver } from '../../sketch/solver/index.ts';
 import type { SketchConstraintInput } from '../../sketch/types.ts';
@@ -128,7 +128,7 @@ function validateFiniteNumber(
 
 /**
  * Apply an EditorState update to a sketch feature's inputs draft.
- * Writes both `_editorState` (snapshot) and `entities` (derived from
+ * Writes both `editorModel` (snapshot) and `buildGeometry` (derived from
  * the same state via the shared serializer). Bumps `updatedAt` on
  * both the feature and the project metadata.
  *
@@ -145,8 +145,8 @@ function applyEditorStateUpdate(
     const sketch = part.timeline.find((f) => f.id === sketchId);
     if (!sketch || sketch.type !== 'sketch') continue;
     const inputs = sketch.inputs as unknown as SketchFeatureInputs;
-    inputs.entities = editorStateToEntities(newState);
-    inputs._editorState = toSnapshot(newState) as unknown as SketchEditorSnapshot;
+    inputs.buildGeometry = editorModelToBuildGeometry(newState);
+    inputs.editorModel = toSnapshot(newState) as unknown as SketchEditorSnapshot;
     const now = new Date().toISOString();
     sketch.updatedAt = now;
     draft.metadata.updatedAt = now;
@@ -154,7 +154,7 @@ function applyEditorStateUpdate(
   }
 }
 
-/** Read the sketch's current EditorState (empty if no prior _editorState). */
+/** Read the sketch's current EditorState (empty if no prior editorModel). */
 function loadEditorState(
   draft: CadProject,
   sketchId: string,
@@ -163,7 +163,7 @@ function loadEditorState(
     const sketch = part.timeline.find((f) => f.id === sketchId);
     if (!sketch || sketch.type !== 'sketch') continue;
     const inputs = sketch.inputs as unknown as SketchFeatureInputs;
-    return fromSnapshot(inputs._editorState);
+    return fromSnapshot(inputs.editorModel);
   }
   return fromSnapshot(undefined);
 }
@@ -427,8 +427,8 @@ function validateConstraint(c: SketchConstraintInput): Result<void, ValidationEr
  *     returns `Result.err`. The rejected constraint NEVER enters the doc
  *     — the undo stack stays clean.
  *   - **Applied.** The handler writes the new constraint AND the solver's
- *     post-solve points + geometries. Both views (`_editorState` snapshot
- *     and `entities` serialized form) come from the same final state.
+ *     post-solve points + geometries. Both views (`editorModel` snapshot
+ *     and `buildGeometry` serialized form) come from the same final state.
  *
  * The pipeline lives in `@tweakcad/core/src/sketch/applyConstraintPipeline.ts`
  * so the in-editor store can share the same dedupe + solve + check + auto-
@@ -831,7 +831,7 @@ export const sketchMovePointsBatchHandler: CommandHandler = {
 // draw handlers above: resolve the sketch, validate the geometry id +
 // any coords, then dispatch the primitive on the loaded editor state
 // and write back through `applyEditorStateUpdate` (which re-renders
-// `entities` via the canonical serializer and snapshots `_editorState`).
+// `buildGeometry` via the canonical serializer and snapshots `editorModel`).
 
 function validateGeometryId(name: string, v: unknown): Result<void, ValidationError> {
   if (typeof v !== 'string' || v.length === 0) {

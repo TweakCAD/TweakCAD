@@ -17,6 +17,7 @@ import {
 } from '@tweakcad/core/src/commands/handlers/partCommands.ts';
 import {
   createSketchHandler,
+  createSketchFromImportHandler,
   addSketchEntityHandler,
   removeSketchEntityHandler,
   createExtrudeHandler,
@@ -110,6 +111,7 @@ export function initializeApp(): AppState {
   commandBus.register('CreatePart', createPartHandler);
   commandBus.register('RenamePart', renamePartHandler);
   commandBus.register('CreateSketch', createSketchHandler);
+  commandBus.register('CreateSketchFromImport', createSketchFromImportHandler);
   commandBus.register('AddSketchEntity', addSketchEntityHandler);
   commandBus.register('RemoveSketchEntity', removeSketchEntityHandler);
   // Higher-level drawing commands. Both the in-app chat agent and

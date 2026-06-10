@@ -3,7 +3,7 @@
  *
  * Each test asserts the handler dispatches as one undo entry through
  * the bus, mutates the editor state via the pure primitive in
- * `@tweakcad/core/src/sketch/modifyOps.ts`, and writes `inputs.entities`
+ * `@tweakcad/core/src/sketch/modifyOps.ts`, and writes `inputs.buildGeometry`
  * via the canonical serializer (same path as the draw handlers).
  */
 
@@ -60,7 +60,7 @@ function geomsOf(store: DocumentStore, partId: PartId, sketchId: FeatureId): Arr
   id: SketchGeometryId; type: string;
   startId?: SketchPointId; endId?: SketchPointId; centerId?: SketchPointId; radius?: number;
 }> {
-  return (inputs(store, partId, sketchId)._editorState!.geometries as Array<{
+  return (inputs(store, partId, sketchId).editorModel!.geometries as Array<{
     id: SketchGeometryId; type: string;
     startId?: SketchPointId; endId?: SketchPointId; centerId?: SketchPointId; radius?: number;
   }>);
@@ -69,7 +69,7 @@ function geomsOf(store: DocumentStore, partId: PartId, sketchId: FeatureId): Arr
 function pointsOf(store: DocumentStore, partId: PartId, sketchId: FeatureId): Array<{
   id: SketchPointId; x: number; y: number;
 }> {
-  return (inputs(store, partId, sketchId)._editorState!.points as Array<{
+  return (inputs(store, partId, sketchId).editorModel!.points as Array<{
     id: SketchPointId; x: number; y: number;
   }>);
 }

@@ -331,7 +331,7 @@ export function dispatchRemoveConstraint(
  * subscriber to re-sync the editor from the doc, restoring the
  * "deleted" geometry. Same wiring rule as `dispatchRemoveConstraint`.
  *
- * Entity id is the geometry id — `editorStateToEntities` emits one
+ * Entity id is the geometry id — `editorModelToBuildGeometry` emits one
  * entity per geometry with matching ids.
  */
 export function dispatchRemoveSketchEntity(
@@ -350,7 +350,7 @@ export function dispatchRemoveSketchEntity(
 // commit through one of these helpers. Each lands one undo entry — the
 // modify primitive in core does the splitting / mirroring / etc.
 // atomically. Hydration rebuilds the editor store from
-// the post-dispatch _editorState, including any GC'd orphan points.
+// the post-dispatch editorModel, including any GC'd orphan points.
 
 /** Trim the picked geometry at the cursor location. */
 export function dispatchTrim(

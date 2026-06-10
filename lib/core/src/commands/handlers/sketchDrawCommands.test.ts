@@ -5,7 +5,7 @@
  *
  *   dispatch SketchDrawRectangle
  *     → handler calls operations.drawRectangle
- *     → writes _editorState (points + geometries) AND entities
+ *     → writes editorModel (points + geometries) AND buildGeometry
  *     → region detector finds an extrudable profile
  *
  * Pure-function correctness of operations.ts is tested separately in
@@ -91,7 +91,7 @@ function getSketchInputs(
 
 /**
  * Strip the seeded origin point + its `fixed` constraint from
- * `_editorState` so per-test count assertions can keep talking about the
+ * `editorModel` so per-test count assertions can keep talking about the
  * user-visible geometry/constraint counts. `CreateSketch` seeds
  * every sketch with `pt_origin` + `con_origin_fixed` to make DOF
  * accounting reach 0; without filtering, every
@@ -100,7 +100,7 @@ function getSketchInputs(
 function userEditorState(inputs: SketchFeatureInputs): {
   points: unknown[]; geometries: unknown[]; constraints: unknown[];
 } {
-  const s = inputs._editorState ?? { points: [], geometries: [], constraints: [] };
+  const s = inputs.editorModel ?? { points: [], geometries: [], constraints: [] };
   return {
     points: (s.points as Array<{ id: string }>).filter((p) => p.id !== 'pt_origin'),
     geometries: s.geometries,
@@ -111,7 +111,7 @@ function userEditorState(inputs: SketchFeatureInputs): {
 // ---- SketchDrawLine --------------------------------------------------------
 
 describe('SketchDrawLine', () => {
-  it('writes both _editorState (point graph) and entities (flat record)', () => {
+  it('writes both editorModel (point graph) and buildGeometry (flat record)', () => {
     const { bus, store, partId } = newHarness();
     const sketchId = createSketch(bus, store, partId);
 
@@ -124,18 +124,18 @@ describe('SketchDrawLine', () => {
     expect(result.ok).toBe(true);
 
     const inputs = getSketchInputs(store, partId, sketchId);
-    // _editorState should have 2 points + 1 line — but `from: [0, 0]`
+    // editorModel should have 2 points + 1 line — but `from: [0, 0]`
     // coincides with the seeded origin, so `findOrCreatePoint`
     // merges into `pt_origin`. The user-visible count is 1 (just the
     // endpoint at [10, 0]); the line's startId IS the origin id, which
     // is the correct behavior — drawing from origin anchors the
     // line. Switch `from` to a non-origin coord (e.g. `[1, 1]`) to see
     // the un-merged 2-point case.
-    expect(inputs._editorState).toBeDefined();
+    expect(inputs.editorModel).toBeDefined();
     expect(userEditorState(inputs).points).toHaveLength(1);
     expect(userEditorState(inputs).geometries).toHaveLength(1);
     // entities should have 1 SketchLineEntity with the right coords.
-    const entities = Object.values(inputs.entities);
+    const entities = Object.values(inputs.buildGeometry);
     expect(entities).toHaveLength(1);
     expect(entities[0]!.type).toBe('line');
   });
@@ -168,7 +168,7 @@ describe('SketchDrawLine', () => {
     expect(userEditorState(inputs).points).toHaveLength(3);
     expect(userEditorState(inputs).geometries).toHaveLength(4);
     // Region detector finds an extrudable profile (the closed quad).
-    const regions = detectSketchRegions(inputs.entities);
+    const regions = detectSketchRegions(inputs.buildGeometry);
     expect(regions.length).toBeGreaterThanOrEqual(1);
     // Area should match 60×30 = 1800. The closest region wins.
     const quad = regions.find((r) => Math.abs(r.area - 1800) < 0.01);
@@ -228,7 +228,7 @@ describe('SketchDrawRectangle', () => {
     expect(userEditorState(inputs).constraints).toHaveLength(8);
     // The serializer emits one entity per geometry — no composite
     // collapse (invariant #11).
-    const ents = Object.values(inputs.entities);
+    const ents = Object.values(inputs.buildGeometry);
     expect(ents).toHaveLength(4);
     for (const ent of ents) {
       expect(ent.type).toBe('line');
@@ -246,7 +246,7 @@ describe('SketchDrawRectangle', () => {
       height: 20,
     });
     const inputs = getSketchInputs(store, partId, sketchId);
-    const regions = detectSketchRegions(inputs.entities);
+    const regions = detectSketchRegions(inputs.buildGeometry);
     // The loop detector should find at least one closed quad with the
     // expected area.
     expect(regions.length).toBeGreaterThanOrEqual(1);
@@ -289,7 +289,7 @@ describe('SketchDrawRectangle', () => {
     // Canonical decomposition: each rectangle contributes 8 points + 4 edges.
     expect(userEditorState(inputs).points).toHaveLength(16);
     expect(userEditorState(inputs).geometries).toHaveLength(8);
-    const regions = detectSketchRegions(inputs.entities);
+    const regions = detectSketchRegions(inputs.buildGeometry);
     // At least 2 — the simple rectangle detector finds both. The
     // planar graph may add more (split sub-faces) but never fewer.
     expect(regions.length).toBeGreaterThanOrEqual(2);
@@ -299,7 +299,7 @@ describe('SketchDrawRectangle', () => {
 // ---- SketchDrawCircle ------------------------------------------------------
 
 describe('SketchDrawCircle', () => {
-  it('writes a single SketchCircleEntity + 1 center point in _editorState', () => {
+  it('writes a single SketchCircleEntity + 1 center point in editorModel', () => {
     const { bus, store, partId } = newHarness();
     const sketchId = createSketch(bus, store, partId);
     const result = bus.dispatch({
@@ -313,7 +313,7 @@ describe('SketchDrawCircle', () => {
     const inputs = getSketchInputs(store, partId, sketchId);
     expect(userEditorState(inputs).points).toHaveLength(1);
     expect(userEditorState(inputs).geometries).toHaveLength(1);
-    const ents = Object.values(inputs.entities);
+    const ents = Object.values(inputs.buildGeometry);
     expect(ents).toHaveLength(1);
     expect(ents[0]!.type).toBe('circle');
   });
@@ -323,7 +323,7 @@ describe('SketchDrawCircle', () => {
     const sketchId = createSketch(bus, store, partId);
     bus.dispatch({ type: 'SketchDrawCircle', sketchId, center: [0, 0], radius: 5 });
     const inputs = getSketchInputs(store, partId, sketchId);
-    const regions = detectSketchRegions(inputs.entities);
+    const regions = detectSketchRegions(inputs.buildGeometry);
     expect(regions).toHaveLength(1);
     expect(regions[0]!.type).toBe('circle');
     expect(regions[0]!.area).toBeCloseTo(Math.PI * 25, 6);
@@ -368,7 +368,7 @@ describe('mixed drawing — incremental state', () => {
       radius: 3,
     });
     const inputs = getSketchInputs(store, partId, sketchId);
-    const regions = detectSketchRegions(inputs.entities);
+    const regions = detectSketchRegions(inputs.buildGeometry);
     // At least the rectangle and the circle; the planar walker may
     // also find an annular sub-region (rect minus circle) but never
     // fewer than the two we drew.
@@ -395,7 +395,7 @@ describe('SketchDrawSlot (decomposed: 2 lines + 2 arcs + constraints)', () => {
     expect(result.ok).toBe(true);
 
     const inputs = getSketchInputs(store, partId, sketchId);
-    expect(inputs._editorState).toBeDefined();
+    expect(inputs.editorModel).toBeDefined();
     // 2 centers + 8 distinct corner points (each line/arc owns its
     // endpoints). The center1 at [0, 0] merges with
     // the seeded origin → 9 user-visible points.
@@ -417,7 +417,7 @@ describe('SketchDrawSlot (decomposed: 2 lines + 2 arcs + constraints)', () => {
       'tangent', 'tangent', 'tangent', 'tangent',
     ]);
     // No composite slot entity in the serialized output — just lines + arcs.
-    const entities = Object.values(inputs.entities) as Array<{ type: string }>;
+    const entities = Object.values(inputs.buildGeometry) as Array<{ type: string }>;
     const entityTypes = entities.map((e) => e.type).sort();
     expect(entityTypes).toEqual(['arc', 'arc', 'line', 'line']);
     expect(entityTypes).not.toContain('slot');
@@ -472,7 +472,7 @@ describe('SketchDrawPolygon (decomposed: N lines + center + constraints)', () =>
     expect(result.ok).toBe(true);
 
     const inputs = getSketchInputs(store, partId, sketchId);
-    expect(inputs._editorState).toBeDefined();
+    expect(inputs.editorModel).toBeDefined();
     // 1 center + 2*N = 13 distinct points, but `center: [0, 0]` merges
     // with the seeded origin so user-visible count is 12.
     expect(userEditorState(inputs).points).toHaveLength(12);
@@ -489,7 +489,7 @@ describe('SketchDrawPolygon (decomposed: N lines + center + constraints)', () =>
     expect(counts['equal']).toBe(5);
     expect(counts['angle']).toBe(5);
     // No composite polygon entity — only lines + the construction point.
-    const entities = Object.values(inputs.entities) as Array<{ type: string }>;
+    const entities = Object.values(inputs.buildGeometry) as Array<{ type: string }>;
     const entityTypes = entities.map((e) => e.type).sort();
     expect(entityTypes).not.toContain('polygon');
   });
@@ -559,7 +559,7 @@ describe('SketchDrawArc', () => {
     // with the seeded origin → 2 user-visible points.
     expect(userEditorState(inputs).points).toHaveLength(2);
     expect(userEditorState(inputs).geometries).toHaveLength(1);
-    const entities = Object.values(inputs.entities);
+    const entities = Object.values(inputs.buildGeometry);
     expect(entities).toHaveLength(1);
     expect(entities[0]!.type).toBe('arc');
   });
@@ -715,7 +715,7 @@ describe('SketchApplyConstraint', () => {
     const sketchId = createSketch(bus, store, partId);
     bus.dispatch({ type: 'SketchDrawLine', sketchId, from: [0, 0], to: [10, 3] });
     const before = getSketchInputs(store, partId, sketchId);
-    const lineGeomId = (before._editorState!.geometries[0]! as { id: string }).id;
+    const lineGeomId = (before.editorModel!.geometries[0]! as { id: string }).id;
 
     const result = bus.dispatch({
       type: 'SketchApplyConstraint',
@@ -777,7 +777,7 @@ describe('SketchApplyConstraint', () => {
     // Tilted line: applying horizontal should level it.
     bus.dispatch({ type: 'SketchDrawLine', sketchId, from: [0, 0], to: [10, 4] });
     const before = getSketchInputs(store, partId, sketchId);
-    const lineGeom = before._editorState!.geometries[0]! as {
+    const lineGeom = before.editorModel!.geometries[0]! as {
       id: string; startId: string; endId: string;
     };
 
@@ -789,7 +789,7 @@ describe('SketchApplyConstraint', () => {
     expect(result.ok).toBe(true);
 
     const after = getSketchInputs(store, partId, sketchId);
-    const points = after._editorState!.points as Array<{ id: string; y: number }>;
+    const points = after.editorModel!.points as Array<{ id: string; y: number }>;
     const startPt = points.find((p) => p.id === lineGeom.startId)!;
     const endPt = points.find((p) => p.id === lineGeom.endId)!;
     expect(startPt.y).toBeCloseTo(endPt.y, 6);
@@ -875,7 +875,7 @@ describe('SketchRemoveConstraint', () => {
     const sketchId = createSketch(bus, store, partId);
     bus.dispatch({ type: 'SketchDrawLine', sketchId, from: [0, 0], to: [10, 3] });
     const before = getSketchInputs(store, partId, sketchId);
-    const lineGeomId = (before._editorState!.geometries[0]! as { id: string }).id;
+    const lineGeomId = (before.editorModel!.geometries[0]! as { id: string }).id;
     bus.dispatch({
       type: 'SketchApplyConstraint',
       sketchId,

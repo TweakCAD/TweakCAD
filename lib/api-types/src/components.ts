@@ -1,13 +1,13 @@
 // GENERATED — DO NOT EDIT HERE.
-// Client-safe subset of the server API contract, vendored into this repo.
-// This repo has no sync script and cannot regenerate this file. To propose a
-// change, open an issue/PR here; a maintainer updates the upstream source and
+// Client-safe subset vendored from the private TweakCAD-Site repo. This repo
+// has no sync script and cannot regenerate this file. To propose a change,
+// open an issue/PR here; a maintainer updates the source in TweakCAD-Site and
 // re-syncs. Local edits are overwritten on the next sync.
 
 /**
  * Components catalog — wire types.
- * Components are projects with kind='component' plus a component_metadata
- * extension, browsable and viewable in detail.
+ * Phase 3 architectural item. Components are projects with kind='component'
+ * plus a component_metadata extension. /components browse + detail.
  */
 import { z } from 'zod';
 

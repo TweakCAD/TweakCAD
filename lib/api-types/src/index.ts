@@ -1,12 +1,13 @@
 // GENERATED — DO NOT EDIT HERE.
-// Client-safe subset of the server API contract, vendored into this repo.
-// This repo has no sync script and cannot regenerate this file. To propose a
-// change, open an issue/PR here; a maintainer updates the upstream source and
+// Client-safe subset vendored from the private TweakCAD-Site repo. This repo
+// has no sync script and cannot regenerate this file. To propose a change,
+// open an issue/PR here; a maintainer updates the source in TweakCAD-Site and
 // re-syncs. Local edits are overwritten on the next sync.
 
-// Client-safe api-types barrel. Re-exports ONLY the four client-safe modules.
-// Do not add server-only modules here — that's the boundary that keeps the
-// full server contract out of this repo.
+// CLIENT-SAFE api-types barrel — mirrored into the public cad repo as its
+// lib/api-types/src/index.ts. Re-exports ONLY the four client-safe modules.
+// Do not add Site-private modules here — that's the boundary that keeps the
+// SaaS contract out of the public repo.
 export * from './errors.ts';
 export * from './pagination.ts';
 export * from './components.ts';

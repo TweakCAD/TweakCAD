@@ -75,7 +75,7 @@ export async function buildSketch(
   const resolvedEntities: Record<string, ResolvedSketchEntityData> = {};
   const literalEntities: Record<EntityId, SketchEntity> = {};
 
-  for (const [id, entity] of Object.entries(inputs.entities)) {
+  for (const [id, entity] of Object.entries(inputs.buildGeometry)) {
     const eid = id as EntityId;
     if (entity.type === 'circle') {
       const cx = evaluateExpression(entity.center[0], params);

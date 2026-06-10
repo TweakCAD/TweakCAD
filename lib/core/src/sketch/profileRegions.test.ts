@@ -18,7 +18,7 @@ import {
   makeCounterIdFactory,
   type EditorState,
 } from './operations.ts';
-import { editorStateToEntities } from './serialization.ts';
+import { editorModelToBuildGeometry } from './serialization.ts';
 import { detectSketchRegions } from './profileRegions.ts';
 
 describe('detectSketchRegions', () => {
@@ -27,7 +27,7 @@ describe('detectSketchRegions', () => {
   ) => {
     const factory = makeCounterIdFactory();
     const state = build(emptyEditorState(), factory);
-    return detectSketchRegions(editorStateToEntities(state));
+    return detectSketchRegions(editorModelToBuildGeometry(state));
   };
 
   it('single closed rectangle → 1 region', () => {
@@ -120,8 +120,8 @@ describe('detectSketchRegions', () => {
       st = drawLine(st, [10, 0], [5, 8], { idFactory: f }).state;
       return st;
     })();
-    const ra = detectSketchRegions(editorStateToEntities(orderA));
-    const rb = detectSketchRegions(editorStateToEntities(orderB));
+    const ra = detectSketchRegions(editorModelToBuildGeometry(orderA));
+    const rb = detectSketchRegions(editorModelToBuildGeometry(orderB));
     expect(ra).toHaveLength(1);
     expect(rb).toHaveLength(1);
     // Both triangles should produce the same canonical region id.

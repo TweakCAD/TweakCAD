@@ -44,7 +44,7 @@ function makeSourceWithBody(name: string): CadProject {
     dependsOn: [],
     inputs: {
       plane: { type: 'defaultPlane', name: 'XY' },
-      entities: {
+      buildGeometry: {
         c1: { id: 'c1', type: 'circle', center: ['0', '0'], diameter: '10' },
       },
     },
@@ -198,7 +198,7 @@ describe('buildImportedComponent', () => {
       dependsOn: [],
       inputs: {
         plane: { type: 'defaultPlane', name: 'XY' },
-        entities: { c: { id: 'c', type: 'circle', center: ['0', '0'], diameter: 'D' } },
+        buildGeometry: { c: { id: 'c', type: 'circle', center: ['0', '0'], diameter: 'D' } },
       },
       createdAt: now, updatedAt: now,
     });
@@ -265,7 +265,7 @@ describe('buildImportedComponent', () => {
       dependsOn: [],
       inputs: {
         plane: { type: 'defaultPlane', name: 'XY' },
-        entities: { c: { id: 'c', type: 'circle', center: ['0', '0'], diameter: 'D' } },
+        buildGeometry: { c: { id: 'c', type: 'circle', center: ['0', '0'], diameter: 'D' } },
       },
       createdAt: now, updatedAt: now,
     });

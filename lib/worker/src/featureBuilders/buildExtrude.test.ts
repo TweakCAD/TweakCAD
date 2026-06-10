@@ -45,7 +45,7 @@ const SKETCH_ID = featureId('sketch_main');
 function twoCircleSketch(): FeatureNode {
   const inputs: SketchFeatureInputs = {
     plane: { type: 'defaultPlane', name: 'XY' },
-    entities: {
+    buildGeometry: {
       [entityId('cA')]: { id: entityId('cA'), type: 'circle', center: ['-10', '0'], diameter: '4' },
       [entityId('cB')]: { id: entityId('cB'), type: 'circle', center: ['10', '0'],  diameter: '4' },
     },
@@ -60,7 +60,7 @@ function twoCircleSketch(): FeatureNode {
 function oneCircleSketch(): FeatureNode {
   const inputs: SketchFeatureInputs = {
     plane: { type: 'defaultPlane', name: 'XY' },
-    entities: {
+    buildGeometry: {
       [entityId('c1')]: { id: entityId('c1'), type: 'circle', center: ['0', '0'], diameter: '4' },
     },
   };

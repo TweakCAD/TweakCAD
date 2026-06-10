@@ -19,7 +19,7 @@
     "fflate": "0.8.3",
     "immer": "^10.1.0",
     "lucide-react": "^1.16.0",
-    "occt-wasm": "3.2.0",
+    "occt-wasm": "3.3.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "three": "^0.172.0",

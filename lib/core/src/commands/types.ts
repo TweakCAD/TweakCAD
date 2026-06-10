@@ -30,6 +30,7 @@ import type {
   ConstructionPlaneFeatureInputs,
   ParameterValue,
   ConfigurationRow,
+  SketchEditorSnapshot,
 } from '../document/schema.ts';
 
 /** Union of all possible document mutation commands */
@@ -41,6 +42,7 @@ export type CadCommand =
   | RenamePartCommand
   // Sketch commands
   | CreateSketchCommand
+  | CreateSketchFromImportCommand
   | AddSketchEntityCommand
   | RemoveSketchEntityCommand
   // Higher-level sketch drawing commands — see
@@ -130,6 +132,26 @@ export type CreateSketchCommand = {
   plane: PlaneRef;
 };
 
+/**
+ * Create a new sketch on a plane, pre-populated from an imported
+ * `EditorState` snapshot (e.g. a parsed DXF). Mirrors `CreateSketch` for
+ * the plane / feature-creation half, but instead of seeding only the
+ * origin point it stores the supplied `editorState` snapshot and derives
+ * `inputs.buildGeometry` from it — the whole import lands as ONE undo entry.
+ *
+ * `editorState` is the array-form `SketchEditorSnapshot` produced by the
+ * importer's `toSnapshot(...)`; it must be JSON/structured-clone safe so
+ * the command can be replayed and undone like any other.
+ */
+export type CreateSketchFromImportCommand = {
+  type: 'CreateSketchFromImport';
+  partId: PartId;
+  plane: PlaneRef;
+  editorState: SketchEditorSnapshot;
+  /** Optional display name; defaults to the auto-numbered "Sketch N". */
+  name?: string;
+};
+
 export type AddSketchEntityCommand = {
   type: 'AddSketchEntity';
   sketchId: FeatureId;
@@ -139,8 +161,8 @@ export type AddSketchEntityCommand = {
 // `ReplaceSketchEntitiesCommand` was retired during the sketch-commands
 // unification. Its sole caller (Shell.tsx's
 // `syncSketchToDocument`) is gone; every per-mutation `Sketch*` handler
-// already rebuilds `inputs.entities` via `editorStateToEntities` and
-// snapshots `_editorState`, so a "replace all" command had nothing to
+// already rebuilds `inputs.buildGeometry` via `editorModelToBuildGeometry` and
+// snapshots `editorModel`, so a "replace all" command had nothing to
 // add. If a future flow needs to atomically swap a sketch's contents
 // (e.g. paste a templated sketch), build it on the per-primitive
 // handlers wrapped in `bus.beginTransaction` / `endTransaction`.
@@ -155,13 +177,13 @@ export type RemoveSketchEntityCommand = {
 //
 // These wrap the pure-function operations in
 // `@tweakcad/core/src/sketch/operations.ts`. Each handler:
-//   1. Loads the sketch's current _editorState into a working
+//   1. Loads the sketch's current editorModel into a working
 //      EditorState (or empty if the sketch was just created).
 //   2. Calls the matching `drawLine` / `drawRectangle` / `drawCircle`
 //      primitive, which allocates points (or reuses existing ones
 //      within tolerance), appends geometries, and returns a new state.
-//   3. Serializes the state back: writes both `_editorState` (for
-//      editor round-trip) and `entities` (the canonical document model
+//   3. Serializes the state back: writes both `editorModel` (for
+//      editor round-trip) and `buildGeometry` (the canonical document model
 //      the worker rebuilds from).
 //
 // The point-allocation + coincident-merge logic lives in operations.ts
@@ -292,7 +314,7 @@ export type SketchDrawArcCommand = {
  * `constraint.type` field on the embedded `SketchConstraintInput`. The
  * handler delegates to the pure `applyConstraint` primitive in
  * `sketch/operations.ts`, which appends to
- * `_editorState.constraints` without running the solver. The in-browser
+ * `editorModel.constraints` without running the solver. The in-browser
  * editor re-solves on the next user interaction (drag, dimension edit).
  *
  * Conflict detection (rollback of conflicting constraints into a
@@ -730,6 +752,8 @@ export function commandLabel(command: CadCommand): string {
       return `Rename Part`;
     case 'CreateSketch':
       return 'Create Sketch';
+    case 'CreateSketchFromImport':
+      return 'Import Sketch';
     case 'AddSketchEntity':
       return `Add ${command.entity.type}`;
     case 'SketchTrim':

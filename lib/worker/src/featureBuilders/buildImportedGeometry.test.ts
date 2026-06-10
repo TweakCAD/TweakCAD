@@ -101,6 +101,25 @@ describe('buildImportedGeometry', () => {
     expect(stepSpy).not.toHaveBeenCalled();
   });
 
+  it('routes brep to kernel.importBrep', async () => {
+    const kernel = new MockKernel();
+    await kernel.init();
+    const stepSpy = vi.spyOn(kernel, 'importStep');
+    const stlSpy = vi.spyOn(kernel, 'importStl');
+    const brepSpy = vi.spyOn(kernel, 'importBrep');
+
+    await buildImportedGeometry(
+      makeNode({ fileName: 'part.brep', format: 'brep' }),
+      {} as ResolvedParams,
+      emptyCtx(),
+      kernel,
+    );
+
+    expect(brepSpy).toHaveBeenCalledTimes(1);
+    expect(stepSpy).not.toHaveBeenCalled();
+    expect(stlSpy).not.toHaveBeenCalled();
+  });
+
   it('publishes per-body deterministic ids derived from the feature', async () => {
     const kernel = new MockKernel();
     await kernel.init();

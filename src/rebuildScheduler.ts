@@ -291,7 +291,7 @@ export function disposeRebuildScheduler(): void {
  */
 export async function exportActivePart(
   documentStore: DocumentStore,
-  format: 'stl' | 'step' | '3mf',
+  format: 'stl' | 'step' | 'brep' | '3mf',
 ): Promise<ArrayBuffer> {
   const project = documentStore.getState();
   // Export the first / only part. Multi-part export is a future
@@ -304,6 +304,7 @@ export async function exportActivePart(
   if (useWorker && pool) {
     if (format === 'stl') return pool.requestExportStl(part, project);
     if (format === 'step') return pool.requestExportStep(part, project);
+    if (format === 'brep') return pool.requestExportBrep(part, project);
     return pool.requestExport3MF(part, project);
   }
 
@@ -316,6 +317,7 @@ export async function exportActivePart(
   let blob: Blob;
   if (format === 'stl') blob = await fallback.kernel.exportStl(bodyHandles);
   else if (format === 'step') blob = await fallback.kernel.exportStep(bodyHandles);
+  else if (format === 'brep') blob = await fallback.kernel.exportBrep(bodyHandles);
   else blob = await fallback.kernel.export3MF(bodyHandles, { name: part.name });
   return blob.arrayBuffer();
 }

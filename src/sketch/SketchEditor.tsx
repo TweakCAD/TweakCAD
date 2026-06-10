@@ -122,7 +122,7 @@ export function SketchEditor({
   }, [isActive, viewportCtrl, planeName, store]);
 
   // Subscribe to documentStore so every CadCommand that mutates
-  // this sketch's _editorState reflects back into the editor store. The
+  // this sketch's editorModel reflects back into the editor store. The
   // subscriber prunes selections to entities that still exist; live UI
   // state (active tool, preview, hover) is preserved across hydrations.
   // If an undo walks past `CreateSketch`, `onSketchRemoved` fires so
@@ -304,7 +304,7 @@ export function SketchEditor({
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         // Route through the bus so deletion lands in the document's
-        // `_editorState` (and hits the undo stack). Going via the
+        // `editorModel` (and hits the undo stack). Going via the
         // editor-only `deleteSelected` action would mutate the editor
         // store but leave the doc unchanged — the next bus dispatch
         // would then trigger `subscribeSketchHydration` to revive the

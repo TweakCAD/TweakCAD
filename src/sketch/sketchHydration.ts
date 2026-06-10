@@ -3,12 +3,12 @@
  *
  * **Why this exists.** The in-app sketch tools do not
  * write to `SketchEditorStore` directly — they dispatch CadCommands
- * that mutate the *document's* `_editorState` snapshot. Without a
+ * that mutate the *document's* `editorModel` snapshot. Without a
  * subscriber the editor store would still hold its pre-dispatch state
  * and the user would see no change. This module bridges that gap:
  *
  *   1. Subscribe to `documentStore` while a sketch is open.
- *   2. On every doc change, read the active sketch's `_editorState`.
+ *   2. On every doc change, read the active sketch's `editorModel`.
  *   3. If it differs from the snapshot we last applied, call
  *      `SketchEditorStore.hydrateFromDocument` (replaces the geometry
  *      slice but preserves UI state — selection, hover, active tool,
@@ -89,7 +89,7 @@ export function subscribeSketchHydration(
       }
       return;
     }
-    const snap = inputs._editorState;
+    const snap = inputs.editorModel;
     if (!snap) return;
     // Reference equality is enough — Immer hands us a fresh frozen
     // object on every mutation, so a stable reference means no change.

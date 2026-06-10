@@ -149,20 +149,17 @@ const SketchEntitySchema = z.discriminatedUnion('type', [
 
 const SketchFeatureInputsSchema = z.object({
   plane: PlaneRefSchema,
-  entities: z.record(z.string(), SketchEntitySchema),
+  buildGeometry: z.record(z.string(), SketchEntitySchema),
   entityOrder: z.array(z.string()).optional(),
-  // Editor sidecar — opaque to validation since the editor owns the shape.
-  // `constraints` here is the LIVE constraint store, not the dead top-level
-  // one. The solver uses this.
-  _editorState: z.object({
+  // The editing source of truth — opaque to validation since the editor
+  // owns its shape. Its `constraints` array is the LIVE constraint store
+  // the solver uses. Required: every sketch carries its editor model.
+  editorModel: z.object({
     points: z.array(z.unknown()),
     geometries: z.array(z.unknown()),
     constraints: z.array(z.unknown()),
-  }).optional(),
-}).strip();
-// `.strip()` silently drops the legacy top-level `constraints: {}` slot
-// from .cadjson files saved before 2026-05-25 — back-compat for loading
-// without forcing a migration step on the user.
+  }),
+});
 
 const ExtrudeFeatureInputsSchema = z.object({
   profiles: z.array(ProfileRefSchema),
@@ -243,12 +240,12 @@ const AxisSpecSchema = z.discriminatedUnion('type', [
 /**
  * ImportedGeometry schema. The base64-encoded `data` is held as a
  * plain string — we don't try to round-trip-validate the bytes (they
- * can be arbitrarily large STEP/STL content). `format` is the
+ * can be arbitrarily large STEP/STL/BREP content). `format` is the
  * discriminator the builder uses to pick the right kernel call.
  */
 const ImportedGeometryFeatureInputsSchema = z.object({
   fileName: z.string().min(1),
-  format: z.union([z.literal('step'), z.literal('stl')]),
+  format: z.union([z.literal('step'), z.literal('stl'), z.literal('brep')]),
   data: z.string().min(1),
 });
 

@@ -238,5 +238,6 @@ export function build3MF(
 export const EXPORT_MIME = {
   step: 'application/step',
   stl: 'application/sla',
+  brep: 'model/brep',
   threemf: 'application/vnd.ms-package.3dmanufacturing-3dmodel+xml',
 } as const;

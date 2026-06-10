@@ -812,6 +812,25 @@ describe('OcctKernel — exports', () => {
     expect(bytes.length).toBe(84 + triCount * 50);
   });
 
+  it('exportBrep → importBrep round-trips a single body back to a valid solid', async () => {
+    const k = await newKernel();
+    const r = await k.makeBox({ origin: [0, 0, 0], width: 5, height: 5, depth: 5 });
+    if (!r.ok) throw new Error('precondition failed');
+    const blob = await k.exportBrep([r.value]);
+    expect(blob.type).toBe('model/brep');
+    const buf = await blob.arrayBuffer();
+    expect(buf.byteLength).toBeGreaterThan(0);
+    const imported = await k.importBrep(buf, 'test-brep');
+    if (!imported.ok) throw new Error(`importBrep failed: ${imported.error.message}`);
+    expect(imported.value).toHaveLength(1);
+    // A valid solid round-trips with a non-degenerate bounding box.
+    const bb = await k.getBoundingBox(imported.value[0]!);
+    const xSpan = bb.max[0] - bb.min[0];
+    const ySpan = bb.max[1] - bb.min[1];
+    const zSpan = bb.max[2] - bb.min[2];
+    expect(Math.min(xSpan, ySpan, zSpan)).toBeGreaterThan(0);
+  });
+
   it('export3MF produces a ZIP archive containing a 3D model entry', async () => {
     const k = await newKernel();
     const r = await k.makeBox({ origin: [0, 0, 0], width: 5, height: 5, depth: 5 });

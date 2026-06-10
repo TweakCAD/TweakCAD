@@ -1,5 +1,5 @@
 /**
- * Tests for editorStateToEntities — the pure serializer that converts
+ * Tests for editorModelToBuildGeometry — the pure serializer that converts
  * the point-based editor model into the flat document `entities` Record
  * the worker rebuilds from.
  *
@@ -26,7 +26,7 @@ import {
   drawPoint,
   makeCounterIdFactory,
 } from './operations.ts';
-import { editorStateToEntities } from './serialization.ts';
+import { editorModelToBuildGeometry } from './serialization.ts';
 import { detectSketchRegions } from './profileRegions.ts';
 import type {
   SketchCircleEntity,
@@ -36,11 +36,11 @@ import type {
   SketchPointEntity,
 } from '../document/schema.ts';
 
-describe('editorStateToEntities — line + circle serialization', () => {
+describe('editorModelToBuildGeometry — line + circle serialization', () => {
   it('emits a SketchLineEntity for each drawLine geometry', () => {
     const factory = makeCounterIdFactory();
     const state = drawLine(emptyEditorState(), [0, 0], [10, 5], { idFactory: factory }).state;
-    const entities = editorStateToEntities(state);
+    const entities = editorModelToBuildGeometry(state);
     const list = Object.values(entities);
     expect(list).toHaveLength(1);
     const line = list[0] as SketchLineEntity;
@@ -52,7 +52,7 @@ describe('editorStateToEntities — line + circle serialization', () => {
   it('emits a SketchCircleEntity from drawCircle', () => {
     const factory = makeCounterIdFactory();
     const state = drawCircle(emptyEditorState(), { center: [5, 5], radius: 3 }, { idFactory: factory }).state;
-    const entities = editorStateToEntities(state);
+    const entities = editorModelToBuildGeometry(state);
     const list = Object.values(entities);
     expect(list).toHaveLength(1);
     const circle = list[0] as SketchCircleEntity;
@@ -67,7 +67,7 @@ describe('editorStateToEntities — line + circle serialization', () => {
       idFactory: factory,
       construction: true,
     }).state;
-    const entity = Object.values(editorStateToEntities(state))[0] as SketchCircleEntity;
+    const entity = Object.values(editorModelToBuildGeometry(state))[0] as SketchCircleEntity;
     expect(entity.construction).toBe(true);
   });
 
@@ -89,18 +89,18 @@ describe('editorStateToEntities — line + circle serialization', () => {
       ]) as never,
       constraints: new Map(),
     };
-    const entities = editorStateToEntities(state);
+    const entities = editorModelToBuildGeometry(state);
     expect(Object.keys(entities)).toHaveLength(0);
   });
 });
 
-describe('editorStateToEntities — rectangle is 4 lines (invariant #11)', () => {
+describe('editorModelToBuildGeometry — rectangle is 4 lines (invariant #11)', () => {
   it('drawRectangle emits 4 SketchLineEntity records (no composite collapse)', () => {
     const factory = makeCounterIdFactory();
     const state = drawRectangle(emptyEditorState(), { corner: [0, 0], width: 60, height: 30 }, {
       idFactory: factory,
     }).state;
-    const entities = editorStateToEntities(state);
+    const entities = editorModelToBuildGeometry(state);
     const list = Object.values(entities);
     // 4 edges → 4 line entities.
     expect(list).toHaveLength(4);
@@ -115,7 +115,7 @@ describe('editorStateToEntities — rectangle is 4 lines (invariant #11)', () =>
       idFactory: factory,
       construction: true,
     }).state;
-    const entities = Object.values(editorStateToEntities(state));
+    const entities = Object.values(editorModelToBuildGeometry(state));
     expect(entities).toHaveLength(4);
     for (const entity of entities) {
       expect(entity.construction).toBe(true);
@@ -123,7 +123,7 @@ describe('editorStateToEntities — rectangle is 4 lines (invariant #11)', () =>
   });
 });
 
-describe('editorStateToEntities — region detector integration', () => {
+describe('editorModelToBuildGeometry — region detector integration', () => {
   it('drawRectangle output produces a closed quad region', () => {
     // With composite rectangles gone, the region detector must walk the
     // 4-line decomposition and find a closed loop on its own. The 4
@@ -134,7 +134,7 @@ describe('editorStateToEntities — region detector integration', () => {
     const state = drawRectangle(emptyEditorState(), { corner: [0, 0], width: 40, height: 20 }, {
       idFactory: factory,
     }).state;
-    const entities = editorStateToEntities(state);
+    const entities = editorModelToBuildGeometry(state);
     const regions = detectSketchRegions(entities);
     expect(regions.length).toBeGreaterThanOrEqual(1);
     // First region should be the closed quad with the expected area.
@@ -146,7 +146,7 @@ describe('editorStateToEntities — region detector integration', () => {
   it('produces a single circle region for a drawn circle', () => {
     const factory = makeCounterIdFactory();
     const state = drawCircle(emptyEditorState(), { center: [0, 0], radius: 5 }, { idFactory: factory }).state;
-    const entities = editorStateToEntities(state);
+    const entities = editorModelToBuildGeometry(state);
     const regions = detectSketchRegions(entities);
     expect(regions).toHaveLength(1);
     expect(regions[0]!.type).toBe('circle');
@@ -162,14 +162,14 @@ describe('editorStateToEntities — region detector integration', () => {
     s = drawLine(s, [10, 0], [10, 10], { idFactory: factory }).state;
     s = drawLine(s, [10, 10], [0, 10], { idFactory: factory }).state;
     s = drawLine(s, [0, 10], [0, 0], { idFactory: factory }).state;
-    const entities = editorStateToEntities(s);
+    const entities = editorModelToBuildGeometry(s);
     const regions = detectSketchRegions(entities);
     // At least one region (the closed quad).
     expect(regions.length).toBeGreaterThanOrEqual(1);
   });
 });
 
-describe('editorStateToEntities — ellipse / spline / point projection (task Q)', () => {
+describe('editorModelToBuildGeometry — ellipse / spline / point projection (task Q)', () => {
   it('emits a SketchEllipseEntity from drawEllipse', () => {
     const factory = makeCounterIdFactory();
     const state = drawEllipse(emptyEditorState(), {
@@ -177,7 +177,7 @@ describe('editorStateToEntities — ellipse / spline / point projection (task Q)
       major: [10, 0],
       minorRadius: 4,
     }, { idFactory: factory }).state;
-    const entities = Object.values(editorStateToEntities(state));
+    const entities = Object.values(editorModelToBuildGeometry(state));
     expect(entities).toHaveLength(1);
     const ellipse = entities[0] as SketchEllipseEntity;
     expect(ellipse.type).toBe('ellipse');
@@ -191,7 +191,7 @@ describe('editorStateToEntities — ellipse / spline / point projection (task Q)
     const state = drawSpline(emptyEditorState(),
       [[0, 0], [5, 5], [10, 0]],
       { idFactory: factory }).state;
-    const entities = Object.values(editorStateToEntities(state));
+    const entities = Object.values(editorModelToBuildGeometry(state));
     expect(entities).toHaveLength(1);
     const spline = entities[0] as SketchSplineEntity;
     expect(spline.type).toBe('spline');
@@ -201,7 +201,7 @@ describe('editorStateToEntities — ellipse / spline / point projection (task Q)
   it('emits a SketchPointEntity from drawPoint', () => {
     const factory = makeCounterIdFactory();
     const state = drawPoint(emptyEditorState(), [7, 3], { idFactory: factory }).state;
-    const entities = Object.values(editorStateToEntities(state));
+    const entities = Object.values(editorModelToBuildGeometry(state));
     expect(entities).toHaveLength(1);
     const point = entities[0] as SketchPointEntity;
     expect(point.type).toBe('point');
@@ -215,7 +215,7 @@ describe('editorStateToEntities — ellipse / spline / point projection (task Q)
       { idFactory: factory, construction: true }).state;
     s = drawSpline(s, [[0, 0], [1, 1]], { idFactory: factory, construction: true }).state;
     s = drawPoint(s, [2, 2], { idFactory: factory, construction: true }).state;
-    const entities = Object.values(editorStateToEntities(s));
+    const entities = Object.values(editorModelToBuildGeometry(s));
     expect(entities).toHaveLength(3);
     for (const e of entities) {
       expect((e as { construction?: boolean }).construction).toBe(true);

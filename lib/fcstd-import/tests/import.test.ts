@@ -95,7 +95,7 @@ describe('importFcstdFromXml — real Exercise-2D-10 model', () => {
     const inputs = sketch!.inputs as unknown as SketchFeatureInputs;
     expect(inputs.plane).toEqual({ type: 'defaultPlane', name: 'XY' });
     expect(inputs.entityOrder).toHaveLength(15);
-    const entities = Object.values(inputs.entities);
+    const entities = Object.values(inputs.buildGeometry);
     expect(entities).toHaveLength(15);
     const lines = entities.filter((e) => e.type === 'line');
     expect(lines).toHaveLength(15); // all 15 are line segments in this sketch
@@ -108,7 +108,7 @@ describe('importFcstdFromXml — real Exercise-2D-10 model', () => {
     expect(sketch).toBeDefined();
     const inputs = sketch!.inputs as unknown as SketchFeatureInputs;
     expect(inputs.plane).toEqual({ type: 'defaultPlane', name: 'YZ' });
-    const entities = Object.values(inputs.entities);
+    const entities = Object.values(inputs.buildGeometry);
     expect(entities).toHaveLength(1);
     const circle = entities[0]!;
     expect(circle.type).toBe('circle');
@@ -123,8 +123,8 @@ describe('importFcstdFromXml — real Exercise-2D-10 model', () => {
     const s3 = part.timeline.find((f) => f.name === 'Sketch003');
     const i1 = s1!.inputs as unknown as SketchFeatureInputs;
     const i3 = s3!.inputs as unknown as SketchFeatureInputs;
-    expect(Object.values(i1.entities)).toHaveLength(8);
-    expect(Object.values(i3.entities)).toHaveLength(4);
+    expect(Object.values(i1.buildGeometry)).toHaveLength(8);
+    expect(Object.values(i3.buildGeometry)).toHaveLength(4);
   });
 
   it('emits diagnostics for Groove, Groove001, and DatumLine', () => {

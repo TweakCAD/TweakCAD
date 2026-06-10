@@ -276,6 +276,10 @@ export class MockKernel implements CadKernel {
     return new Blob(['MOCK STL DATA'], { type: 'application/sla' });
   }
 
+  async exportBrep(_bodies: KernelBody[]): Promise<Blob> {
+    return new Blob(['MOCK BREP DATA'], { type: 'model/brep' });
+  }
+
   async importStep(_data: ArrayBuffer, _origin?: string): Promise<Result<KernelBody[], KernelError>> {
     // Mock returns a single placeholder body so worker tests have
     // something to put in context.bodies. Real OCCT decomposes via
@@ -284,6 +288,10 @@ export class MockKernel implements CadKernel {
   }
 
   async importStl(_data: ArrayBuffer, _origin?: string): Promise<Result<KernelBody[], KernelError>> {
+    return ok([{ handle: this.nextHandle(), source: 'mock' }]);
+  }
+
+  async importBrep(_data: ArrayBuffer, _origin?: string): Promise<Result<KernelBody[], KernelError>> {
     return ok([{ handle: this.nextHandle(), source: 'mock' }]);
   }
 

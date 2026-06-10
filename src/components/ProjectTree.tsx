@@ -41,6 +41,7 @@ import {
   LockOpen,
   Settings,
   Move,
+  Download,
 } from 'lucide-react';
 import {
   getFeatureIcon,
@@ -74,7 +75,7 @@ interface TreeFeature {
    * Sketcher remaining degrees of freedom. Only populated for sketch
    * features. 0 = fully defined (Lock badge in the tree row); >0 =
    * under-constrained; `undefined` = not a sketch / solver not ready /
-   * sketch has no `_editorState` snapshot yet.
+   * sketch has no `editorModel` snapshot yet.
    */
   dof?: number;
 }
@@ -101,7 +102,7 @@ interface TreePart {
   timeline: TreeFeature[];
 }
 
-export type ContextMenuAction = 'extrude' | 'editSketch' | 'editFeature' | 'editComponent' | 'duplicateComponent' | 'move' | 'moveAll' | 'rename' | 'delete' | 'suppress' | 'enable';
+export type ContextMenuAction = 'extrude' | 'editSketch' | 'exportSketchDxf' | 'exportSketchSvg' | 'editFeature' | 'editComponent' | 'duplicateComponent' | 'move' | 'moveAll' | 'rename' | 'delete' | 'suppress' | 'enable';
 
 interface ContextMenuEvent {
   featureId: string;
@@ -851,6 +852,19 @@ const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
         action: 'editSketch',
         label: 'Edit Sketch',
         icon: <Pencil size={14} />,
+      });
+      // Export the sketch profile as 2D vector geometry (no 3D body
+      // involved). DXF for CAM/CNC, SVG for laser/illustration.
+      items.push({
+        action: 'exportSketchDxf',
+        label: 'Export DXF…',
+        icon: <Download size={14} />,
+        dividerBefore: true,
+      });
+      items.push({
+        action: 'exportSketchSvg',
+        label: 'Export SVG…',
+        icon: <Download size={14} />,
       });
     }
 

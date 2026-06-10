@@ -67,7 +67,7 @@ import { generateId } from '../ids.ts';
  * The shared editor model: a map of points, geometries that reference
  * points by id, and constraints that reference both. This is the shape
  * the in-browser editor store uses internally, and what gets serialized
- * into a sketch feature's `_editorState` for document persistence.
+ * into a sketch feature's `editorModel` for document persistence.
  *
  * Why Maps not Records: lookup is O(1) regardless of size, and the
  * editor store already standardized on Maps for incremental mutation.
@@ -705,6 +705,15 @@ export interface DrawArcOptions {
   construction?: boolean;
   /** Deterministic id factory for tests. Default crypto-random. */
   idFactory?: IdFactory;
+  /**
+   * Allocate the start endpoint as a fresh `SketchPoint` instead of merging
+   * with a coincident existing point. Mirrors {@link DrawLineOptions.distinctStart}
+   * — used by importers that express junctions as removable `coincident`
+   * constraints between distinct points rather than as a shared point id.
+   */
+  distinctStart?: boolean;
+  /** Same as `distinctStart` but for the end endpoint. */
+  distinctEnd?: boolean;
 }
 
 /**
@@ -758,13 +767,18 @@ export function drawArc(
     ? { idFactory: opts.idFactory, ...(opts.tolerance !== undefined ? { tolerance: opts.tolerance } : {}) }
     : (opts.tolerance !== undefined ? { tolerance: opts.tolerance } : {});
 
+  const ptOpts = opts.idFactory ? { idFactory: opts.idFactory } : {};
   const center = findOrCreatePoint(state, args.center[0], args.center[1], findOpts);
   const startX = args.center[0] + args.radius * Math.cos(startAngle);
   const startY = args.center[1] + args.radius * Math.sin(startAngle);
   const endX = args.center[0] + args.radius * Math.cos(endAngle);
   const endY = args.center[1] + args.radius * Math.sin(endAngle);
-  const startPt = findOrCreatePoint(center.state, startX, startY, findOpts);
-  const endPt = findOrCreatePoint(startPt.state, endX, endY, findOpts);
+  const startPt = opts.distinctStart
+    ? addPoint(center.state, startX, startY, ptOpts)
+    : findOrCreatePoint(center.state, startX, startY, findOpts);
+  const endPt = opts.distinctEnd
+    ? addPoint(startPt.state, endX, endY, ptOpts)
+    : findOrCreatePoint(startPt.state, endX, endY, findOpts);
 
   const added = addGeometry(
     endPt.state,
@@ -1259,10 +1273,10 @@ function constraintReferencesGeometry(
  * is a no-op (idempotent — same contract as Map.delete).
  *
  * The in-app editor store and the `RemoveSketchEntity` command handler
- * both call this so deletion produces the same `_editorState` mutation
+ * both call this so deletion produces the same `editorModel` mutation
  * regardless of entry point. Without that shared op, the bus-side
- * handler historically only touched `inputs.entities` while the editor
- * store mutated `_editorState` — the next hydration round-trip then
+ * handler historically only touched `inputs.buildGeometry` while the editor
+ * store mutated `editorModel` — the next hydration round-trip then
  * revived the "deleted" geometry from the still-intact snapshot.
  */
 export function removeGeometry(

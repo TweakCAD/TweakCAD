@@ -140,22 +140,24 @@ interface AppBarProps {
   /** Open a .cadjson from disk. */
   onOpen?: (() => void) | undefined;
   /**
-   * Import a STEP / STL geometry file into the current document.
+   * Import a STEP / STL / BREP geometry file into the current document.
    * The optional `format` hint lets the dropdown items narrow the
    * picker to a single format.
    */
-  onImport?: ((format?: 'step' | 'stl') => void) | undefined;
+  onImport?: ((format?: 'step' | 'stl' | 'brep') => void) | undefined;
   /**
    * Import a parametric component (.cadcomponent / .cadjson) and embed
    * it as an `importedComponent` feature.
    */
   onImportComponent?: (() => void) | undefined;
+  /** Import a DXF drawing as a new 2D sketch on a chosen plane. */
+  onImportSketchDxf?: (() => void) | undefined;
   /** Save to the doc's sticky storage (disk path or cloud). */
   onSave?: (() => void) | undefined;
   /** Save a copy to disk under a new name. */
   onSaveAs?: (() => void) | undefined;
   /** Export the current document to a downloadable geometry format. */
-  onExport?: ((format: 'stl' | 'step' | '3mf') => void) | undefined;
+  onExport?: ((format: 'stl' | 'step' | 'brep' | '3mf') => void) | undefined;
   /** Optional SaaS state — drives the account chip on the right. */
   saas?: import('../storage/index.ts').SaasState | undefined;
   /** Open the inline sign-in modal. */
@@ -380,6 +382,7 @@ export function MainAppBar({
   onOpen,
   onImport,
   onImportComponent,
+  onImportSketchDxf,
   onSave,
   onSaveAs,
   onExport,
@@ -430,7 +433,7 @@ export function MainAppBar({
 
       <IconBtn icon={<FilePlus size={16} />}   label="New (Ctrl+Alt+N)" onClick={() => onNew?.()} />
       <IconBtn icon={<FolderOpen size={16} />} label="Open (Ctrl+O)"    onClick={() => onOpen?.()} />
-      <ImportButton onImport={onImport} onImportComponent={onImportComponent} />
+      <ImportButton onImport={onImport} onImportComponent={onImportComponent} onImportSketchDxf={onImportSketchDxf} />
       <IconBtn icon={<Save size={16} />}       label="Save (Ctrl+S)"    onClick={() => onSave?.()} />
       <IconBtn icon={<FileDown size={16} />}   label="Save as (Ctrl+Shift+S)" onClick={() => onSaveAs?.()} />
       <ExportButton onExport={onExport} />
@@ -1563,8 +1566,8 @@ interface IconBtnProps {
 
 /**
  * Dropdown variant of IconBtn — clicking the FileInput icon opens a
- * small menu listing the importable formats (STEP, STL today; FCStd
- * and Component-JSON later when the underlying support lands). Each
+ * small menu listing the importable formats (STEP, STL, BREP today;
+ * FCStd and Component-JSON later when the underlying support lands). Each
  * entry calls back with a format hint, which the
  * App layer forwards to `pickGeometryForImport(format)` so the
  * native file picker only shows files of that format.
@@ -1577,9 +1580,11 @@ interface IconBtnProps {
 function ImportButton({
   onImport,
   onImportComponent,
+  onImportSketchDxf,
 }: {
-  onImport?: ((format?: 'step' | 'stl') => void) | undefined;
+  onImport?: ((format?: 'step' | 'stl' | 'brep') => void) | undefined;
   onImportComponent?: (() => void) | undefined;
+  onImportSketchDxf?: (() => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const [hover, setHover] = useState(false);
@@ -1603,7 +1608,7 @@ function ImportButton({
     };
   }, [open]);
 
-  function pick(format: 'step' | 'stl') {
+  function pick(format: 'step' | 'stl' | 'brep') {
     if (!onImport) return;
     setOpen(false);
     onImport(format);
@@ -1615,12 +1620,18 @@ function ImportButton({
     onImportComponent();
   }
 
+  function pickSketchDxf() {
+    if (!onImportSketchDxf) return;
+    setOpen(false);
+    onImportSketchDxf();
+  }
+
   return (
     <div ref={wrapperRef} style={{ position: 'relative' }}>
       <button
         type="button"
         onClick={() => setOpen(v => !v)}
-        title="Import (STEP / STL / Component)"
+        title="Import (STEP / STL / BREP / Component)"
         style={{
           ...styles.iconBtn,
           background: hover ? '#ebebeb' : 'transparent',
@@ -1647,6 +1658,16 @@ function ImportButton({
             sub=".stl · faceted mesh (3D-printable shells)"
             onClick={() => pick('stl')}
           />
+          <ExportMenuItem
+            label="Import BREP…"
+            sub=".brep / .brp · OpenCASCADE native B-Rep"
+            onClick={() => pick('brep')}
+          />
+          <ExportMenuItem
+            label="Import DXF (sketch)…"
+            sub=".dxf · 2D curves → new sketch on a chosen plane"
+            onClick={pickSketchDxf}
+          />
         </div>
       )}
     </div>
@@ -1655,16 +1676,16 @@ function ImportButton({
 
 /**
  * Dropdown variant of IconBtn — clicking the package icon opens a small
- * menu with STL / STEP / 3MF entries. Each calls back with the format,
+ * menu with STL / STEP / BREP / 3MF entries. Each calls back with the format,
  * the App layer wires it to rebuildScheduler.exportActivePart + download.
  */
 function ExportButton({
   onExport,
 }: {
-  onExport?: ((format: 'stl' | 'step' | '3mf') => void) | undefined;
+  onExport?: ((format: 'stl' | 'step' | 'brep' | '3mf') => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState<null | 'stl' | 'step' | '3mf'>(null);
+  const [busy, setBusy] = useState<null | 'stl' | 'step' | 'brep' | '3mf'>(null);
   const [hover, setHover] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
@@ -1686,7 +1707,7 @@ function ExportButton({
     };
   }, [open]);
 
-  async function pick(format: 'stl' | 'step' | '3mf') {
+  async function pick(format: 'stl' | 'step' | 'brep' | '3mf') {
     if (!onExport || busy) return;
     setBusy(format);
     setOpen(false);
@@ -1703,7 +1724,7 @@ function ExportButton({
         type="button"
         onClick={() => setOpen((v) => !v)}
         disabled={busy !== null}
-        title={busy ? `Exporting ${busy.toUpperCase()}…` : 'Export (STL / STEP / 3MF)'}
+        title={busy ? `Exporting ${busy.toUpperCase()}…` : 'Export (STL / STEP / BREP / 3MF)'}
         style={{
           ...styles.iconBtn,
           background: hover && busy === null ? '#ebebeb' : 'transparent',
@@ -1726,6 +1747,11 @@ function ExportButton({
             label="Export STEP…"
             sub=".step · parametric CAD interchange"
             onClick={() => pick('step')}
+          />
+          <ExportMenuItem
+            label="Export BREP…"
+            sub=".brep · OpenCASCADE native B-Rep"
+            onClick={() => pick('brep')}
           />
           <ExportMenuItem
             label="Export 3MF…"

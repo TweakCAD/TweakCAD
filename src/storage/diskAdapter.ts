@@ -44,6 +44,23 @@ const IMPORT_TYPES: FilePickerAcceptType[] = [
     description: 'STL mesh (.stl)',
     accept: { 'model/stl': ['.stl'] },
   },
+  {
+    description: 'BREP file (.brep / .brp)',
+    accept: { 'model/brep': ['.brep', '.brp'] },
+  },
+];
+
+/**
+ * DXF sketch-import accepts only .dxf. Kept separate from IMPORT_TYPES
+ * (the 3D STEP/STL/BREP body import) because DXF routes to the
+ * sketch-import flow — it becomes 2D sketch geometry on a chosen plane,
+ * never an `importedGeometry` body. DXF is ASCII, so we read it as text.
+ */
+const DXF_IMPORT_TYPES: FilePickerAcceptType[] = [
+  {
+    description: 'DXF drawing (.dxf)',
+    accept: { 'image/vnd.dxf': ['.dxf'] },
+  },
 ];
 
 /**
@@ -69,7 +86,7 @@ const COMPONENT_IMPORT_TYPES: FilePickerAcceptType[] = [
  */
 export type ImportPickResult = {
   fileName: string;
-  format: 'step' | 'stl';
+  format: 'step' | 'stl' | 'brep';
   /** Base64-encoded file bytes, ready for embedding into the feature inputs. */
   dataBase64: string;
 };
@@ -186,10 +203,10 @@ function openViaInput(): Promise<OpenResult | null> {
   });
 }
 
-// --- Import Geometry (STEP / STL) ---------------------------------------
+// --- Import Geometry (STEP / STL / BREP) --------------------------------
 
 /**
- * Prompt the user for a STEP or STL file and return its bytes ready
+ * Prompt the user for a STEP, STL, or BREP file and return its bytes ready
  * for embedding into an `importedGeometry` feature. The format is
  * inferred from the extension (case-insensitive). Returns null if the
  * user cancels.
@@ -204,7 +221,7 @@ function openViaInput(): Promise<OpenResult | null> {
  * CreateImportedGeometry command with the result.
  */
 export async function pickGeometryForImport(
-  format?: 'step' | 'stl',
+  format?: 'step' | 'stl' | 'brep',
 ): Promise<ImportPickResult | null> {
   const types = pickerTypesFor(format);
   const inputAccept = inputAcceptFor(format);
@@ -220,21 +237,25 @@ export async function pickGeometryForImport(
  * available for legacy callers while letting dropdown items focus
  * the picker on a single format.
  */
-function pickerTypesFor(format?: 'step' | 'stl'): FilePickerAcceptType[] {
+function pickerTypesFor(format?: 'step' | 'stl' | 'brep'): FilePickerAcceptType[] {
   if (format === 'step') {
     return IMPORT_TYPES.filter(t => t.description?.startsWith('STEP'));
   }
   if (format === 'stl') {
     return IMPORT_TYPES.filter(t => t.description?.startsWith('STL'));
   }
+  if (format === 'brep') {
+    return IMPORT_TYPES.filter(t => t.description?.startsWith('BREP'));
+  }
   return IMPORT_TYPES;
 }
 
 /** Plain <input accept=…> string for the input-element fallback path. */
-function inputAcceptFor(format?: 'step' | 'stl'): string {
+function inputAcceptFor(format?: 'step' | 'stl' | 'brep'): string {
   if (format === 'step') return '.step,.stp,model/step';
   if (format === 'stl') return '.stl,model/stl';
-  return '.step,.stp,.stl,model/step,model/stl';
+  if (format === 'brep') return '.brep,.brp,model/brep';
+  return '.step,.stp,.stl,.brep,.brp,model/step,model/stl,model/brep';
 }
 
 async function pickImportViaFSA(types: FilePickerAcceptType[]): Promise<ImportPickResult | null> {
@@ -306,13 +327,15 @@ function pickImportViaInput(accept: string): Promise<ImportPickResult | null> {
 async function fileToImportResult(file: File): Promise<ImportPickResult> {
   const name = file.name;
   const lower = name.toLowerCase();
-  let format: 'step' | 'stl';
+  let format: 'step' | 'stl' | 'brep';
   if (lower.endsWith('.step') || lower.endsWith('.stp')) {
     format = 'step';
   } else if (lower.endsWith('.stl')) {
     format = 'stl';
+  } else if (lower.endsWith('.brep') || lower.endsWith('.brp')) {
+    format = 'brep';
   } else {
-    throw new Error(`Unrecognized import format for "${name}". Expected .step / .stp / .stl.`);
+    throw new Error(`Unrecognized import format for "${name}". Expected .step / .stp / .stl / .brep / .brp.`);
   }
   const buf = await file.arrayBuffer();
   return { fileName: name, format, dataBase64: arrayBufferToBase64(buf) };
@@ -331,6 +354,91 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
     bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK)));
   }
   return btoa(bin);
+}
+
+// --- Import DXF as sketch (text) ----------------------------------------
+
+/**
+ * Result of a DXF sketch-import file pick: the file name and the raw
+ * DXF text. DXF is ASCII, so unlike STEP/STL/BREP (binary → base64) we
+ * read it as text and hand it straight to the `parseDxf` reader.
+ */
+export type DxfImportPickResult = {
+  fileName: string;
+  /** Raw DXF ASCII content. */
+  text: string;
+};
+
+/**
+ * Prompt for a `.dxf` file and return its text, ready for `parseDxf`.
+ * Returns null if the user cancels. Routes to the SKETCH import flow
+ * (2D geometry on a chosen plane), never the 3D body import.
+ */
+export async function pickDxfForImport(): Promise<DxfImportPickResult | null> {
+  if (isFileSystemAccessSupported()) {
+    return pickDxfViaFSA();
+  }
+  return pickDxfViaInput();
+}
+
+async function pickDxfViaFSA(): Promise<DxfImportPickResult | null> {
+  const picker = window.showOpenFilePicker!;
+  try {
+    const [handle] = await picker({
+      multiple: false,
+      types: DXF_IMPORT_TYPES,
+      excludeAcceptAllOption: false,
+    });
+    if (!handle) return null;
+    const file = await handle.getFile();
+    return { fileName: file.name, text: await file.text() };
+  } catch (err) {
+    if ((err as DOMException)?.name === 'AbortError') return null;
+    throw err;
+  }
+}
+
+function pickDxfViaInput(): Promise<DxfImportPickResult | null> {
+  return new Promise((resolve, reject) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.dxf,image/vnd.dxf';
+    input.style.display = 'none';
+
+    let resolved = false;
+    const cleanup = () => {
+      if (resolved) return;
+      resolved = true;
+      input.remove();
+      window.removeEventListener('focus', onFocus);
+    };
+    const onFocus = () => {
+      setTimeout(() => {
+        if (resolved) return;
+        if (!input.files || input.files.length === 0) {
+          cleanup();
+          resolve(null);
+        }
+      }, 200);
+    };
+
+    input.addEventListener('change', async () => {
+      const file = input.files?.[0];
+      if (!file) { cleanup(); resolve(null); return; }
+      try {
+        const text = await file.text();
+        cleanup();
+        resolve({ fileName: file.name, text });
+      } catch (err) {
+        cleanup();
+        reject(err);
+      }
+    });
+
+    document.body.appendChild(input);
+    window.addEventListener('focus', onFocus, { once: true });
+    input.click();
+  });
 }
 
 // --- Import Component (.cadcomponent / .cadjson) -------------------------
@@ -577,6 +685,28 @@ function saveAsViaDownload(
   // Revoke after a short delay so the click handler has time to start.
   setTimeout(() => URL.revokeObjectURL(url), 1_000);
   return Promise.resolve({ handle: null, filename: suggestedName, savedAt: Date.now() });
+}
+
+// --- Text export (DXF / SVG) ---------------------------------------------
+
+/**
+ * Download an in-memory text string as a file via a synthetic anchor click.
+ * Used by the 2D sketch exporters (DXF / SVG) — these have no on-disk
+ * handle to write back to, so they always go through the download path
+ * (mirrors `saveAsViaDownload`). `URL.createObjectURL` + click works in
+ * every browser, including those without the File System Access API.
+ */
+export function downloadText(filename: string, mime: string, text: string): void {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
 // --- Helpers -------------------------------------------------------------
