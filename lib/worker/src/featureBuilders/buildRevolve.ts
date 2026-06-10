@@ -24,7 +24,7 @@ import type { BuildContext, BuildResult } from '@tweakcad/core/src/features/cont
 import { resolveProfile } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import type { SketchRegion } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import {
-  regionHasArcSegments,
+  regionHasCurveSegments,
   regionSegmentsToWire,
   sketchToWorld as sharedSketchToWorld,
 } from './wireProfile.ts';
@@ -193,10 +193,11 @@ function regionToKernelProfile(
     // unreachable. Rectangles arrive as 4 lines and fall through to the
     // wire / general-polygon paths below.)
 
-    // Arc-bearing regions: emit a wire profile so revolve sweeps real
-    // arc edges (not polygonalized facets) around the axis. Same shared
-    // helper used by buildExtrude / buildLoft — see wireProfile.ts.
-    if (regionHasArcSegments(region)) {
+    // Curve-bearing regions (arc / Bézier): emit a wire profile so
+    // revolve sweeps real curve edges (not polygonalized facets) around
+    // the axis. Same shared helper used by buildExtrude / buildLoft —
+    // see wireProfile.ts.
+    if (regionHasCurveSegments(region)) {
       const wireSegments = regionSegmentsToWire(region, plane);
       const center = sharedSketchToWorld(region.center, plane);
       return {

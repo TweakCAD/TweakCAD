@@ -42,7 +42,14 @@ export type WireSegment =
    * computed from the arc's center and the swept angle). Maps to
    * OCCT's `GC_MakeArcOfCircle_4` via occt-wasm's `makeArcEdge`.
    */
-  | { kind: 'arc3pt'; start: Vec3; mid: Vec3; end: Vec3 };
+  | { kind: 'arc3pt'; start: Vec3; mid: Vec3; end: Vec3 }
+  /**
+   * Cubic Bézier edge through control points `[start, cp1, cp2, end]`.
+   * Maps 1:1 to OCCT's `Geom_BezierCurve` via occt-wasm's
+   * `makeBezierEdge` — the curve is exact (no polygonalization), so an
+   * extruded Bézier boundary produces a single lateral face per curve.
+   */
+  | { kind: 'bezier'; start: Vec3; cp1: Vec3; cp2: Vec3; end: Vec3 };
 
 /** Resolved 2D profile (closed wire) ready for extrusion.
  *

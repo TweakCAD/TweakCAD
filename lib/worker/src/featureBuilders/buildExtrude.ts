@@ -25,7 +25,7 @@ import type {
 } from './buildSketch.ts';
 import { resolvePlaneRef } from './resolvePlane.ts';
 import {
-  regionHasArcSegments,
+  regionHasCurveSegments,
   regionSegmentsToWire,
   sketchToWorld as sharedSketchToWorld,
 } from './wireProfile.ts';
@@ -298,10 +298,11 @@ export function regionToKernelProfile(
     // unreachable. Rectangles arrive as 4 lines and fall through to the
     // wire / general-polygon paths below.)
 
-    // If any segment carries native arc geometry, emit a `'wire'` profile
-    // so the kernel builds a real BREP arc edge per arc — not a 64-facet
-    // polygon. See `wireProfile.ts` for the shared implementation.
-    if (regionHasArcSegments(region)) {
+    // If any segment carries a native curve (arc or Bézier), emit a
+    // `'wire'` profile so the kernel builds a real BREP curve edge per
+    // segment — not a 64-facet polygon. See `wireProfile.ts` for the
+    // shared implementation.
+    if (regionHasCurveSegments(region)) {
       const wireSegments = regionSegmentsToWire(region, plane);
       const center = sharedSketchToWorld(region.center, plane);
       return {
@@ -490,6 +491,33 @@ function offsetProfile(profile: ResolvedProfile, distance: number): ResolvedProf
       vertex[1] + offsetVector[1],
       vertex[2] + offsetVector[2],
     ] as Vec3);
+  }
+  // Wire profiles (arc / Bézier loops) carry their geometry on the
+  // segments, not `vertices` — they must shift too, or a symmetric /
+  // offset extrude would leave the curve edges at the un-shifted plane
+  // while the rest of the profile moves.
+  if (profile.segments) {
+    const shiftVec = (v: Vec3): Vec3 => [
+      v[0] + offsetVector[0],
+      v[1] + offsetVector[1],
+      v[2] + offsetVector[2],
+    ];
+    result.segments = profile.segments.map(seg => {
+      switch (seg.kind) {
+        case 'line':
+          return { ...seg, start: shiftVec(seg.start), end: shiftVec(seg.end) };
+        case 'arc3pt':
+          return { ...seg, start: shiftVec(seg.start), mid: shiftVec(seg.mid), end: shiftVec(seg.end) };
+        case 'bezier':
+          return {
+            ...seg,
+            start: shiftVec(seg.start),
+            cp1: shiftVec(seg.cp1),
+            cp2: shiftVec(seg.cp2),
+            end: shiftVec(seg.end),
+          };
+      }
+    });
   }
 
   return result;

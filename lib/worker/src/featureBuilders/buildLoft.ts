@@ -25,7 +25,7 @@ import type {
   ResolvedSketchPlaneData,
 } from './buildSketch.ts';
 import {
-  regionHasArcSegments,
+  regionHasCurveSegments,
   regionSegmentsToWire,
   sketchToWorld as sharedSketchToWorld,
 } from './wireProfile.ts';
@@ -161,10 +161,10 @@ function regionToKernelProfile(
     // unreachable. Rectangles arrive as 4 lines and fall through to the
     // wire / general-polygon paths below.)
 
-    // Arc-bearing regions: emit a wire profile so the loft endpoint
-    // sections preserve real arc edges. Same shared helper used by
-    // buildExtrude / buildRevolve.
-    if (regionHasArcSegments(region)) {
+    // Curve-bearing regions (arc / Bézier): emit a wire profile so the
+    // loft endpoint sections preserve real curve edges. Same shared
+    // helper used by buildExtrude / buildRevolve.
+    if (regionHasCurveSegments(region)) {
       const wireSegments = regionSegmentsToWire(region, plane);
       const center = sharedSketchToWorld(region.center, plane);
       return {

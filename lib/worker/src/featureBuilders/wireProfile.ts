@@ -39,19 +39,21 @@ export function sketchToWorld(
 }
 
 /**
- * True iff the region carries native arc geometry on at least one
- * segment — i.e., the kernel pipeline should switch to the `'wire'`
- * profile path. Pure line-loop regions can stay on the legacy polygon
- * path (1:1 result topology, slightly cheaper kernel call).
+ * True iff the region carries a native curve (arc or Bézier) on at least
+ * one segment — i.e., the kernel pipeline should switch to the `'wire'`
+ * profile path so each curve becomes a real BREP edge. Pure line-loop
+ * regions stay on the legacy polygon path (1:1 result topology, slightly
+ * cheaper kernel call).
  */
-export function regionHasArcSegments(region: SketchRegion): boolean {
-  return region.segments.some(s => s.kind === 'arc');
+export function regionHasCurveSegments(region: SketchRegion): boolean {
+  return region.segments.some(s => s.kind === 'arc' || s.kind === 'bezier');
 }
 
 /**
  * Build the kernel-side `WireSegment[]` from a region's per-segment
  * geometry. Each `line` becomes a kernel line; each `arc` becomes a
- * three-point arc via the geometric midpoint of the swept angle.
+ * three-point arc via the geometric midpoint of the swept angle; each
+ * `bezier` maps its four poles straight to a native Bézier edge.
  *
  * The mid-point is computed from `arcCenter` + `arcRadius` +
  * `(arcStartAngle, arcEndAngle)` rather than sampling the chord — using
@@ -65,7 +67,18 @@ export function regionSegmentsToWire(
   const out: WireSegment[] = [];
   for (const seg of region.segments) {
     if (!seg.start || !seg.end) continue; // legacy segment with no geometry
-    if (
+    if (seg.kind === 'bezier' && seg.bezierCp1 !== undefined && seg.bezierCp2 !== undefined) {
+      // Cubic Bézier — poles are already oriented in loop order by the
+      // curve-loop walker, so map straight through to a native BREP
+      // Bézier edge (one lateral face per curve, no polygonalization).
+      out.push({
+        kind: 'bezier',
+        start: sketchToWorld(seg.start, plane),
+        cp1: sketchToWorld(seg.bezierCp1, plane),
+        cp2: sketchToWorld(seg.bezierCp2, plane),
+        end: sketchToWorld(seg.end, plane),
+      });
+    } else if (
       seg.kind === 'arc' &&
       seg.arcCenter !== undefined &&
       seg.arcRadius !== undefined &&
@@ -74,21 +87,32 @@ export function regionSegmentsToWire(
     ) {
       const [cx, cy] = seg.arcCenter;
       const r = seg.arcRadius;
-      // Normalize sweep to the half-open interval (-π, π] and pick the
-      // midpoint on the *minor* arc between start and end. The planar
-      // graph computes `arcEndAngle - arcStartAngle` from the half-edge
-      // endpoint atan2's, which can land either CW or CCW around the
-      // circle depending on which face owns the arc — for inscribed
-      // shapes (circle tangent to a rectangle), two of the four corner
-      // regions get a (+3π/2) raw sweep but the actual boundary is the
-      // (−π/2) minor arc. Forcing |sweep| ≤ π picks the minor arc every
-      // time. Full circles aren't an issue here: the simple-circle
-      // region in `detectSketchRegions` wins over the planar graph's
-      // closed-loop face via the merge-priority fix, so we never see a
-      // sweep ≈ ±2π in this branch.
+      // Normalize sweep to the *symmetric closed* interval [-π, π] and
+      // pick the midpoint on the *minor* arc between start and end. The
+      // planar graph computes `arcEndAngle - arcStartAngle` from the
+      // half-edge endpoint atan2's, which can land either CW or CCW
+      // around the circle depending on which face owns the arc — for
+      // inscribed shapes (circle tangent to a rectangle), two of the
+      // four corner regions get a (+3π/2) raw sweep but the actual
+      // boundary is the (−π/2) minor arc. Forcing |sweep| ≤ π picks the
+      // minor arc every time.
+      //
+      // The interval MUST be symmetric (both bounds strict). A clamped
+      // half-circle has |sweep| = π exactly, and its sign encodes the
+      // traversal direction: the curve-loop walker may walk an arc
+      // end→start, yielding sweep = −π. An asymmetric `(−π, π]` would
+      // wrap that −π up to +π and flip the midpoint to the *opposite*
+      // side of the chord (a right-bulging D extrudes as a left-bulging
+      // half-disc). Keeping −π as −π makes the midpoint traversal-
+      // invariant: same physical arc, same midpoint, either direction.
+      //
+      // Full circles aren't an issue here: the simple-circle region in
+      // `detectSketchRegions` wins over the planar graph's closed-loop
+      // face via the merge-priority fix, so we never see a sweep ≈ ±2π
+      // in this branch.
       let sweep = seg.arcEndAngle - seg.arcStartAngle;
       while (sweep > Math.PI) sweep -= 2 * Math.PI;
-      while (sweep <= -Math.PI) sweep += 2 * Math.PI;
+      while (sweep < -Math.PI) sweep += 2 * Math.PI;
       const midAngle = seg.arcStartAngle + sweep / 2;
       const midLocal: [number, number] = [
         cx + r * Math.cos(midAngle),

@@ -467,13 +467,14 @@ export class OcctKernel implements CadKernel {
 
   /**
    * Build a closed-loop face from a `'wire'` profile whose segments
-   * preserve their native curve type (line / 3-point arc / circle).
+   * preserve their native curve type (line / 3-point arc / cubic Bézier).
    *
    * Uses polymorphic dispatch — each segment knows how to become a
-   * kernel edge. For arc segments we use `makeArcEdge` (backed
-   * by OCCT's `GC_MakeArcOfCircle_4`) so the resulting prism produces
-   * one cylindrical lateral face per arc, not one strip face per sampled
-   * facet.
+   * kernel edge. Arc segments use `makeArcEdge` (OCCT's
+   * `GC_MakeArcOfCircle_4`); Bézier segments use `makeBezierEdge`
+   * (OCCT's `Geom_BezierCurve`). Both stay analytic, so the resulting
+   * prism produces one lateral face per curve, not one strip face per
+   * sampled facet.
    */
   private makeWireFace(k: UpstreamKernel, profile: ResolvedProfile): ShapeHandle {
     const segments = profile.segments ?? [];
@@ -498,6 +499,16 @@ export class OcctKernel implements CadKernel {
               { x: seg.mid[0], y: seg.mid[1], z: seg.mid[2] },
               { x: seg.end[0], y: seg.end[1], z: seg.end[2] },
             ),
+          );
+          break;
+        case 'bezier':
+          edgeHandles.push(
+            k.makeBezierEdge([
+              { x: seg.start[0], y: seg.start[1], z: seg.start[2] },
+              { x: seg.cp1[0], y: seg.cp1[1], z: seg.cp1[2] },
+              { x: seg.cp2[0], y: seg.cp2[1], z: seg.cp2[2] },
+              { x: seg.end[0], y: seg.end[1], z: seg.end[2] },
+            ]),
           );
           break;
       }

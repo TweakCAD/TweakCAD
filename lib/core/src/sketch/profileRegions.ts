@@ -29,8 +29,14 @@ export type SketchRegionSegment = {
   entityId: EntityId;
   reversed: boolean;
   /** Native curve type. `undefined` falls back to line (legacy). */
-  kind?: 'line' | 'arc';
-  /** Start point in sketch-local 2D coords. Required when `kind` is set. */
+  kind?: 'line' | 'arc' | 'bezier';
+  /**
+   * Start point in sketch-local 2D coords. Required when `kind` is set.
+   * For curve-loop segments the start/end are already oriented in loop
+   * traversal order (a segment walked backwards has its endpoints — and
+   * its arc angles / Bézier poles — pre-swapped), so the kernel consumer
+   * can read them directly without re-applying `reversed`.
+   */
   start?: [number, number];
   /** End point in sketch-local 2D coords. Required when `kind` is set. */
   end?: [number, number];
@@ -42,6 +48,10 @@ export type SketchRegionSegment = {
   arcStartAngle?: number;
   /** Arc-only: end angle in radians. CCW from start. */
   arcEndAngle?: number;
+  /** Bézier-only: first off-curve control pole (after `start`). */
+  bezierCp1?: [number, number];
+  /** Bézier-only: second off-curve control pole (before `end`). */
+  bezierCp2?: [number, number];
 };
 
 export type SketchRegion = {
@@ -150,17 +160,195 @@ function normalizeSegments(segments: SketchRegionSegment[]): SketchRegionSegment
   return segments.map((_, offset) => segments[(startIndex + offset) % segments.length]!);
 }
 
-function makePolygonRegion(
-  segments: SketchRegionSegment[],
-  vertices: [number, number][],
-): SketchRegion | null {
-  const uniqueEntityIds = [...new Set(segments.map(segment => segment.entityId))];
-  if (uniqueEntityIds.length < 3 || vertices.length < 3) return null;
+/**
+ * One open boundary edge — a `line`, `arc`, or cubic `bezier` entity
+ * reduced to its two endpoints plus the analytic data the kernel needs
+ * to rebuild the exact curve. Closed entities (circle, full ellipse)
+ * are NOT edges; they're standalone single-entity regions.
+ *
+ * `start`/`end` (and, for an arc, its angles; for a Bézier, its poles)
+ * are always given in this edge's natural orientation. The loop walker
+ * pre-orients each edge into traversal order via {@link reverseCurveEdge}
+ * before emitting a region segment, so no `reversed` flag is needed
+ * downstream.
+ */
+type CurveEdge = {
+  entity: SketchEntity;
+  kind: 'line' | 'arc' | 'bezier';
+  start: [number, number];
+  end: [number, number];
+  arcCenter?: [number, number];
+  arcRadius?: number;
+  arcStartAngle?: number;
+  arcEndAngle?: number;
+  bezierCp1?: [number, number];
+  bezierCp2?: [number, number];
+};
 
-  let normalizedVertices = normalizeVertices(vertices);
+/** Number of straight facets used to sample a curve's *vertices* (for
+ *  area / centroid / point-in-region only — the kernel still receives the
+ *  analytic curve as a single BREP edge, so this never reaches geometry). */
+const CURVE_VERTEX_SAMPLES = 8;
+
+function cubicBezierPoint(
+  p0: [number, number], c1: [number, number],
+  c2: [number, number], p3: [number, number], t: number,
+): [number, number] {
+  const mt = 1 - t;
+  const a = mt * mt * mt;
+  const b = 3 * mt * mt * t;
+  const c = 3 * mt * t * t;
+  const d = t * t * t;
+  return [
+    a * p0[0] + b * c1[0] + c * c2[0] + d * p3[0],
+    a * p0[1] + b * c1[1] + c * c2[1] + d * p3[1],
+  ];
+}
+
+/** Reduce an entity to a {@link CurveEdge} in natural orientation, or
+ *  `null` if it isn't an open boundary edge (construction, closed, or
+ *  unresolvable). */
+function getCurveEdge(entity: SketchEntity): CurveEdge | null {
+  if (entity.construction) return null;
+
+  if (entity.type === 'line') {
+    const sx = expressionToNumber(entity.start[0]);
+    const sy = expressionToNumber(entity.start[1]);
+    const ex = expressionToNumber(entity.end[0]);
+    const ey = expressionToNumber(entity.end[1]);
+    if (sx === null || sy === null || ex === null || ey === null) return null;
+    const start: [number, number] = [sx, sy];
+    const end: [number, number] = [ex, ey];
+    if (distance(start, end) <= EPSILON) return null;
+    return { entity, kind: 'line', start, end };
+  }
+
+  if (entity.type === 'arc') {
+    const cx = expressionToNumber(entity.center[0]);
+    const cy = expressionToNumber(entity.center[1]);
+    const r = expressionToNumber(entity.radius);
+    const sa = expressionToNumber(entity.startAngle);
+    const ea = expressionToNumber(entity.endAngle);
+    if (cx === null || cy === null || r === null || sa === null || ea === null) return null;
+    if (r <= EPSILON) return null;
+    const start: [number, number] = [cx + r * Math.cos(sa), cy + r * Math.sin(sa)];
+    const end: [number, number] = [cx + r * Math.cos(ea), cy + r * Math.sin(ea)];
+    // A full-circle arc (start ≈ end) can't be an endpoint-connected loop
+    // member; standalone closed arcs aren't supported here.
+    if (distance(start, end) <= EPSILON) return null;
+    return {
+      entity, kind: 'arc', start, end,
+      arcCenter: [cx, cy], arcRadius: r, arcStartAngle: sa, arcEndAngle: ea,
+    };
+  }
+
+  if (entity.type === 'bezier') {
+    const sx = expressionToNumber(entity.start[0]);
+    const sy = expressionToNumber(entity.start[1]);
+    const c1x = expressionToNumber(entity.cp1[0]);
+    const c1y = expressionToNumber(entity.cp1[1]);
+    const c2x = expressionToNumber(entity.cp2[0]);
+    const c2y = expressionToNumber(entity.cp2[1]);
+    const ex = expressionToNumber(entity.end[0]);
+    const ey = expressionToNumber(entity.end[1]);
+    if (
+      sx === null || sy === null || c1x === null || c1y === null ||
+      c2x === null || c2y === null || ex === null || ey === null
+    ) return null;
+    const start: [number, number] = [sx, sy];
+    const end: [number, number] = [ex, ey];
+    if (distance(start, end) <= EPSILON) return null;
+    return {
+      entity, kind: 'bezier', start, end,
+      bezierCp1: [c1x, c1y], bezierCp2: [c2x, c2y],
+    };
+  }
+
+  return null;
+}
+
+/** Flip an edge end-for-end, swapping the orientation-dependent analytic
+ *  data (arc angles, Bézier poles) so the reversed edge still describes
+ *  the same physical curve. */
+function reverseCurveEdge(e: CurveEdge): CurveEdge {
+  // Analytic fields are guaranteed present for their kind (set in
+  // `getCurveEdge`); the `!` asserts that against the optional typing.
+  if (e.kind === 'arc') {
+    return {
+      entity: e.entity, kind: 'arc', start: e.end, end: e.start,
+      arcCenter: e.arcCenter!, arcRadius: e.arcRadius!,
+      arcStartAngle: e.arcEndAngle!, arcEndAngle: e.arcStartAngle!,
+    };
+  }
+  if (e.kind === 'bezier') {
+    return {
+      entity: e.entity, kind: 'bezier', start: e.end, end: e.start,
+      bezierCp1: e.bezierCp2!, bezierCp2: e.bezierCp1!,
+    };
+  }
+  return { entity: e.entity, kind: 'line', start: e.end, end: e.start };
+}
+
+function edgeToSegment(e: CurveEdge): SketchRegionSegment {
+  const seg: SketchRegionSegment = {
+    entityId: e.entity.id,
+    reversed: false,
+    kind: e.kind,
+    start: e.start,
+    end: e.end,
+  };
+  if (e.kind === 'arc') {
+    seg.arcCenter = e.arcCenter!;
+    seg.arcRadius = e.arcRadius!;
+    seg.arcStartAngle = e.arcStartAngle!;
+    seg.arcEndAngle = e.arcEndAngle!;
+  } else if (e.kind === 'bezier') {
+    seg.bezierCp1 = e.bezierCp1!;
+    seg.bezierCp2 = e.bezierCp2!;
+  }
+  return seg;
+}
+
+/** Sample an oriented edge's vertices from `start` (inclusive) up to but
+ *  not including `end` — concatenated around a loop these form the
+ *  region polygon used for area / centroid / containment tests. */
+function sampleEdgeVertices(e: CurveEdge): [number, number][] {
+  if (e.kind === 'line') return [e.start];
+  if (e.kind === 'arc') {
+    const [cx, cy] = e.arcCenter!;
+    const r = e.arcRadius!;
+    const sweep = e.arcEndAngle! - e.arcStartAngle!;
+    const pts: [number, number][] = [];
+    for (let i = 0; i < CURVE_VERTEX_SAMPLES; i++) {
+      const a = e.arcStartAngle! + (sweep * i) / CURVE_VERTEX_SAMPLES;
+      pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+    }
+    return pts;
+  }
+  // bezier
+  const pts: [number, number][] = [];
+  for (let i = 0; i < CURVE_VERTEX_SAMPLES; i++) {
+    pts.push(cubicBezierPoint(e.start, e.bezierCp1!, e.bezierCp2!, e.end, i / CURVE_VERTEX_SAMPLES));
+  }
+  return pts;
+}
+
+/** Build a region from an oriented head-to-tail loop of curve edges. A
+ *  pure-line loop needs ≥3 edges (a triangle); a loop containing at least
+ *  one curve can close with just 2 edges (e.g. a "D": one line + one arc). */
+function makeCurveLoopRegion(orientedEdges: CurveEdge[]): SketchRegion | null {
+  const segments = orientedEdges.map(edgeToSegment);
+  const uniqueEntityIds = [...new Set(segments.map(s => s.entityId))];
+  const hasCurve = orientedEdges.some(e => e.kind !== 'line');
+  if (uniqueEntityIds.length < (hasCurve ? 2 : 3)) return null;
+
+  const sampled: [number, number][] = [];
+  for (const e of orientedEdges) sampled.push(...sampleEdgeVertices(e));
+  if (sampled.length < 3) return null;
+
+  let normalizedVertices = normalizeVertices(sampled);
   const signedArea = polygonArea(normalizedVertices);
   if (Math.abs(signedArea) <= EPSILON) return null;
-
   if (signedArea < 0) {
     normalizedVertices = [normalizedVertices[0]!, ...normalizedVertices.slice(1).reverse()];
   }
@@ -174,54 +362,50 @@ function makePolygonRegion(
     segments: normalizeSegments(segments),
     vertices: normalizedVertices,
     center: polygonCenter(normalizedVertices),
-    area: Math.abs(polygonArea(normalizedVertices)),
+    area: Math.abs(signedArea),
   };
 }
 
-function getLineEndpoints(entity: SketchEntity): { start: [number, number]; end: [number, number] } | null {
-  if (entity.type !== 'line' || entity.construction) return null;
-  const sx = expressionToNumber(entity.start[0]);
-  const sy = expressionToNumber(entity.start[1]);
-  const ex = expressionToNumber(entity.end[0]);
-  const ey = expressionToNumber(entity.end[1]);
-  if (sx === null || sy === null || ex === null || ey === null) return null;
-  const start: [number, number] = [sx, sy];
-  const end: [number, number] = [ex, ey];
-  if (distance(start, end) <= EPSILON) return null;
-  return { start, end };
-}
-
-function detectLineLoopRegions(entities: Record<EntityId, SketchEntity>): SketchRegion[] {
-  const lines = Object.values(entities)
-    .map(entity => ({ entity, endpoints: getLineEndpoints(entity) }))
-    .filter((item): item is { entity: SketchEntity & { type: 'line' }; endpoints: { start: [number, number]; end: [number, number] } } => item.endpoints !== null);
+/**
+ * Walk endpoint-connected `line` / `arc` / `bezier` edges into closed
+ * boundary loops. Supersedes the old line-only walker — pure-line loops
+ * behave identically (each line becomes a `kind: 'line'` segment), and
+ * curve edges carry their analytic data through so the kernel builds one
+ * real BREP edge per curve (no polygonalization on this side).
+ *
+ * Intersecting curves are out of scope here (the planar-graph detector
+ * still only subdivides line/circle); this walker targets the common
+ * imported-outline case where segments meet at shared endpoints.
+ */
+function detectCurveLoopRegions(entities: Record<EntityId, SketchEntity>): SketchRegion[] {
+  const edges = Object.values(entities)
+    .map(getCurveEdge)
+    .filter((e): e is CurveEdge => e !== null);
 
   const regions: SketchRegion[] = [];
   const seen = new Set<string>();
 
-  for (const seed of lines) {
+  for (const seed of edges) {
     const visited = new Set<EntityId>([seed.entity.id]);
-    const segments: SketchRegionSegment[] = [{ entityId: seed.entity.id, reversed: false }];
-    const vertices: [number, number][] = [seed.endpoints.start];
+    const oriented: CurveEdge[] = [seed];
 
     const walk = (current: [number, number]): void => {
-      if (visited.size > lines.length) return;
+      if (visited.size > edges.length) return;
 
-      for (const candidate of lines) {
+      for (const candidate of edges) {
         if (visited.has(candidate.entity.id)) continue;
 
-        const connectsToStart = pointKey(candidate.endpoints.start) === pointKey(current);
-        const connectsToEnd = pointKey(candidate.endpoints.end) === pointKey(current);
+        const connectsToStart = pointKey(candidate.start) === pointKey(current);
+        const connectsToEnd = pointKey(candidate.end) === pointKey(current);
         if (!connectsToStart && !connectsToEnd) continue;
 
-        const next = connectsToStart ? candidate.endpoints.end : candidate.endpoints.start;
-        const reversed = connectsToEnd;
+        const orientedEdge = connectsToStart ? candidate : reverseCurveEdge(candidate);
+        const next = orientedEdge.end;
         visited.add(candidate.entity.id);
-        segments.push({ entityId: candidate.entity.id, reversed });
-        vertices.push(current);
+        oriented.push(orientedEdge);
 
-        if (pointKey(next) === pointKey(seed.endpoints.start)) {
-          const region = makePolygonRegion([...segments], [...vertices]);
+        if (pointKey(next) === pointKey(seed.start)) {
+          const region = makeCurveLoopRegion([...oriented]);
           if (region && !seen.has(region.id)) {
             seen.add(region.id);
             regions.push(region);
@@ -230,13 +414,12 @@ function detectLineLoopRegions(entities: Record<EntityId, SketchEntity>): Sketch
           walk(next);
         }
 
-        vertices.pop();
-        segments.pop();
+        oriented.pop();
         visited.delete(candidate.entity.id);
       }
     };
 
-    walk(seed.endpoints.end);
+    walk(seed.end);
   }
 
   return regions.sort((a, b) => b.area - a.area || a.id.localeCompare(b.id));
@@ -318,15 +501,16 @@ function isDuplicateRegion(a: SketchRegion, b: SketchRegion): boolean {
 }
 
 export function detectSketchRegions(entities: Record<EntityId, SketchEntity>): SketchRegion[] {
-  // Simple detectors: standalone shapes and line loops. These preserve
-  // semantic shape information (a `type: 'circle'` region knows it's a
-  // true circle, not a polygon approximation). There is no dedicated
-  // rectangle detector (invariant #11 — no composite entities);
-  // rectangles arrive as 4 lines and feed through
-  // `detectLineLoopRegions`.
+  // Simple detectors: standalone circles and endpoint-connected boundary
+  // loops (line / arc / Bézier edges). These preserve semantic shape
+  // information (a `type: 'circle'` region knows it's a true circle, not
+  // a polygon approximation; a loop's curve segments carry analytic data
+  // for the kernel). There is no dedicated rectangle detector (invariant
+  // #11 — no composite entities); rectangles arrive as 4 lines and feed
+  // through `detectCurveLoopRegions`.
   const simpleRegions = [
     ...detectCircleRegions(entities),
-    ...detectLineLoopRegions(entities),
+    ...detectCurveLoopRegions(entities),
   ];
 
   // Planar graph detector: finds intersection regions (e.g., the lens

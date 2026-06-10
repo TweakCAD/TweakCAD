@@ -5,6 +5,8 @@
  * boots, and what its `DocumentStorage` is (where Save writes back to).
  *
  * Order of precedence:
+ *   0. ?reset in URL → wipe local IDB and start blank (recovery escape
+ *      hatch — see below). Takes priority over every other hint.
  *   1. ?project=ID in URL + SaaS available + signed in → load from cloud
  *   2. ?project=ID in URL + SaaS unavailable → fall back to local mirror if
  *      one exists; otherwise start blank with a warning surfaced to the UI
@@ -44,9 +46,45 @@ export type BootResolution = {
   recoveredFilename?: string;
 };
 
+/** True when the boot URL carries the `?reset` recovery hint. */
+function hasResetHint(): boolean {
+  if (typeof location === 'undefined') return false;
+  return new URLSearchParams(location.search).has('reset');
+}
+
+/** Strip `?reset` from the address bar so a later reload / autosave doesn't
+ *  wipe again. Best-effort — silently ignored outside a browser. */
+function clearResetHintFromUrl(): void {
+  try {
+    const url = new URL(location.href);
+    url.searchParams.delete('reset');
+    history.replaceState(null, '', url.toString());
+  } catch {
+    /* non-browser env — nothing to clean up */
+  }
+}
+
 export async function resolveInitialProject(
   defaultDoc: CadProject,
 ): Promise<BootResolution> {
+  // Escape hatch (precedence 0): `?reset` wipes local IDB and starts
+  // blank. This is the DevTools-free recovery path for a persisted
+  // document that's too heavy to rebuild — the worker OOMs on load and
+  // wedges the UI before any in-app "new document" action is reachable,
+  // so the only way back is to never load the bad doc in the first place.
+  if (hasResetHint()) {
+    await localStore.clearAll().catch(() => {
+      /* even if the wipe fails, fall through to a blank doc */
+    });
+    clearResetHintFromUrl();
+    return {
+      doc: defaultDoc,
+      context: { kind: 'local-fresh' },
+      storage: { kind: 'unsaved' },
+      source: 'default',
+    };
+  }
+
   const cloudProjectId = projectIdFromUrl();
 
   if (cloudProjectId) {

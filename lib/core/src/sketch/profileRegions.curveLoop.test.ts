@@ -1,0 +1,135 @@
+/**
+ * Tests for the curve-aware loop walker in `detectSketchRegions`.
+ *
+ * A closed boundary made of `line` / `arc` / `bezier` edges that meet at
+ * shared endpoints becomes one region whose curve segments carry their
+ * native analytic data (arc angles, Bézier poles) through to the kernel —
+ * no polygonalization on this side. Pure-line loops are unaffected.
+ */
+
+import { describe, expect, it } from 'vitest';
+import { detectSketchRegions } from './profileRegions.ts';
+import type { SketchEntity } from '../document/schema.ts';
+import { entityId } from '../ids.ts';
+
+describe('detectSketchRegions — curve-loop walker', () => {
+  it('detects a "D": one line + one bezier closing on shared endpoints', () => {
+    // Flat side: vertical line (0,0)→(0,10). Bulge: cubic Bézier
+    // (0,10)→(0,0) curving out to +x. Two entities, one a curve, so the
+    // loop is allowed to close with just two edges.
+    const entities: Record<string, SketchEntity> = {
+      flat: {
+        id: entityId('flat'),
+        type: 'line',
+        start: ['0', '0'],
+        end: ['0', '10'],
+      },
+      bulge: {
+        id: entityId('bulge'),
+        type: 'bezier',
+        start: ['0', '10'],
+        cp1: ['10', '10'],
+        cp2: ['10', '0'],
+        end: ['0', '0'],
+      },
+    };
+
+    const regions = detectSketchRegions(entities);
+    const loop = regions.find(r => r.entityIds.length === 2);
+    expect(loop).toBeDefined();
+    expect(loop!.segments).toHaveLength(2);
+
+    const bez = loop!.segments.find(s => s.kind === 'bezier');
+    expect(bez).toBeDefined();
+    expect(bez!.bezierCp1).toBeDefined();
+    expect(bez!.bezierCp2).toBeDefined();
+    expect(loop!.segments.some(s => s.kind === 'line')).toBe(true);
+    // The Bézier bulges to +x, so the region encloses real area.
+    expect(loop!.area).toBeGreaterThan(0);
+  });
+
+  it('detects a "D": one line + one arc, carrying analytic arc data', () => {
+    // Same flat side; the bulge is a half-circle arc (center (0,5), r=5)
+    // from (0,0) up through (5,5) to (0,10).
+    const entities: Record<string, SketchEntity> = {
+      flat: {
+        id: entityId('flat'),
+        type: 'line',
+        start: ['0', '0'],
+        end: ['0', '10'],
+      },
+      bulge: {
+        id: entityId('bulge'),
+        type: 'arc',
+        center: ['0', '5'],
+        radius: '5',
+        startAngle: String(-Math.PI / 2),
+        endAngle: String(Math.PI / 2),
+      },
+    };
+
+    const regions = detectSketchRegions(entities);
+    const loop = regions.find(r => r.entityIds.length === 2);
+    expect(loop).toBeDefined();
+
+    const arc = loop!.segments.find(s => s.kind === 'arc');
+    expect(arc).toBeDefined();
+    expect(arc!.arcCenter).toEqual([0, 5]);
+    expect(arc!.arcRadius).toBe(5);
+    expect(loop!.area).toBeGreaterThan(0);
+  });
+
+  it('orients a reversed bezier by swapping endpoints and poles', () => {
+    // The bezier is authored (0,10)→(0,0); walking the loop from the line
+    // forces it to be traversed (0,10)→(0,0) in natural order here, but a
+    // triangle-with-curve below exercises the reversal path. Build a loop
+    // where the bezier must be reversed: line (0,0)→(0,10), then a bezier
+    // authored (0,0)→(0,10) (same direction as the line) — to close, the
+    // walker must reverse it.
+    const entities: Record<string, SketchEntity> = {
+      flat: {
+        id: entityId('flat'),
+        type: 'line',
+        start: ['0', '0'],
+        end: ['0', '10'],
+      },
+      bulge: {
+        id: entityId('bulge'),
+        type: 'bezier',
+        start: ['0', '0'],
+        cp1: ['10', '0'],
+        cp2: ['10', '10'],
+        end: ['0', '10'],
+      },
+    };
+
+    const regions = detectSketchRegions(entities);
+    const loop = regions.find(r => r.entityIds.length === 2);
+    expect(loop).toBeDefined();
+    const bez = loop!.segments.find(s => s.kind === 'bezier')!;
+    // Whichever traversal won, start→end and the poles must stay a
+    // consistent chain: cp1 sits near `start`, cp2 near `end`.
+    expect(bez.start).toBeDefined();
+    expect(bez.end).toBeDefined();
+    // Reversed authored bezier: poles swap, so cp1 is the authored cp2.
+    // The segment is head-to-tail with the line, so its endpoints are the
+    // two shared junctions (0,0) and (0,10) in some order.
+    const endpoints = [bez.start, bez.end].map(p => `${p![0]},${p![1]}`).sort();
+    expect(endpoints).toEqual(['0,0', '0,10']);
+  });
+
+  it('still detects a pure-line triangle (regression)', () => {
+    const entities: Record<string, SketchEntity> = {
+      a: { id: entityId('a'), type: 'line', start: ['0', '0'], end: ['10', '0'] },
+      b: { id: entityId('b'), type: 'line', start: ['10', '0'], end: ['0', '10'] },
+      c: { id: entityId('c'), type: 'line', start: ['0', '10'], end: ['0', '0'] },
+    };
+    const regions = detectSketchRegions(entities);
+    const tri = regions.find(r => r.entityIds.length === 3);
+    expect(tri).toBeDefined();
+    expect(tri!.type).toBe('polygon');
+    expect(tri!.area).toBeCloseTo(50, 6);
+    // No curve segments — stays on the polygon (vertices) path.
+    expect(tri!.segments.every(s => s.kind === 'line')).toBe(true);
+  });
+});

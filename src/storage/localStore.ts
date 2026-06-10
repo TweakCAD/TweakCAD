@@ -127,6 +127,18 @@ export const localStore = {
     });
   },
 
+  /**
+   * Wipe every locally-stored project. Used by the `?reset` boot escape
+   * hatch (see `boot.ts`) to recover from a persisted document that's too
+   * heavy to rebuild — the worker would OOM on load and wedge the UI
+   * before any in-app "new document" action is reachable.
+   */
+  async clearAll(): Promise<void> {
+    await run<void>(STORE_PROJECTS, 'readwrite', (store) => {
+      store.clear();
+    });
+  },
+
   async listAll(): Promise<LocalProjectRecord[]> {
     const db = await openDb();
     return new Promise((resolve, reject) => {

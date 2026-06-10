@@ -121,6 +121,58 @@ describe('regionSegmentsToWire — arc midpoint', () => {
     expect(seg.mid[1]).toBeCloseTo(Math.SQRT1_2, 6);
   });
 
+  it('keeps a reversed half-circle (sweep = −π) on the correct side', () => {
+    // Regression: a "D" profile whose right-bulging half-circle arc is
+    // walked end→start by the curve-loop walker yields startAngle π/2,
+    // endAngle −π/2 → raw sweep −π. The midpoint must stay at (20,20)
+    // (right bulge), NOT flip to (−20,20). An asymmetric (−π,π] interval
+    // wrapped −π→+π and extruded the body as a left-bulging half-disc.
+    const region: Pick<SketchRegion, 'segments'> = {
+      segments: [
+        makeArcSegment({
+          start: [0, 40],
+          end: [0, 0],
+          center: [0, 20],
+          radius: 20,
+          startAngle: Math.PI / 2,
+          endAngle: -Math.PI / 2,
+        }),
+      ],
+    };
+    const wire = regionSegmentsToWire(region as SketchRegion, xyPlane);
+    const seg = wire[0]!;
+    if (seg.kind !== 'arc3pt') throw new Error('expected arc3pt');
+    expect(seg.mid[0]).toBeCloseTo(20, 6); // right bulge, not -20
+    expect(seg.mid[1]).toBeCloseTo(20, 6);
+  });
+
+  it('maps a bezier segment to a native four-pole Bézier wire edge', () => {
+    // Poles are already oriented by the curve-loop walker — map straight
+    // through to world space on the XY plane (identity here).
+    const region: Pick<SketchRegion, 'segments'> = {
+      segments: [
+        {
+          entityId: 'b' as EntityId,
+          reversed: false,
+          kind: 'bezier',
+          start: [0, 0],
+          end: [10, 0],
+          bezierCp1: [0, 10],
+          bezierCp2: [10, 10],
+        },
+      ],
+    };
+    const wire = regionSegmentsToWire(region as SketchRegion, xyPlane);
+    expect(wire).toHaveLength(1);
+    const seg = wire[0]!;
+    expect(seg.kind).toBe('bezier');
+    if (seg.kind !== 'bezier') return;
+    expect(seg.start).toEqual([0, 0, 0]);
+    expect(seg.cp1).toEqual([0, 10, 0]);
+    expect(seg.cp2).toEqual([10, 10, 0]);
+    expect(seg.end).toEqual([10, 0, 0]);
+  });
+
   it('regression: rect+inscribed-circle bottom-left corner arc midpoint', () => {
     // Lifted from the appInit demo + the planar-graph diagnostic output.
     // Arc bounds the bottom-left corner region (interior at (-18,-32) in
