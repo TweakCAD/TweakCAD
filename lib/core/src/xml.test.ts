@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseXml, findChild, findChildren } from '../src/parser/xml.ts';
+import { parseXml, findChild, findChildren, descendants } from './xml.ts';
 
 describe('parseXml', () => {
   it('parses a simple element with attributes', () => {
@@ -33,5 +33,11 @@ describe('parseXml', () => {
   it('rejects mismatched end tags', () => {
     const r = parseXml('<a><b></a></b>');
     expect(r.ok).toBe(false);
+  });
+
+  it('collects all descendants depth-first', () => {
+    const r = parseXml('<svg><g><rect/><circle/></g><line/></svg>');
+    if (!r.ok) throw new Error(r.error);
+    expect(descendants(r.value).map((n) => n.name)).toEqual(['g', 'rect', 'circle', 'line']);
   });
 });

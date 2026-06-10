@@ -152,6 +152,8 @@ interface AppBarProps {
   onImportComponent?: (() => void) | undefined;
   /** Import a DXF drawing as a new 2D sketch on a chosen plane. */
   onImportSketchDxf?: (() => void) | undefined;
+  /** Import an SVG drawing as a new 2D sketch on a chosen plane. */
+  onImportSketchSvg?: (() => void) | undefined;
   /** Save to the doc's sticky storage (disk path or cloud). */
   onSave?: (() => void) | undefined;
   /** Save a copy to disk under a new name. */
@@ -383,6 +385,7 @@ export function MainAppBar({
   onImport,
   onImportComponent,
   onImportSketchDxf,
+  onImportSketchSvg,
   onSave,
   onSaveAs,
   onExport,
@@ -433,7 +436,7 @@ export function MainAppBar({
 
       <IconBtn icon={<FilePlus size={16} />}   label="New (Ctrl+Alt+N)" onClick={() => onNew?.()} />
       <IconBtn icon={<FolderOpen size={16} />} label="Open (Ctrl+O)"    onClick={() => onOpen?.()} />
-      <ImportButton onImport={onImport} onImportComponent={onImportComponent} onImportSketchDxf={onImportSketchDxf} />
+      <ImportButton onImport={onImport} onImportComponent={onImportComponent} onImportSketchDxf={onImportSketchDxf} onImportSketchSvg={onImportSketchSvg} />
       <IconBtn icon={<Save size={16} />}       label="Save (Ctrl+S)"    onClick={() => onSave?.()} />
       <IconBtn icon={<FileDown size={16} />}   label="Save as (Ctrl+Shift+S)" onClick={() => onSaveAs?.()} />
       <ExportButton onExport={onExport} />
@@ -1581,10 +1584,12 @@ function ImportButton({
   onImport,
   onImportComponent,
   onImportSketchDxf,
+  onImportSketchSvg,
 }: {
   onImport?: ((format?: 'step' | 'stl' | 'brep') => void) | undefined;
   onImportComponent?: (() => void) | undefined;
   onImportSketchDxf?: (() => void) | undefined;
+  onImportSketchSvg?: (() => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const [hover, setHover] = useState(false);
@@ -1624,6 +1629,12 @@ function ImportButton({
     if (!onImportSketchDxf) return;
     setOpen(false);
     onImportSketchDxf();
+  }
+
+  function pickSketchSvg() {
+    if (!onImportSketchSvg) return;
+    setOpen(false);
+    onImportSketchSvg();
   }
 
   return (
@@ -1667,6 +1678,11 @@ function ImportButton({
             label="Import DXF (sketch)…"
             sub=".dxf · 2D curves → new sketch on a chosen plane"
             onClick={pickSketchDxf}
+          />
+          <ExportMenuItem
+            label="Import SVG (sketch)…"
+            sub=".svg · 2D paths/shapes → new sketch on a chosen plane"
+            onClick={pickSketchSvg}
           />
         </div>
       )}

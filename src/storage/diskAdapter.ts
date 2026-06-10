@@ -63,6 +63,13 @@ const DXF_IMPORT_TYPES: FilePickerAcceptType[] = [
   },
 ];
 
+const SVG_IMPORT_TYPES: FilePickerAcceptType[] = [
+  {
+    description: 'SVG drawing (.svg)',
+    accept: { 'image/svg+xml': ['.svg'] },
+  },
+];
+
 /**
  * Component import accepts .cadcomponent (the convention) plus .cadjson
  * (since a .cadcomponent IS just a .cadjson with one part and at least
@@ -356,16 +363,17 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
   return btoa(bin);
 }
 
-// --- Import DXF as sketch (text) ----------------------------------------
+// --- Import DXF / SVG as sketch (text) ----------------------------------
 
 /**
- * Result of a DXF sketch-import file pick: the file name and the raw
- * DXF text. DXF is ASCII, so unlike STEP/STL/BREP (binary → base64) we
- * read it as text and hand it straight to the `parseDxf` reader.
+ * Result of a 2D sketch-import file pick: the file name and the raw text.
+ * DXF and SVG are both text formats, so unlike STEP/STL/BREP (binary →
+ * base64) we read them as text and hand them straight to the matching
+ * `parseDxf` / `parseSvg` reader.
  */
-export type DxfImportPickResult = {
+export type SketchTextImportResult = {
   fileName: string;
-  /** Raw DXF ASCII content. */
+  /** Raw file content (DXF ASCII or SVG XML). */
   text: string;
 };
 
@@ -374,19 +382,31 @@ export type DxfImportPickResult = {
  * Returns null if the user cancels. Routes to the SKETCH import flow
  * (2D geometry on a chosen plane), never the 3D body import.
  */
-export async function pickDxfForImport(): Promise<DxfImportPickResult | null> {
-  if (isFileSystemAccessSupported()) {
-    return pickDxfViaFSA();
-  }
-  return pickDxfViaInput();
+export function pickDxfForImport(): Promise<SketchTextImportResult | null> {
+  return pickTextFileForImport(DXF_IMPORT_TYPES, '.dxf,image/vnd.dxf');
 }
 
-async function pickDxfViaFSA(): Promise<DxfImportPickResult | null> {
+/** Prompt for a `.svg` file and return its text, ready for `parseSvg`. */
+export function pickSvgForImport(): Promise<SketchTextImportResult | null> {
+  return pickTextFileForImport(SVG_IMPORT_TYPES, '.svg,image/svg+xml');
+}
+
+async function pickTextFileForImport(
+  types: FilePickerAcceptType[],
+  accept: string,
+): Promise<SketchTextImportResult | null> {
+  if (isFileSystemAccessSupported()) {
+    return pickTextViaFSA(types);
+  }
+  return pickTextViaInput(accept);
+}
+
+async function pickTextViaFSA(types: FilePickerAcceptType[]): Promise<SketchTextImportResult | null> {
   const picker = window.showOpenFilePicker!;
   try {
     const [handle] = await picker({
       multiple: false,
-      types: DXF_IMPORT_TYPES,
+      types,
       excludeAcceptAllOption: false,
     });
     if (!handle) return null;
@@ -398,11 +418,11 @@ async function pickDxfViaFSA(): Promise<DxfImportPickResult | null> {
   }
 }
 
-function pickDxfViaInput(): Promise<DxfImportPickResult | null> {
+function pickTextViaInput(accept: string): Promise<SketchTextImportResult | null> {
   return new Promise((resolve, reject) => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.dxf,image/vnd.dxf';
+    input.accept = accept;
     input.style.display = 'none';
 
     let resolved = false;

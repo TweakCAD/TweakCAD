@@ -8,11 +8,12 @@ import type { ProfileRef, SketchFeatureInputs, SketchEntity, ExtrudeFeatureInput
 import { regionToProfileRef } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import { sketchToDxf } from '@tweakcad/core/src/sketch/io/dxf.ts';
 import { dxfToEditorState } from '@tweakcad/core/src/sketch/io/dxfImport.ts';
+import { svgToEditorState } from '@tweakcad/core/src/sketch/io/svgImport.ts';
 import { toSnapshot } from '@tweakcad/core/src/sketch/operations.ts';
 import { sketchToSvg } from '@tweakcad/core/src/sketch/io/svg.ts';
 import { resolveAllParameters } from '@tweakcad/core/src/parameters/evaluator.ts';
 import { applyActiveConfiguration } from '@tweakcad/core/src/commands/handlers/configurationCommands.ts';
-import { downloadText, pickDxfForImport } from '../storage/diskAdapter.ts';
+import { downloadText, pickDxfForImport, pickSvgForImport } from '../storage/diskAdapter.ts';
 import { computeSketchDof } from '../sketch/sketchDof.ts';
 import type { SavedCameraState } from '@tweakcad/core/src/store/sketchStore.ts';
 import type { SketchGeometry, SketchToolId } from '@tweakcad/core/src/sketch/types.ts';
@@ -515,7 +516,7 @@ export function Shell({
   // `CreateSketchFromImport` with this snapshot instead of `CreateSketch`.
   // Held in a ref so the picker callback reads the latest value without a
   // re-render dependency. Cleared on pick / cancel.
-  const pendingDxfImportRef = useRef<{
+  const pendingSketchImportRef = useRef<{
     snapshot: import('@tweakcad/core/src/document/schema.ts').SketchEditorSnapshot;
     name: string;
   } | null>(null);
@@ -693,14 +694,14 @@ export function Shell({
 
   const handleCancelPlanePick = useCallback(() => {
     setSketchPickingPlane(false);
-    pendingDxfImportRef.current = null;
+    pendingSketchImportRef.current = null;
   }, []);
 
   /**
    * File → Import DXF (sketch). Picks a `.dxf` file, parses it to sketch
    * primitives, builds the EditorState, and — if any supported geometry
    * was found — opens the SAME plane picker as a fresh sketch with the
-   * parsed snapshot stashed in `pendingDxfImportRef`. On plane-pick,
+   * parsed snapshot stashed in `pendingSketchImportRef`. On plane-pick,
    * `handlePlanePicked` dispatches `CreateSketchFromImport`.
    *
    * Distinct from the 3D STEP/STL/BREP import (which produces an
@@ -733,11 +734,50 @@ export function Shell({
     }
 
     const baseName = pick.fileName.replace(/\.dxf$/i, '');
-    pendingDxfImportRef.current = {
+    pendingSketchImportRef.current = {
       snapshot: toSnapshot(state) as unknown as import('@tweakcad/core/src/document/schema.ts').SketchEditorSnapshot,
       name: baseName || 'Imported sketch',
     };
     consoleLog('info', `DXF "${pick.fileName}": ${state.geometries.size} curve(s) — pick a plane`, 'sketch');
+    setSketchPickingPlane(true);
+  }, [sketchActive]);
+
+  /**
+   * Import an SVG file as a new sketch. Same flow as the DXF importer —
+   * parse → stash snapshot in `pendingSketchImportRef` → pick a plane →
+   * `CreateSketchFromImport` (one undo entry). SVG curves arrive as splines
+   * (the importer flattens beziers/arcs); coordinates are scaled to mm from
+   * the SVG's width/viewBox and the Y axis is flipped to sketch-up.
+   */
+  const handleImportSketchSvg = useCallback(async () => {
+    if (sketchActive) {
+      consoleLog('warn', 'Exit the current sketch before importing an SVG', 'sketch');
+      return;
+    }
+    let pick: Awaited<ReturnType<typeof pickSvgForImport>>;
+    try {
+      pick = await pickSvgForImport();
+    } catch (err) {
+      consoleLog('error', `SVG read failed: ${(err as Error).message}`, 'sketch');
+      return;
+    }
+    if (!pick) return; // user cancelled
+
+    const { state, skipped } = svgToEditorState(pick.text);
+    if (skipped.length > 0) {
+      consoleLog('warn', `SVG: skipped unsupported elements: ${skipped.join(', ')}`, 'sketch');
+    }
+    if (state.geometries.size === 0) {
+      consoleLog('warn', `SVG "${pick.fileName}" had no supported geometry — nothing imported`, 'sketch');
+      return;
+    }
+
+    const baseName = pick.fileName.replace(/\.svg$/i, '');
+    pendingSketchImportRef.current = {
+      snapshot: toSnapshot(state) as unknown as import('@tweakcad/core/src/document/schema.ts').SketchEditorSnapshot,
+      name: baseName || 'Imported sketch',
+    };
+    consoleLog('info', `SVG "${pick.fileName}": ${state.geometries.size} curve(s) — pick a plane`, 'sketch');
     setSketchPickingPlane(true);
   }, [sketchActive]);
 
@@ -760,8 +800,8 @@ export function Shell({
 
     // A pending DXF import dispatches `CreateSketchFromImport` (seeds the
     // parsed geometry as one undo entry); otherwise a fresh `CreateSketch`.
-    const pendingImport = pendingDxfImportRef.current;
-    pendingDxfImportRef.current = null;
+    const pendingImport = pendingSketchImportRef.current;
+    pendingSketchImportRef.current = null;
 
     const result = pendingImport
       ? commandBus.dispatch({
@@ -3323,6 +3363,7 @@ export function Shell({
         onImport={onFileImport}
         onImportComponent={onComponentImport}
         onImportSketchDxf={handleImportSketchDxf}
+        onImportSketchSvg={handleImportSketchSvg}
         onSave={onFileSave}
         onSaveAs={onFileSaveAs}
         onExport={onFileExport ? (fmt) => { void onFileExport(fmt); } : undefined}
