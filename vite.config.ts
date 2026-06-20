@@ -35,6 +35,35 @@ const alias = [
 
 export default defineConfig({
   resolve: { alias },
+  test: {
+    // The root `vitest run` is what `pnpm test:unit` invokes. Tests live both
+    // under src/ (the app) and lib/* (the folded-in packages). lib/core's bus
+    // and sketch tests need a live planegcs solver attached before any test
+    // runs — that wiring is in lib/core/src/testSetup.ts. We scope it to a
+    // dedicated `core` project (instead of a global setupFiles) so the other
+    // ~33 test files don't each pay the WASM load. Both projects `extends:
+    // true` to inherit the resolve aliases + wasm/top-level-await plugins
+    // above, which lib/core tests rely on for their `@tweakcad/*` imports.
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'app',
+          include: ['src/**/*.test.{ts,tsx}', 'lib/**/*.test.{ts,tsx}'],
+          exclude: ['lib/core/**', '**/node_modules/**', '**/dist/**'],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'core',
+          include: ['lib/core/**/*.test.{ts,tsx}'],
+          exclude: ['**/node_modules/**', '**/dist/**'],
+          setupFiles: ['./lib/core/src/testSetup.ts'],
+        },
+      },
+    ],
+  },
   // In prod the CAD bundle is served from /cad/* by the host site
   // (the "/cad" embedding strategy). The standalone offline-CAD Docker
   // image serves the editor at the domain root, so it builds with CAD_BASE=/.
