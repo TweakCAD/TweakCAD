@@ -7,8 +7,9 @@
  * shows position in mm; Rotate shows Euler XYZ in degrees.
  */
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import * as THREE from 'three';
+import { Move } from 'lucide-react';
 import { PanelHeader } from './PanelHeader.tsx';
 
 export interface MoveTransform {
@@ -46,10 +47,19 @@ export function MovePanel({ scope, mode, transform, onModeChange, onTransformCha
 
   // Resync each field from the stored transform (e.g. after a gizmo drag),
   // except the field currently being edited.
-  useEffect(() => {
+  //
+  // Adjusted during render rather than in an effect. The effect depended on
+  // `display[0..2]` element-wise — `display` is rebuilt every render, so
+  // depending on the array itself would resync on every keystroke and fight
+  // the user mid-edit. That's why it carried an `exhaustive-deps`
+  // suppression. Collapsing the same values into one comparison key states
+  // the intent directly and drops the suppression.
+  const syncKey = `${display[0]}|${display[1]}|${display[2]}|${mode}|${editing}`;
+  const [lastSyncKey, setLastSyncKey] = useState(syncKey);
+  if (syncKey !== lastSyncKey) {
+    setLastSyncKey(syncKey);
     setBuf(prev => display.map((v, i) => (i === editing ? (prev[i] ?? String(v)) : String(v))));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [display[0], display[1], display[2], mode, editing]);
+  }
 
   const commitField = (i: number) => {
     const num = parseFloat(buf[i] ?? '');
@@ -77,7 +87,7 @@ export function MovePanel({ scope, mode, transform, onModeChange, onTransformCha
   return (
     <div style={styles.overlay}>
       <div style={styles.panel}>
-        <PanelHeader title={scope === 'all' ? 'Move All' : 'Move Body'} icon={<span style={{ fontWeight: 700 }}>✥</span>} />
+        <PanelHeader title={scope === 'all' ? 'Move All' : 'Move Body'} icon={<Move size={14} />} />
 
         <div style={styles.section}>
           <div style={styles.seg}>

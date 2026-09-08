@@ -20,6 +20,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { X } from 'lucide-react';
 import type { FaceRef } from '@tweakcad/core/src/document/schema.ts';
+import { HoleIcon } from '../icons/cadIcons.tsx';
 import { PanelHeader } from './PanelHeader.tsx';
 
 export type HoleKind = 'simple' | 'counterbore' | 'countersink';
@@ -183,7 +184,7 @@ export function HoleDialog({
   return (
     <div style={styles.overlay}>
       <div style={styles.panel}>
-        <PanelHeader title="Hole" icon={<span style={styles.headerIcon}>◯</span>} onClose={onCancel} closeTitle="Cancel (Esc)" />
+        <PanelHeader title="Hole" icon={<HoleIcon size={14} color="#f97316" />} onClose={onCancel} closeTitle="Cancel (Esc)" />
 
         {/* Face row — same look as Fillet's edge rows and CP's face row. */}
         <div style={styles.section}>
@@ -204,7 +205,7 @@ export function HoleDialog({
               </button>
             </div>
           ) : (
-            <div style={styles.emptyHint}>Click a planar face on a body…</div>
+            <div style={styles.emptyHint}>Click a planar face on a body...</div>
           )}
         </div>
 
@@ -397,13 +398,6 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '10px 12px',
     borderBottom: '1px solid #e8e8e8',
     background: '#fafafa',
-  },
-  headerIcon: {
-    fontSize: 16,
-    color: '#f97316',
-    fontWeight: 700,
-    width: 16,
-    textAlign: 'center',
   },
   headerTitle: { flex: 1, fontSize: 13, fontWeight: 600, color: '#333' },
   closeBtn: {

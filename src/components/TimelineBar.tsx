@@ -305,7 +305,7 @@ export function TimelineBar({
               order view; duplicating lives in the ProjectTree's Components
               subsection where the inventory mental model fits. */}
           {contextMenu.featureType === 'importedComponent' && (
-            <button style={menuItemStyle} onClick={() => handleMenuAction('editComponent')}>Edit Component…</button>
+            <button style={menuItemStyle} onClick={() => handleMenuAction('editComponent')}>Edit Component...</button>
           )}
           {contextMenu.featureEnabled
             ? <button style={menuItemStyle} onClick={() => handleMenuAction('suppress')}>Suppress</button>

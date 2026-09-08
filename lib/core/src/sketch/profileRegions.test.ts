@@ -83,20 +83,14 @@ describe('detectSketchRegions', () => {
     expect(regions).toHaveLength(0);
   });
 
-  // Persistent red flag — fails today: the slot region-detection gap.
-  // `drawSlot` emits 2 lines + 2 arcs whose adjacent endpoints are
-  // separate point ids linked by coincident constraints (8-point model,
-  // same as `drawRectangle`'s 8 corner endpoints). The region detector
-  // walks shared point ids only; it does NOT follow coincident
-  // constraints to traverse the loop, so the slot's 4 segments don't
-  // assemble into a closed region. Blocks extruding a slot (the extrude
-  // profile picker depends on detected regions).
-  //
-  // Fix path: collapse coincident-linked points at region-detection time
-  // (preserves invariant #11 / 8-point model). Alternative — have
-  // `drawSlot` share point ids at corners — would break the 8-point
-  // model and is rejected.
-  it('🔴 GAP: slot (decomposed) should be 1 region with 4 segments', () => {
+  // `drawSlot` emits 2 lines + 2 arcs whose adjacent endpoints are separate
+  // point ids linked by coincident constraints (8-point model, same as
+  // `drawRectangle`'s 8 corner endpoints). Detection still works because the
+  // detector runs on `buildGeometry` — serialized coordinates, not point ids
+  // — and keys endpoints by rounded position (`pointKey`), so coincident
+  // endpoints join the loop without the detector knowing about constraints.
+  // This is what lets a slot extrude while keeping invariant #11.
+  it('slot (decomposed) is 1 region with 4 segments', () => {
     const regions = buildAndDetect((s, f) =>
       drawSlot(s, { center1: [0, 0], center2: [20, 0], width: 6 }, { idFactory: f }).state,
     );

@@ -848,3 +848,101 @@ describe('OcctKernel — exports', () => {
     expect(text).toContain('TestPart');
   });
 });
+
+describe('OcctKernel — STL round-trip', () => {
+  /**
+   * Regression cover for a silent data-loss bug: occt-wasm moves binary
+   * payloads across the JS boundary as UTF-8 strings, so every byte >= 0x80
+   * that wasn't valid UTF-8 came back as U+FFFD (low byte 0xFD). The damage
+   * left the file *structurally* valid — right length, right header, right
+   * triangle count — so only the float payload was destroyed. Exported files
+   * were unopenable in any slicer and binary STLs from other tools failed to
+   * import. Both directions now route through ASCII STL, which is 7-bit.
+   */
+  it('binary export contains no 0xFD damage and exact float values', async () => {
+    const k = await newKernel();
+    const r = await k.makeBox({ origin: [0, 0, 0], width: 10, height: 20, depth: 30 });
+    if (!r.ok) throw new Error('precondition failed');
+    await k.tessellate(r.value, FINE_TESSELLATION);
+
+    const bytes = new Uint8Array(await (await k.exportStl([r.value])).arrayBuffer());
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const triangles = dv.getUint32(80, true);
+
+    // Binary STL is exactly 84 + 50*n bytes; a box tessellates to 12 facets.
+    expect(triangles).toBe(12);
+    expect(bytes.byteLength).toBe(84 + triangles * 50);
+    // The header must not start with "solid", or format sniffers misread it.
+    expect(String.fromCharCode(...bytes.slice(0, 5))).not.toBe('solid');
+    // A box's face normals are exactly -1/0/1. Under the old corruption this
+    // read as 0x0000FDFD instead of 0xBF800000.
+    expect(dv.getFloat32(84, true)).toBe(-1);
+    expect([...bytes].filter(b => b === 0xfd)).toHaveLength(0);
+  });
+
+  it('binary STL re-imports with the source volume', async () => {
+    const k = await newKernel();
+    const r = await k.makeBox({ origin: [0, 0, 0], width: 10, height: 20, depth: 30 });
+    if (!r.ok) throw new Error('precondition failed');
+    await k.tessellate(r.value, FINE_TESSELLATION);
+    const before = await k.getMassProperties(r.value);
+
+    const buf = await (await k.exportStl([r.value])).arrayBuffer();
+    const re = await k.importStl(buf, 'roundtrip');
+    expect(re.ok).toBe(true);
+    if (!re.ok) return;
+    expect((await k.getMassProperties(re.value[0]!)).volume).toBeCloseTo(before.volume, 1);
+  });
+
+  it('ascii STL also round-trips', async () => {
+    const k = await newKernel();
+    const r = await k.makeBox({ origin: [0, 0, 0], width: 10, height: 10, depth: 10 });
+    if (!r.ok) throw new Error('precondition failed');
+    await k.tessellate(r.value, FINE_TESSELLATION);
+    const buf = await (await k.exportStl([r.value], { binary: false })).arrayBuffer();
+    const re = await k.importStl(buf, 'roundtrip-ascii');
+    expect(re.ok).toBe(true);
+    if (!re.ok) return;
+    expect((await k.getMassProperties(re.value[0]!)).volume).toBeCloseTo(1000, 1);
+  });
+});
+
+describe('OcctKernel — sweep', () => {
+  /**
+   * The profile must be perpendicular to the path at its start point. A path
+   * circle of R=30 in the XY plane has tangent +Y where it crosses (30,0,0),
+   * so only a +Y profile normal is a valid pipe. The other orientations
+   * used to succeed and hand back a solid enclosing no volume, which reached
+   * the timeline as a feature that built cleanly and rendered nothing.
+   */
+  async function sweptTorus(k: OcctKernel, normal: [number, number, number]) {
+    const path = await k.createSketchFace({
+      type: 'circle', origin: [0, 0, 0], normal: [0, 0, 1], radius: 30,
+    });
+    const profile = await k.createSketchFace({
+      type: 'circle', origin: [30, 0, 0], normal, radius: 3,
+    });
+    if (!path.ok || !profile.ok) throw new Error('precondition failed');
+    return k.sweep(profile.value, path.value, 'sweep-test');
+  }
+
+  it('a profile normal to the path tangent sweeps the expected torus', async () => {
+    const k = await newKernel();
+    const swept = await sweptTorus(k, [0, 1, 0]);
+    expect(swept.ok).toBe(true);
+    if (!swept.ok) return;
+    const mp = await k.getMassProperties(swept.value);
+    // Torus: V = 2*pi^2*R*r^2, A = 4*pi^2*R*r.
+    expect(mp.volume).toBeCloseTo(2 * Math.PI ** 2 * 30 * 9, 0);
+    expect(mp.surfaceArea).toBeCloseTo(4 * Math.PI ** 2 * 30 * 3, 0);
+  });
+
+  it('a degenerate profile orientation is rejected, not silently empty', async () => {
+    const k = await newKernel();
+    for (const normal of [[1, 0, 0], [0, 0, 1]] as [number, number, number][]) {
+      const swept = await sweptTorus(k, normal);
+      expect(swept.ok).toBe(false);
+      if (!swept.ok) expect(swept.error.code).toBe('SWEEP_DEGENERATE');
+    }
+  });
+});

@@ -83,7 +83,7 @@ export function LoftDialog({
           </div>
           <div style={styles.profileList}>
             {profiles.length === 0 && (
-              <div style={styles.emptyHint}>Click profiles in the viewport in order…</div>
+              <div style={styles.emptyHint}>Click profiles in the viewport in order...</div>
             )}
             {profiles.map((p, idx) => (
               <div key={p.key} style={styles.profileRow}>

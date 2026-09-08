@@ -42,11 +42,13 @@ import {
   Settings,
   Move,
   Download,
+  Pause,
 } from 'lucide-react';
 import {
   getFeatureIcon,
   featureTypeColors,
   FeatureSuppressedIcon,
+  FeatureWarningIcon,
   ExtrudeIcon,
 } from '../icons/cadIcons.tsx';
 
@@ -649,9 +651,9 @@ function FeatureRow({ feature, isSelected, onClick, onContextMenu, onVisibilityT
     : 'transparent';
   const baseHoverBg = isFailed ? '#fee2e2' : '#f4f4f4';
   const tooltip = isFailed
-    ? `${feature.name} (${feature.type}) — BUILD FAILED: ${feature.errorMessage ?? 'unknown error'}`
+    ? `${feature.name} (${feature.type}) - BUILD FAILED: ${feature.errorMessage ?? 'unknown error'}`
     : isBlocked
-      ? `${feature.name} (${feature.type}) — blocked by upstream failure`
+      ? `${feature.name} (${feature.type}) - blocked by upstream failure`
       : `${feature.name} (${feature.type}) - Right-click for options`;
 
   return (
@@ -708,13 +710,13 @@ function FeatureRow({ feature, isSelected, onClick, onContextMenu, onVisibilityT
           return <span style={styles.statusIcon}><FeatureSuppressedIcon size={10} /></span>;
         }
         if (isFailed) {
-          return <span style={styles.statusIcon}>
-            <span style={{ color: '#dc2626', fontSize: 14, lineHeight: 1, fontWeight: 700 }} title="Build failed">⚠</span>
+          return <span style={styles.statusIcon} title="Build failed">
+            <FeatureWarningIcon size={12} color="#dc2626" />
           </span>;
         }
         if (isBlocked) {
-          return <span style={styles.statusIcon}>
-            <span style={{ color: '#d97706', fontSize: 14, lineHeight: 1 }} title="Blocked by upstream">⏸</span>
+          return <span style={styles.statusIcon} title="Blocked by upstream">
+            <Pause size={11} strokeWidth={1.5} color="#d97706" />
           </span>;
         }
         if (feature.type === 'sketch' && feature.dof === 0) {
@@ -857,13 +859,13 @@ const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
       // involved). DXF for CAM/CNC, SVG for laser/illustration.
       items.push({
         action: 'exportSketchDxf',
-        label: 'Export DXF…',
+        label: 'Export DXF...',
         icon: <Download size={14} />,
         dividerBefore: true,
       });
       items.push({
         action: 'exportSketchSvg',
-        label: 'Export SVG…',
+        label: 'Export SVG...',
         icon: <Download size={14} />,
       });
     }
@@ -873,7 +875,7 @@ const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
       // (overrides + active config + boolean mode).
       items.push({
         action: 'editComponent',
-        label: 'Edit Component…',
+        label: 'Edit Component...',
         icon: <Pencil size={14} />,
         accent: true,
       });

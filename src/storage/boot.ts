@@ -160,7 +160,7 @@ async function resolveCloudIdBoot(
         context: { kind: 'local-stored', localId: mirror.id },
         storage: { kind: 'unsaved' }, // can't write back to cloud while SaaS is down
         source: 'local-mirror',
-        warning: 'The cloud backend is unreachable. Opened your local copy — saves will go to disk only.',
+        warning: 'The cloud backend is unreachable. Opened your local copy; saves will go to disk only.',
       };
     }
     return {

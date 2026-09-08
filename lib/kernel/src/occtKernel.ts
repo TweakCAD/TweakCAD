@@ -85,10 +85,131 @@ function nextHandle(prefix: string): string {
  * Used for binary STL export: occt-wasm returns the STL bytes through a
  * `string` return type, with each char taking a single byte (latin-1).
  */
-function latin1ToBytes(s: string): Uint8Array {
-  const out = new Uint8Array(s.length);
-  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 0xff;
+/**
+ * occt-wasm hands binary payloads across the JS boundary as strings, and that
+ * boundary is UTF-8 in both directions. Any byte >= 0x80 that isn't valid
+ * UTF-8 becomes U+FFFD, whose low byte is 0xFD — so the bytes arrive
+ * uniformly damaged, not merely reordered. A 10x20x30 box exported as binary
+ * STL came back with all 59 of its high bytes set to 0xFD; the first facet
+ * normal, which must be `00 00 80 bf` (-1.0f), read as `00 00 fd fd`.
+ *
+ * The damage is invisible to a structural check: replacement happens
+ * one-char-per-bad-byte, so the file is still exactly `84 + 50 * n` bytes with
+ * an intact 80-byte header and triangle count. Only the float payload is
+ * destroyed — which is why this shipped.
+ *
+ * Both STL directions therefore route around the string boundary entirely by
+ * going through ASCII STL, which is 7-bit and survives untouched:
+ * `exportStl` asks OCCT for ASCII and packs the binary itself, and
+ * `importStl` transcodes binary to ASCII before handing it over. STEP and
+ * BREP are unaffected — STEP is text, and BREP uses the wrapper's
+ * `fromBREPBinary`/`toBREPBinary`, which move bytes through the Emscripten FS
+ * rather than a string.
+ */
+const STL_FACET_FLOATS = 12; // 3 normal + 3 vertices x 3 coords
+
+/**
+ * Below this, a swept solid encloses nothing and is treated as a failed
+ * sweep. Generous compared to the float noise actually observed (a degenerate
+ * pipe measured ~9e-13) but far below any volume a user would model in mm.
+ */
+const SWEEP_MIN_VOLUME = 1e-9;
+
+/** Parse an ASCII STL into flat per-facet [nx,ny,nz, x1..z3] tuples. */
+function parseAsciiStl(text: string): number[][] {
+  const facets: number[][] = [];
+  let cur: number[] = [];
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (line.startsWith('facet normal')) {
+      cur = line.slice('facet normal'.length).trim().split(/\s+/).map(Number);
+    } else if (line.startsWith('vertex')) {
+      cur.push(...line.slice('vertex'.length).trim().split(/\s+/).map(Number));
+    } else if (line.startsWith('endfacet')) {
+      if (cur.length === STL_FACET_FLOATS && cur.every(Number.isFinite)) facets.push(cur);
+      cur = [];
+    }
+  }
+  return facets;
+}
+
+/** Pack parsed facets into a binary STL. */
+function asciiStlToBinary(text: string): Uint8Array {
+  const facets = parseAsciiStl(text);
+  const out = new Uint8Array(84 + facets.length * 50);
+  const dv = new DataView(out.buffer);
+  // The 80-byte header is free-form, but it must NOT begin with "solid":
+  // readers that sniff format rather than checking the length formula would
+  // then misread the file as ASCII.
+  const header = 'TweakCAD binary STL';
+  for (let i = 0; i < header.length; i++) out[i] = header.charCodeAt(i);
+  dv.setUint32(80, facets.length, true);
+  let off = 84;
+  for (const f of facets) {
+    for (let i = 0; i < STL_FACET_FLOATS; i++) dv.setFloat32(off + i * 4, f[i]!, true);
+    dv.setUint16(off + 48, 0, true); // attribute byte count, unused
+    off += 50;
+  }
   return out;
+}
+
+/**
+ * A binary STL is exactly `84 + 50 * triangleCount` bytes: an 80-byte header,
+ * a uint32 triangle count, then 50 bytes per facet. The length check is the
+ * only reliable discriminator — a binary file's 80-byte header is arbitrary
+ * and routinely begins with "solid", so sniffing that prefix misclassifies.
+ */
+function isBinaryStl(bytes: Uint8Array): boolean {
+  if (bytes.byteLength < 84) return false;
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return bytes.byteLength === 84 + dv.getUint32(80, true) * 50;
+}
+
+/**
+ * Transcode a binary STL to ASCII.
+ *
+ * occt-wasm's `importStl(data: string)` takes the file *contents* as a JS
+ * string (unlike `importBrepBinary`, which takes a path we could write bytes
+ * to). Handing it an ArrayBuffer makes the wrapper run
+ * `new TextDecoder().decode(data)` — UTF-8 — so every byte >= 0x80 that isn't
+ * valid UTF-8 becomes U+FFFD. A 10mm box exports as 684 bytes with 23 such
+ * bytes; after that round trip it is 730 bytes of corruption and OCCT rejects
+ * it with "Corrupted binary STL file". Passing a latin-1 string instead
+ * doesn't help — the JS→C++ marshalling re-encodes as UTF-8 on the way in
+ * too. And `FS` is private on the wrapper, so the write-to-temp-path route
+ * `fromBREPBinary` uses isn't reachable from here.
+ *
+ * ASCII STL is pure 7-bit, so it survives any of that untouched. Transcoding
+ * in JS is the one route fully under our control, and it fixes importing
+ * binary STLs from *any* source, not just our own exports.
+ *
+ * Costs memory proportional to the mesh — roughly 8x the binary size as a JS
+ * string. Acceptable for the part-sized meshes this editor handles; revisit
+ * if upstream grows a path-based STL reader.
+ */
+function binaryStlToAscii(bytes: Uint8Array): string {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const triangles = dv.getUint32(80, true);
+  const out: string[] = ['solid imported'];
+  let off = 84;
+  for (let i = 0; i < triangles; i++) {
+    const nx = dv.getFloat32(off, true);
+    const ny = dv.getFloat32(off + 4, true);
+    const nz = dv.getFloat32(off + 8, true);
+    out.push(`  facet normal ${nx} ${ny} ${nz}`);
+    out.push('    outer loop');
+    for (let v = 0; v < 3; v++) {
+      const p = off + 12 + v * 12;
+      out.push(
+        `      vertex ${dv.getFloat32(p, true)} ${dv.getFloat32(p + 4, true)} ${dv.getFloat32(p + 8, true)}`,
+      );
+    }
+    out.push('    endloop');
+    out.push('  endfacet');
+    off += 50; // 12 floats + a 2-byte attribute count we don't carry over
+  }
+  out.push('endsolid imported');
+  return out.join('\n');
 }
 
 /**
@@ -1014,6 +1135,31 @@ export class OcctKernel implements CadKernel {
         // the path tangent at the start point. simplePipe assumes
         // good alignment and produces weird results when it's wrong.
         const result = k.pipe(profileShape, pathWire);
+
+        // `pipe` succeeds even when the profile plane is degenerate with
+        // respect to the spine — a profile whose normal is perpendicular to
+        // the path tangent sweeps out a self-intersecting sheet that OCCT
+        // still reports as a solid, just one enclosing no volume. Left
+        // unchecked that reaches the timeline as a feature that built "fine"
+        // and renders nothing, which is far harder to diagnose than an error.
+        //
+        // Concretely, with a circle profile at (30,0,0) swept along a circle
+        // path of R=30 in the XY plane (tangent +Y at that point): a +Y
+        // profile normal gives the expected torus, volume 5329.6 against an
+        // analytic 5329.0, while a +X or +Z normal gives volume 0 with a
+        // plausible-looking surface area.
+        if (Math.abs(k.getVolume(result)) <= SWEEP_MIN_VOLUME) {
+          k.release(result);
+          return err(
+            kernelError(
+              'geometry',
+              'SWEEP_DEGENERATE',
+              'Sweep produced a solid with no volume — the profile is most ' +
+                'likely not perpendicular to the path at its start point.',
+            ),
+          );
+        }
+
         // No input bodies to propagate IDs from — sweep creates a
         // brand new solid whose faces come from the swept profile +
         // the path geometry. Assign fresh IDs from the feature's
@@ -1569,7 +1715,13 @@ export class OcctKernel implements CadKernel {
       // — single-shape files come back as a 1-element body array; if
       // the STL contains multiple solids OCCT will report them as
       // distinct sub-shapes.
-      const root = k.importStl(data);
+      //
+      // Binary STL is transcoded to ASCII first: occt-wasm's wrapper decodes
+      // an ArrayBuffer as UTF-8, which mangles every byte >= 0x80. See
+      // `binaryStlToAscii`. ASCII input is handed over untouched — it's 7-bit,
+      // so the wrapper's decode is lossless for it.
+      const bytes = new Uint8Array(data);
+      const root = k.importStl(isBinaryStl(bytes) ? binaryStlToAscii(bytes) : data);
       try {
         return ok(this.decomposeToBodies(root, origin ?? 'stl-import'));
       } finally {
@@ -1701,11 +1853,11 @@ export class OcctKernel implements CadKernel {
       release = true;
     }
     try {
-      // occt-wasm's exportStl returns a string. For binary STL the upstream
-      // builds the binary payload and decodes it as latin-1 so every byte
-      // survives in a JS string — we re-encode with a 1:1 byte mapping.
-      const text = k.exportStl(target, linear, !binary);
-      const bytes = binary ? latin1ToBytes(text) : new TextEncoder().encode(text);
+      // Always ask OCCT for ASCII (the `true` third arg) — see the note on
+      // `asciiStlToBinary`. Requesting binary from occt-wasm returns it as a
+      // UTF-8-damaged string, silently, with the file's structure intact.
+      const text = k.exportStl(target, linear, true);
+      const bytes = binary ? asciiStlToBinary(text) : new TextEncoder().encode(text);
       // Copy through an ArrayBuffer so Blob accepts it regardless of whether
       // the source view is backed by a SharedArrayBuffer.
       const ab = new ArrayBuffer(bytes.byteLength);

@@ -80,7 +80,7 @@ export async function runAutoExport(
         onStatus({
           kind: 'failed',
           format,
-          message: 'No bodies to export — model is empty?',
+          message: 'No bodies to export; model is empty?',
         });
         continue;
       }

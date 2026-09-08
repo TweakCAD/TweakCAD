@@ -53,7 +53,7 @@ export interface AgentTurnArgs {
 export async function* runAgentTurn(
   args: AgentTurnArgs,
 ): AsyncIterable<ChatTurnEvent> {
-  const transactionLabel = `AI: ${args.text.slice(0, 60)}${args.text.length > 60 ? '…' : ''}`;
+  const transactionLabel = `AI: ${args.text.slice(0, 60)}${args.text.length > 60 ? '...' : ''}`;
   let transactionOpen = false;
 
   try {
@@ -182,7 +182,7 @@ export async function* runAgentTurn(
     // happened without a leaked transaction.
     yield {
       type: 'done',
-      error: `Agent loop exceeded ${MAX_ROUNDS} rounds without finishing. The assistant may be stuck — try a more focused prompt.`,
+      error: `Agent loop exceeded ${MAX_ROUNDS} rounds without finishing. The assistant may be stuck; try a more focused prompt.`,
     };
   } catch (e) {
     if (args.signal.aborted) {

@@ -97,7 +97,9 @@ function resultToDiagnostic(result: FeatureBuildResult): Diagnostic | null {
       };
     case 'failed': {
       const e = result.error;
-      const msg = e.suggestion ? `${e.message} — ${e.suggestion}` : e.message;
+      const msg = e.suggestion
+        ? `${e.message.replace(/\.$/, '')}. ${e.suggestion}`
+        : e.message;
       return {
         id: `diag-${result.featureId}-failed`,
         severity: 'error',

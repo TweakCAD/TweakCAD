@@ -41,7 +41,7 @@ export function combineMeshes(meshes: DisplayMesh[]): {
     vertices.set(m.positions, vOff);
     const vertexBase = vOff / 3;
     for (let i = 0; i < m.indices.length; i++) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+       
       triangles[tOff + i] = (m.indices[i] as number) + vertexBase;
     }
     vOff += m.positions.length;

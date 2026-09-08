@@ -122,17 +122,24 @@ export function ImportedComponentDialog({ open, partId, featureId, onClose }: Di
 
   const [draft, setDraft] = useState<DraftState | null>(null);
 
-  // Seed draft on open. The dep on `open` (not `resolved`) keeps the
-  // draft stable while the user is editing — a stray rebuild that
-  // bumps `project` would otherwise clobber half-typed entries.
-  useEffect(() => {
+  // Seed draft on open. Keying off `open` (not `resolved`) keeps the draft
+  // stable while the user is editing — a stray rebuild that bumps `project`
+  // would otherwise clobber half-typed entries.
+  //
+  // Adjusted during render rather than in an effect, which also removes the
+  // `exhaustive-deps` suppression: the effect intentionally read `resolved`
+  // without depending on it, and suppressing the warning hid that intent
+  // behind a blanket disable. The explicit previous-value check says it
+  // outright — react to `open` flipping, read `resolved` as of now.
+  const [lastOpen, setLastOpen] = useState(open);
+  if (open !== lastOpen) {
+    setLastOpen(open);
     if (open && resolved) {
       setDraft(makeDraftFrom(resolved.inputs, resolved.compPart));
     } else if (!open) {
       setDraft(null);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }
 
   // Public parameters to expose in the editor. We surface BOTH the
   // embedded source's project-scope and part-scope params — most
@@ -172,8 +179,8 @@ export function ImportedComponentDialog({ open, partId, featureId, onClose }: Di
   const resolvedValues = useMemo<Record<string, number>>(() => {
     if (!resolved || !draft) return {};
     const part = resolved.compPart;
-    let partValues: Record<string, ParameterValue> = { ...part.parameters.values };
-    let projectValues: Record<string, ParameterValue> = { ...resolved.def.source.parameters.values };
+    const partValues: Record<string, ParameterValue> = { ...part.parameters.values };
+    const projectValues: Record<string, ParameterValue> = { ...resolved.def.source.parameters.values };
 
     // 1) selected config row's part-scope overrides
     if (draft.configRowId !== DEFAULTS_ROW_ID && part.configurations) {
@@ -337,7 +344,7 @@ export function ImportedComponentDialog({ open, partId, featureId, onClose }: Di
               <div style={styles.sectionLabel}>
                 Parameters
                 {publicParams.length === 0 && (
-                  <span style={styles.sectionLabelMuted}> — this component exposes no parameters</span>
+                  <span style={styles.sectionLabelMuted}> (this component exposes no parameters)</span>
                 )}
               </div>
 

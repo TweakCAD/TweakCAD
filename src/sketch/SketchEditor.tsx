@@ -16,7 +16,7 @@
  */
 
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { ViewportController } from '@tweakcad/viewport/src/ViewportController.ts';
+import type { ViewportController } from '@tweakcad/viewport/src/ViewportController.ts';
 import type { SketchToolId } from '@tweakcad/core/src/sketch/types.ts';
 import type { FeatureId } from '@tweakcad/core/src/ids.ts';
 import { SketchSceneManager, type SketchPlaneInput } from './SketchSceneManager.ts';

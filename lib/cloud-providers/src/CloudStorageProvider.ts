@@ -7,10 +7,11 @@
  * established when the CAD app wires this in.
  */
 import { ApiClient } from '@tweakcad/api-client';
+import type {
+  CreateProjectRequest} from '@tweakcad/api-types';
 import {
   ProjectSummary,
   Project,
-  CreateProjectRequest,
   PageResponse,
   type Page,
 } from '@tweakcad/api-types';

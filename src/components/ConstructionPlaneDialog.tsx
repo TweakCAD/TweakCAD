@@ -22,6 +22,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { X } from 'lucide-react';
 import type { FaceRef, PlaneRef } from '@tweakcad/core/src/document/schema.ts';
+import { PlaneIcon } from '../icons/cadIcons.tsx';
 import { PanelHeader } from './PanelHeader.tsx';
 
 export type ConstructionPlaneKind = 'offsetFromPlane' | 'offsetFromFace';
@@ -97,14 +98,23 @@ export function ConstructionPlaneDialog({
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    // Sync the field when the controlled value changes externally (gizmo
-    // drag), but don't clobber an in-progress edit that already parses to it.
+  // Sync the field when the controlled value changes externally (gizmo
+  // drag), but don't clobber an in-progress edit that already parses to it.
+  //
+  // Adjusted during render rather than in an effect. Besides avoiding the
+  // extra render pass, this drops the `exhaustive-deps` suppression the
+  // effect needed: the effect deliberately read `offset` without depending
+  // on it (depending on it would re-run and fight the user mid-keystroke),
+  // which is exactly the kind of stale-closure risk that suppression hides.
+  // Keying off the previous `offsetValue` states the real intent — react to
+  // the prop changing, and read the draft as of now.
+  const [lastOffsetValue, setLastOffsetValue] = useState(offsetValue);
+  if (offsetValue !== lastOffsetValue) {
+    setLastOffsetValue(offsetValue);
     if (parseFloat(offset) !== offsetValue) {
       setOffset(String(Math.round(offsetValue * 100) / 100));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [offsetValue]);
+  }
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -162,13 +172,13 @@ export function ConstructionPlaneDialog({
     ? (pickedPlane ? 'Base plane (1)' : 'Base plane (click a plane in the viewport)')
     : (pickedFace ? 'Face (1)' : 'Face (click a face in the viewport)');
   const emptyHint = kind === 'offsetFromPlane'
-    ? 'Click a default plane (XY/XZ/YZ) or an existing construction plane…'
-    : 'Click a planar face on a body…';
+    ? 'Click a default plane (XY/XZ/YZ) or an existing construction plane...'
+    : 'Click a planar face on a body...';
 
   return (
     <div style={styles.overlay}>
       <div style={styles.panel}>
-        <PanelHeader title={title} icon={<span style={styles.headerIcon}>▱</span>} onClose={onCancel} closeTitle="Cancel (Esc)" />
+        <PanelHeader title={title} icon={<PlaneIcon size={14} color="#3b82f6" />} onClose={onCancel} closeTitle="Cancel (Esc)" />
 
         <div style={styles.section}>
           <div style={styles.sectionLabel}>{baseSectionLabel}</div>
@@ -298,13 +308,6 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '10px 12px',
     borderBottom: '1px solid #e8e8e8',
     background: '#fafafa',
-  },
-  headerIcon: {
-    fontSize: 16,
-    color: '#3b82f6',
-    fontWeight: 700,
-    width: 16,
-    textAlign: 'center',
   },
   headerTitle: { flex: 1, fontSize: 13, fontWeight: 600, color: '#333' },
   closeBtn: {

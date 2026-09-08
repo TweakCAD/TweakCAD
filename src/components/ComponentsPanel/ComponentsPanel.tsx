@@ -13,7 +13,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ChevronDown, ChevronRight, Search, X } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronRight, Search, Star, X } from 'lucide-react';
 import type {
   ComponentDetail,
   ComponentManifest,
@@ -258,7 +258,7 @@ function BrowseView({
         <Search size={12} style={styles.searchIcon} />
         <input
           type="search"
-          placeholder="Search components…"
+          placeholder="Search components..."
           value={searchInput}
           onChange={(e) => onSearchInput(e.target.value)}
           style={styles.searchInput}
@@ -268,7 +268,7 @@ function BrowseView({
 
       {error && <div style={styles.error}>{error}</div>}
       {loading && groups.length === 0 && (
-        <div style={styles.empty}>Loading…</div>
+        <div style={styles.empty}>Loading...</div>
       )}
       {!loading && !error && groups.length === 0 && (
         <div style={styles.empty}>No components match this search.</div>
@@ -350,7 +350,10 @@ function ComponentCard({
           )}
         </div>
         <div style={styles.cardMeta}>
-          <span>★ {item.likeCount}</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+            <Star size={10} fill="currentColor" strokeWidth={0} />
+            {item.likeCount}
+          </span>
         </div>
       </div>
     </button>

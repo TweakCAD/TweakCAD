@@ -317,7 +317,7 @@ export function SketchPlanePicker({ viewportCtrl, constructionPlanes, onPick, on
           {(constructionPlanes?.length ?? 0) > 0
             ? <>, or one of the <b style={{ color: '#3b82f6' }}>{constructionPlanes!.length} construction plane{constructionPlanes!.length === 1 ? '' : 's'}</b></>
             : null}
-          {hovered ? ` — ${hovered.startsWith('cp:') ? 'construction plane' : hovered} highlighted` : ''}.
+          {hovered ? `; ${hovered.startsWith('cp:') ? 'construction plane' : hovered} highlighted` : ''}.
           <br />
           <span style={{ color: '#999' }}>Esc to cancel.</span>
         </div>
