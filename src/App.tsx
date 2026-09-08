@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Check, X } from 'lucide-react';
 import { newProjectWithPart } from '@tweakcad/core/src/document/factory.ts';
 import { Shell } from './layout/Shell.tsx';
 import { initializeApp } from './appInit.ts';
@@ -14,9 +15,11 @@ import {
   AutosaveScheduler,
   resolveInitialProject,
   probeSaas,
+  loadSocialProviders,
   useSaasState,
   newDocument,
   openFromDisk,
+  importFcstdAsDocument,
   pickGeometryForImport,
   pickComponentForImport,
   save,
@@ -26,6 +29,7 @@ import {
   type DocumentStorage,
   type FileOpsHandles,
 } from './storage/index.ts';
+import { consoleLog } from '@tweakcad/core/src/store/consoleStore.ts';
 import { SaveStatus } from './components/SaveStatus.tsx';
 import { useConfirm } from './components/ConfirmDialog.tsx';
 import { Toast } from './components/Toast.tsx';
@@ -115,7 +119,15 @@ export function App() {
     (async () => {
       // Kick off the SaaS probe so the rest of the UI can render cloud
       // features (or hide them) as soon as the result lands.
-      probeSaas();
+      //
+      // The social-provider list hangs off the probe's RESULT rather than
+      // running beside it: it only matters when we're signed out against a
+      // live backend, so a standalone build never issues the request. A
+      // failure there degrades the modal to email/password instead of
+      // becoming a state the rest of the app has to understand.
+      void probeSaas().then((state) => {
+        if (state.kind === 'available' && !state.signedIn) void loadSocialProviders();
+      });
 
       const defaultDoc = appState.documentStore.getState();
       const resolution = await resolveInitialProject(defaultDoc);
@@ -195,6 +207,28 @@ export function App() {
   }, [fileHandles]);
 
   /**
+   * File → Import → FreeCAD (.fcstd). A .fcstd carries a whole parametric
+   * tree, so (unlike STEP/STL/BREP body import) it OPENS as a new document —
+   * `importFcstdAsDocument` replaces the active doc, then we surface the
+   * importer's diagnostics (unsupported features/geometry, constraints-not-
+   * imported notes) in the in-app console so the user knows what was skipped.
+   */
+  const onImportFcstd = useCallback(async () => {
+    if (!fileHandles) return;
+    try {
+      const outcome = await importFcstdAsDocument(fileHandles);
+      if (!outcome) return; // cancelled / declined discard
+      consoleLog('success', `Imported "${outcome.fileName}" from FreeCAD`, 'rebuild');
+      for (const d of outcome.diagnostics) {
+        const level = d.severity === 'error' ? 'error' : d.severity === 'warning' ? 'warn' : 'info';
+        consoleLog(level, `FreeCAD import: ${d.message}`, 'rebuild');
+      }
+    } catch (err) {
+      consoleLog('error', `FreeCAD import failed: ${(err as Error).message}`, 'rebuild');
+    }
+  }, [fileHandles]);
+
+  /**
    * File → Import. Prompts for a STEP / STL / BREP file, base64-encodes it,
    * and dispatches a `CreateImportedGeometry` command that appends a
    * new feature to the active part's timeline. The rebuilder then
@@ -213,7 +247,7 @@ export function App() {
       const project = appState.documentStore.getState();
       const partIds = Object.keys(project.parts);
       if (partIds.length === 0) {
-        console.warn('[App] Import: no parts in document — create or open a project first');
+        console.warn('[App] Import: no parts in document; create or open a project first');
         return;
       }
       // v1 imports into the first part. Multi-part documents land
@@ -254,7 +288,7 @@ export function App() {
       const project = appState.documentStore.getState();
       const partIds = Object.keys(project.parts);
       if (partIds.length === 0) {
-        console.warn('[App] Component import: no parts — create or open a project first');
+        console.warn('[App] Component import: no parts; create or open a project first');
         return;
       }
       const partId = partIds[0] as import('@tweakcad/core/src/ids.ts').PartId;
@@ -309,7 +343,7 @@ export function App() {
       try {
         const ab = await exportActivePart(appState.documentStore, format);
         if (ab.byteLength === 0) {
-          console.warn('[App] Export produced empty output — no bodies?');
+          console.warn('[App] Export produced empty output; no bodies?');
           return;
         }
         const mime =
@@ -379,6 +413,7 @@ export function App() {
           onFileNew={onFileNew}
           onFileOpen={onFileOpen}
           onFileImport={onFileImport}
+          onImportFcstd={onImportFcstd}
           onComponentImport={onComponentImport}
           onFileSave={onFileSave}
           onFileSaveAs={onFileSaveAs}
@@ -408,7 +443,7 @@ export function App() {
           id="recovery"
           tone="warning"
           title="Restored from your last session"
-          message={`Showing autosaved content for "${storage.recoveredFilename}". The original file is no longer attached — use Open to re-attach, or Save to write a new file.`}
+          message={`Showing autosaved content for "${storage.recoveredFilename}". The original file is no longer attached. Use Open to re-attach, or Save to write a new file.`}
           action={{
             label: 'Re-open original',
             onClick: () => onFileOpen(),
@@ -421,6 +456,15 @@ export function App() {
       <SignInModal
         open={signInOpen}
         onClose={() => setSignInOpen(false)}
+        {...(storage
+          ? {
+              // Social sign-in navigates the tab to the provider. Autosave is
+              // debounced 2s with a timer that resets on every change, so an
+              // edit made just before clicking would otherwise be lost on
+              // unload — flush it synchronously first.
+              beforeRedirect: () => storage.scheduler.flushNow(),
+            }
+          : {})}
         onSignedIn={() => {
           // No-op for now — SaaS state refresh inside the modal triggers
           // the relevant re-renders. Hook point for "save to cloud
@@ -546,15 +590,16 @@ function AutoExportStatusPanel({ statuses }: { statuses: AutoExportStatus[] }) {
     >
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
         <strong style={{ fontSize: 13, color: '#111' }}>
-          {done ? 'Downloads generated' : 'Generating downloads…'}
+          {done ? 'Downloads generated' : 'Generating downloads...'}
         </strong>
         {done && (
           <a
             href={window.location.pathname + window.location.hash}
-            style={{ fontSize: 11, color: '#888', textDecoration: 'none' }}
+            style={{ display: 'inline-flex', color: '#888', textDecoration: 'none' }}
             title="Dismiss"
+            aria-label="Dismiss"
           >
-            ×
+            <X size={13} />
           </a>
         )}
       </div>
@@ -562,18 +607,20 @@ function AutoExportStatusPanel({ statuses }: { statuses: AutoExportStatus[] }) {
         {formats.map((f) => {
           const s = byFormat.get(f);
           const label = f.toUpperCase();
-          if (!s) return <li key={f} style={{ color: '#aaa' }}>{label} — waiting…</li>;
-          if (s.running) return <li key={f}>{label} — exporting…</li>;
+          if (!s) return <li key={f} style={{ color: '#aaa' }}>{label}: waiting...</li>;
+          if (s.running) return <li key={f}>{label}: exporting...</li>;
           if (s.result === 'ok') {
             return (
-              <li key={f} style={{ color: '#15803d' }}>
-                ✓ {label} — uploaded ({formatBytes(s.bytes)})
+              <li key={f} style={{ color: '#15803d', display: 'flex', alignItems: 'center', gap: 4 }}>
+                <Check size={12} />
+                {label}: uploaded ({formatBytes(s.bytes)})
               </li>
             );
           }
           return (
-            <li key={f} style={{ color: '#b91c1c' }} title={s.error}>
-              × {label} — failed
+            <li key={f} style={{ color: '#b91c1c', display: 'flex', alignItems: 'center', gap: 4 }} title={s.error}>
+              <X size={12} />
+              {label}: failed
             </li>
           );
         })}

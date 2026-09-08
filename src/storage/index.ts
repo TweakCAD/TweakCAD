@@ -16,6 +16,13 @@ export {
   isSignedIn,
 } from './saasState.ts';
 export type { SaasState, SaasUser } from './saasState.ts';
+export {
+  loadSocialProviders,
+  getSocialProviders,
+  onSocialProvidersChange,
+  resetSocialProviders,
+} from './socialProviders.ts';
+export type { SocialProvider } from './socialProviders.ts';
 export { useSaasState } from './useSaasState.ts';
 export type { DocumentStorage } from './documentStorage.ts';
 export { storageLabel, storageIcon, suggestFilename } from './documentStorage.ts';
@@ -36,8 +43,9 @@ export type {
 export {
   newDocument,
   openFromDisk,
+  importFcstdAsDocument,
   save,
   saveAsToDisk,
   saveAsNewCloudProject,
 } from './fileOps.ts';
-export type { FileOpsHandles } from './fileOps.ts';
+export type { FileOpsHandles, FcstdImportOutcome } from './fileOps.ts';

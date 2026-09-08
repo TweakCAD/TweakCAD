@@ -61,6 +61,30 @@ import type { EditorState } from './operations.ts';
  * it, save it — the same lines re-emit the same entity ids so
  * downstream `ProfileRef.wireEntityIds` references survive.
  */
+/**
+ * Serialize a coordinate / dimension to its `buildGeometry` string form.
+ *
+ * Coordinate strings are evaluated as expressions at build time, and the
+ * expression grammar has no exponent notation — so a value that `String()`
+ * would render in scientific form (`String(1e-15)` → `"1e-15"`,
+ * `String(1e-7)` → `"1e-7"`) must not reach the document, or the entity
+ * fails to resolve with "expression evaluation error". This bites geometry
+ * with floating-point noise: a coordinate that is geometrically 0 but lands
+ * at `-2.66e-15` (FreeCAD's solved sketch coords, or a full arc's
+ * `R*sin(π)` endpoint computed in the editor).
+ *
+ * Sub-nanometre magnitudes are noise — snap them to `0`. Anything else that
+ * would stringify to exponent form is expanded to a plain decimal. Normal
+ * values pass through `String()` unchanged so existing coordinates serialize
+ * byte-for-byte as before.
+ */
+function coord(n: number): string {
+  const s = String(n);
+  if (!s.includes('e') && !s.includes('E')) return s;
+  if (Math.abs(n) < 1e-9) return '0';
+  return n.toFixed(20).replace(/0+$/, '').replace(/\.$/, '');
+}
+
 export function editorModelToBuildGeometry(
   state: EditorState,
 ): Record<EntityId, SketchEntity> {
@@ -76,8 +100,8 @@ export function editorModelToBuildGeometry(
         const entity: SketchLineEntity = {
           id: eId,
           type: 'line',
-          start: [String(start.x), String(start.y)],
-          end: [String(end.x), String(end.y)],
+          start: [coord(start.x), coord(start.y)],
+          end: [coord(end.x), coord(end.y)],
           ...(geom.construction ? { construction: true as const } : {}),
         };
         result[eId] = entity;
@@ -90,8 +114,8 @@ export function editorModelToBuildGeometry(
         const entity: SketchCircleEntity = {
           id: eId,
           type: 'circle',
-          center: [String(center.x), String(center.y)],
-          diameter: String(geom.radius * 2),
+          center: [coord(center.x), coord(center.y)],
+          diameter: coord(geom.radius * 2),
           ...(geom.construction ? { construction: true as const } : {}),
         };
         result[eId] = entity;
@@ -111,10 +135,10 @@ export function editorModelToBuildGeometry(
         const entity: SketchArcEntity = {
           id: eId,
           type: 'arc',
-          center: [String(center.x), String(center.y)],
-          radius: String(geom.radius),
-          startAngle: String(startAngle),
-          endAngle: String(endAngle),
+          center: [coord(center.x), coord(center.y)],
+          radius: coord(geom.radius),
+          startAngle: coord(startAngle),
+          endAngle: coord(endAngle),
           ...(geom.construction ? { construction: true as const } : {}),
         };
         result[eId] = entity;
@@ -132,9 +156,9 @@ export function editorModelToBuildGeometry(
         const entity: SketchEllipseEntity = {
           id: eId,
           type: 'ellipse',
-          center: [String(center.x), String(center.y)],
-          majorEnd: [String(major.x), String(major.y)],
-          minorRadius: String(geom.minorRadius),
+          center: [coord(center.x), coord(center.y)],
+          majorEnd: [coord(major.x), coord(major.y)],
+          minorRadius: coord(geom.minorRadius),
           ...(geom.construction ? { construction: true as const } : {}),
         };
         result[eId] = entity;
@@ -146,7 +170,7 @@ export function editorModelToBuildGeometry(
         for (const pid of geom.pointIds) {
           const p = state.points.get(pid);
           if (!p) { missing = true; break; }
-          pts.push([String(p.x), String(p.y)]);
+          pts.push([coord(p.x), coord(p.y)]);
         }
         if (missing || pts.length < 2) continue;
         const eId = entityId(String(geom.id));
@@ -169,10 +193,10 @@ export function editorModelToBuildGeometry(
         const entity: SketchBezierEntity = {
           id: eId,
           type: 'bezier',
-          start: [String(start.x), String(start.y)],
-          cp1: [String(cp1.x), String(cp1.y)],
-          cp2: [String(cp2.x), String(cp2.y)],
-          end: [String(end.x), String(end.y)],
+          start: [coord(start.x), coord(start.y)],
+          cp1: [coord(cp1.x), coord(cp1.y)],
+          cp2: [coord(cp2.x), coord(cp2.y)],
+          end: [coord(end.x), coord(end.y)],
           ...(geom.construction ? { construction: true as const } : {}),
         };
         result[eId] = entity;
@@ -185,7 +209,7 @@ export function editorModelToBuildGeometry(
         const entity: SketchPointEntity = {
           id: eId,
           type: 'point',
-          at: [String(p.x), String(p.y)],
+          at: [coord(p.x), coord(p.y)],
           ...(geom.construction ? { construction: true as const } : {}),
         };
         result[eId] = entity;

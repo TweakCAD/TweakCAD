@@ -12,13 +12,15 @@
  * passed in by the host (App.tsx).
  */
 import type { DocumentStore } from '@tweakcad/core/src/store/documentStore.ts';
-import type { CadProject } from '@tweakcad/core/src/document/schema.ts';
+import type { CadProject, Diagnostic } from '@tweakcad/core/src/document/schema.ts';
+import { importFcstd } from '@tweakcad/fcstd-import';
 import type { AutosaveScheduler } from './autosave.ts';
 import type { DocumentStorage } from './documentStorage.ts';
 import type { ProjectContext } from './context.ts';
 import { suggestFilename } from './documentStorage.ts';
 import {
   openFileFromDisk,
+  pickFcstdForImport,
   saveFileAs,
   writeToHandle,
   type OpenResult,
@@ -72,6 +74,42 @@ export async function openFromDisk(h: FileOpsHandles): Promise<OpenResult | null
   // Autosave still routes to IDB as crash-recovery; behaves like local-stored.
   h.setContext({ kind: 'local-stored', localId: `disk-${result.filename}` });
   return result;
+}
+
+// --- Import FreeCAD (.fcstd) ---------------------------------------------
+
+export type FcstdImportOutcome = {
+  fileName: string;
+  diagnostics: Diagnostic[];
+};
+
+/**
+ * Import → FreeCAD (.fcstd). Opens the picked file as a brand-new document,
+ * mirroring `openFromDisk`: a `.fcstd` carries a whole parametric tree (one
+ * CadPart per FreeCAD Body), so it REPLACES the active document rather than
+ * appending into it. The imported project starts `unsaved` — there is no
+ * `.cadjson` handle yet, so the next Save prompts for a location.
+ *
+ * Returns the import diagnostics (unsupported features/geometry,
+ * constraints-not-imported notes) for the caller to surface, or null if the
+ * user cancels the picker or declines to discard unsaved changes. Throws if
+ * the archive can't be unzipped / parsed.
+ */
+export async function importFcstdAsDocument(h: FileOpsHandles): Promise<FcstdImportOutcome | null> {
+  if (!(await confirmDiscardUnsavedChanges(h))) return null;
+  const pick = await pickFcstdForImport();
+  if (!pick) return null;
+
+  const baseName = pick.fileName.replace(/\.fcstd$/i, '');
+  const result = await importFcstd(pick.bytes, baseName ? { name: baseName } : {});
+  if (!result.ok) {
+    throw new Error(result.error);
+  }
+
+  h.documentStore.replaceDocument(result.value.project);
+  h.setStorage({ kind: 'unsaved' });
+  h.setContext({ kind: 'local-fresh' });
+  return { fileName: pick.fileName, diagnostics: result.value.diagnostics };
 }
 
 // --- Save ----------------------------------------------------------------

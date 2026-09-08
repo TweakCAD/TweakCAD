@@ -13,8 +13,13 @@
  * Uses inline styles to match the rest of the app (no Tailwind here).
  */
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { ExternalLink } from 'lucide-react';
 import { BetterAuthIdentityProvider } from '@tweakcad/cloud-providers';
 import { refreshSaasState } from '../storage/saasState.ts';
+import {
+  onSocialProvidersChange,
+  type SocialProvider,
+} from '../storage/socialProviders.ts';
 
 let cachedProvider: BetterAuthIdentityProvider | null = null;
 function provider(): BetterAuthIdentityProvider {
@@ -27,16 +32,32 @@ export function SignInModal({
   open,
   onClose,
   onSignedIn,
+  beforeRedirect,
 }: {
   open: boolean;
   onClose: () => void;
   onSignedIn?: () => void;
+  /**
+   * Awaited immediately before a social sign-in navigates the page away.
+   * App.tsx passes the autosave scheduler's `flushNow`: autosave is debounced
+   * 2s and its timer resets on every change, so without this an edit made
+   * shortly before clicking a provider button would be lost when the tab
+   * unloads. (The document survives via IndexedDB; the in-memory undo stack
+   * does not, which is inherent to a full-page OAuth redirect.)
+   */
+  beforeRedirect?: () => Promise<void>;
 }) {
   const ref = useRef<HTMLDialogElement | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [socialProviders, setSocialProviders] = useState<SocialProvider[]>([]);
+  const [redirecting, setRedirecting] = useState<string | null>(null);
+
+  // Populated by the boot-time fetch in App.tsx; stays empty in standalone
+  // mode and whenever the deployment has no provider credentials set.
+  useEffect(() => onSocialProvidersChange(setSocialProviders), []);
 
   useEffect(() => {
     const el = ref.current;
@@ -70,6 +91,38 @@ export function SignInModal({
     onClose();
   }
 
+  /**
+   * Social sign-in. Flushes pending autosave, then hands off to the provider —
+   * on success this navigates away and nothing below runs.
+   */
+  async function onSocial(providerId: string, label: string) {
+    setError(null);
+    setRedirecting(label);
+    try {
+      await beforeRedirect?.();
+    } catch (err) {
+      // A failed flush is not a reason to lose the sign-in, but the user
+      // should know their last edits may not have made it to disk.
+      console.warn('[signin] autosave flush before redirect failed', err);
+    }
+    // `callbackURL` is a path, resolved by Better Auth against ITS OWN
+    // baseURL — not against this page's origin. In prod that's the same host
+    // (the editor is served at /cad by the site) so the user lands back in
+    // the editor. In dev the CAD app is on :5173 while the SaaS is on :3000,
+    // so the round trip ends on the site rather than back here. That's a
+    // dev-only artifact of the split ports, not a bug to route around.
+    const result = await provider().signInSocial({
+      provider: providerId,
+      callbackURL: window.location.pathname,
+    });
+    // `redirected: true` means the navigation is under way — leave the
+    // spinner up and let the page unload.
+    if (!result.redirected) {
+      setError(result.message);
+      setRedirecting(null);
+    }
+  }
+
   function onDialogClick(e: React.MouseEvent<HTMLDialogElement>) {
     if (e.target === e.currentTarget) onClose();
   }
@@ -93,6 +146,33 @@ export function SignInModal({
             Sign in to sync this project with your cloud account.
           </p>
         </div>
+
+        {socialProviders.length > 0 && (
+          <div style={styles.socialGroup}>
+            {socialProviders.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                disabled={submitting || redirecting !== null}
+                onClick={() => void onSocial(p.id, p.label)}
+                style={{
+                  ...styles.socialBtn,
+                  cursor: redirecting !== null ? 'wait' : 'pointer',
+                  opacity: submitting || redirecting !== null ? 0.6 : 1,
+                }}
+              >
+                {redirecting === p.label
+                  ? `Redirecting to ${p.label}...`
+                  : `Continue with ${p.label}`}
+              </button>
+            ))}
+            <div style={styles.divider}>
+              <span style={styles.dividerLine} />
+              <span style={styles.dividerText}>or</span>
+              <span style={styles.dividerLine} />
+            </div>
+          </div>
+        )}
 
         <Field
           label="Email"
@@ -127,7 +207,7 @@ export function SignInModal({
             (e.currentTarget as HTMLButtonElement).style.background = '#1a6fd1';
           }}
         >
-          {submitting ? 'Signing in…' : 'Sign in'}
+          {submitting ? 'Signing in...' : 'Sign in'}
         </button>
 
         <div style={styles.footer}>
@@ -136,9 +216,11 @@ export function SignInModal({
             href="/signup"
             target="_blank"
             rel="noopener noreferrer"
-            style={styles.signupLink}
+            aria-label="Create one (opens in a new tab)"
+            style={{ ...styles.signupLink, display: 'inline-flex', alignItems: 'center', gap: 4 }}
           >
-            Create one →
+            Create one
+            <ExternalLink size={11} aria-hidden />
           </a>
           <span style={styles.footerSpacer} />
           <button type="button" onClick={onClose} style={styles.cancelBtn}>
@@ -237,6 +319,36 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#ffffff',
     fontFamily: 'inherit',
     boxSizing: 'border-box',
+  },
+  socialGroup: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+  },
+  socialBtn: {
+    width: '100%',
+    padding: '8px 14px',
+    fontSize: 13,
+    fontWeight: 500,
+    background: '#ffffff',
+    color: '#333',
+    border: '1px solid #d0d0d0',
+    borderRadius: 6,
+    fontFamily: 'inherit',
+  },
+  divider: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    background: '#e5e5e5',
+  },
+  dividerText: {
+    fontSize: 11,
+    color: '#999',
   },
   error: {
     fontSize: 12,

@@ -71,6 +71,19 @@ const SVG_IMPORT_TYPES: FilePickerAcceptType[] = [
 ];
 
 /**
+ * FreeCAD `.fcstd` import accepts only .fcstd. A .fcstd is a binary ZIP
+ * archive carrying a whole parametric document (Sketch/Pad/Pocket tree), so
+ * it opens as a new document rather than embedding as a body — kept separate
+ * from IMPORT_TYPES (3D body geometry) for that reason.
+ */
+const FCSTD_IMPORT_TYPES: FilePickerAcceptType[] = [
+  {
+    description: 'FreeCAD document (.fcstd)',
+    accept: { 'application/x-extension-fcstd': ['.fcstd', '.FCStd'] },
+  },
+];
+
+/**
  * Component import accepts .cadcomponent (the convention) plus .cadjson
  * (since a .cadcomponent IS just a .cadjson with one part and at least
  * one public parameter). Separate filter so the user can't accidentally
@@ -122,6 +135,92 @@ export type OpenResult = {
 /** True if the modern File System Access API is available. */
 export function isFileSystemAccessSupported(): boolean {
   return typeof window !== 'undefined' && 'showOpenFilePicker' in window;
+}
+
+// --- Shared import-file picker -------------------------------------------
+
+/**
+ * Open-file-picker plumbing shared by every import flow: tries the File
+ * System Access API and falls back to a hidden `<input>`, mapping the chosen
+ * File through `read`. Returns null when the user cancels. Each typed picker
+ * (geometry, sketch text, component, `.fcstd`) is a thin wrapper that differs
+ * only in the accepted types and how the File is decoded.
+ *
+ * The `.cadjson` Open path (`openFileFromDisk`) deliberately does NOT use
+ * this — it keeps the `FileSystemFileHandle` for later Save-back, a contract
+ * the import pickers don't share.
+ */
+async function pickImportFile<T>(opts: {
+  types: FilePickerAcceptType[];
+  accept: string;
+  read: (file: File) => Promise<T>;
+}): Promise<T | null> {
+  if (isFileSystemAccessSupported()) {
+    return pickViaFSA(opts.types, opts.read);
+  }
+  return pickViaInput(opts.accept, opts.read);
+}
+
+async function pickViaFSA<T>(
+  types: FilePickerAcceptType[],
+  read: (file: File) => Promise<T>,
+): Promise<T | null> {
+  const picker = window.showOpenFilePicker!;
+  try {
+    const [handle] = await picker({ multiple: false, types, excludeAcceptAllOption: false });
+    if (!handle) return null;
+    return await read(await handle.getFile());
+  } catch (err) {
+    // AbortError = user cancelled the picker.
+    if ((err as DOMException)?.name === 'AbortError') return null;
+    throw err;
+  }
+}
+
+function pickViaInput<T>(
+  accept: string,
+  read: (file: File) => Promise<T>,
+): Promise<T | null> {
+  return new Promise((resolve, reject) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = accept;
+    input.style.display = 'none';
+
+    // The picker is modal but doesn't fire a reliable 'cancel' event across
+    // browsers; detect cancellation via a change event with no files plus a
+    // window-focus heuristic.
+    let resolved = false;
+    const cleanup = () => {
+      if (resolved) return;
+      resolved = true;
+      input.remove();
+      window.removeEventListener('focus', onFocus);
+    };
+    const onFocus = () => {
+      setTimeout(() => {
+        if (resolved) return;
+        if (!input.files || input.files.length === 0) { cleanup(); resolve(null); }
+      }, 200);
+    };
+
+    input.addEventListener('change', async () => {
+      const file = input.files?.[0];
+      if (!file) { cleanup(); resolve(null); return; }
+      try {
+        const result = await read(file);
+        cleanup();
+        resolve(result);
+      } catch (err) {
+        cleanup();
+        reject(err);
+      }
+    });
+
+    document.body.appendChild(input);
+    window.addEventListener('focus', onFocus, { once: true });
+    input.click();
+  });
 }
 
 // --- Open ----------------------------------------------------------------
@@ -227,15 +326,14 @@ function openViaInput(): Promise<OpenResult | null> {
  * in one place — the calling layer (App.tsx) just dispatches the
  * CreateImportedGeometry command with the result.
  */
-export async function pickGeometryForImport(
+export function pickGeometryForImport(
   format?: 'step' | 'stl' | 'brep',
 ): Promise<ImportPickResult | null> {
-  const types = pickerTypesFor(format);
-  const inputAccept = inputAcceptFor(format);
-  if (isFileSystemAccessSupported()) {
-    return pickImportViaFSA(types);
-  }
-  return pickImportViaInput(inputAccept);
+  return pickImportFile({
+    types: pickerTypesFor(format),
+    accept: inputAcceptFor(format),
+    read: fileToImportResult,
+  });
 }
 
 /**
@@ -263,66 +361,6 @@ function inputAcceptFor(format?: 'step' | 'stl' | 'brep'): string {
   if (format === 'stl') return '.stl,model/stl';
   if (format === 'brep') return '.brep,.brp,model/brep';
   return '.step,.stp,.stl,.brep,.brp,model/step,model/stl,model/brep';
-}
-
-async function pickImportViaFSA(types: FilePickerAcceptType[]): Promise<ImportPickResult | null> {
-  const picker = window.showOpenFilePicker!;
-  try {
-    const [handle] = await picker({
-      multiple: false,
-      types,
-      excludeAcceptAllOption: false,
-    });
-    if (!handle) return null;
-    const file = await handle.getFile();
-    return await fileToImportResult(file);
-  } catch (err) {
-    if ((err as DOMException)?.name === 'AbortError') return null;
-    throw err;
-  }
-}
-
-function pickImportViaInput(accept: string): Promise<ImportPickResult | null> {
-  return new Promise((resolve, reject) => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = accept;
-    input.style.display = 'none';
-
-    let resolved = false;
-    const cleanup = () => {
-      if (resolved) return;
-      resolved = true;
-      input.remove();
-      window.removeEventListener('focus', onFocus);
-    };
-    const onFocus = () => {
-      setTimeout(() => {
-        if (resolved) return;
-        if (!input.files || input.files.length === 0) {
-          cleanup();
-          resolve(null);
-        }
-      }, 200);
-    };
-
-    input.addEventListener('change', async () => {
-      const file = input.files?.[0];
-      if (!file) { cleanup(); resolve(null); return; }
-      try {
-        const result = await fileToImportResult(file);
-        cleanup();
-        resolve(result);
-      } catch (err) {
-        cleanup();
-        reject(err);
-      }
-    });
-
-    document.body.appendChild(input);
-    window.addEventListener('focus', onFocus, { once: true });
-    input.click();
-  });
 }
 
 /**
@@ -383,81 +421,42 @@ export type SketchTextImportResult = {
  * (2D geometry on a chosen plane), never the 3D body import.
  */
 export function pickDxfForImport(): Promise<SketchTextImportResult | null> {
-  return pickTextFileForImport(DXF_IMPORT_TYPES, '.dxf,image/vnd.dxf');
+  return pickImportFile({ types: DXF_IMPORT_TYPES, accept: '.dxf,image/vnd.dxf', read: readAsSketchText });
 }
 
 /** Prompt for a `.svg` file and return its text, ready for `parseSvg`. */
 export function pickSvgForImport(): Promise<SketchTextImportResult | null> {
-  return pickTextFileForImport(SVG_IMPORT_TYPES, '.svg,image/svg+xml');
+  return pickImportFile({ types: SVG_IMPORT_TYPES, accept: '.svg,image/svg+xml', read: readAsSketchText });
 }
 
-async function pickTextFileForImport(
-  types: FilePickerAcceptType[],
-  accept: string,
-): Promise<SketchTextImportResult | null> {
-  if (isFileSystemAccessSupported()) {
-    return pickTextViaFSA(types);
-  }
-  return pickTextViaInput(accept);
+async function readAsSketchText(file: File): Promise<SketchTextImportResult> {
+  return { fileName: file.name, text: await file.text() };
 }
 
-async function pickTextViaFSA(types: FilePickerAcceptType[]): Promise<SketchTextImportResult | null> {
-  const picker = window.showOpenFilePicker!;
-  try {
-    const [handle] = await picker({
-      multiple: false,
-      types,
-      excludeAcceptAllOption: false,
-    });
-    if (!handle) return null;
-    const file = await handle.getFile();
-    return { fileName: file.name, text: await file.text() };
-  } catch (err) {
-    if ((err as DOMException)?.name === 'AbortError') return null;
-    throw err;
-  }
-}
+// --- Import FreeCAD (.fcstd) --------------------------------------------
 
-function pickTextViaInput(accept: string): Promise<SketchTextImportResult | null> {
-  return new Promise((resolve, reject) => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = accept;
-    input.style.display = 'none';
+/**
+ * Result of a `.fcstd` file pick: the file name and the raw archive bytes.
+ * A `.fcstd` is a binary ZIP archive (like STEP/STL/BREP it's read as bytes,
+ * not text), but it carries a whole parametric document, so it routes to the
+ * OPEN flow (`importFcstdAsDocument`) — replacing the active document — not
+ * the `importedGeometry` body flow.
+ */
+export type FcstdImportPickResult = {
+  fileName: string;
+  /** Raw `.fcstd` bytes (a ZIP archive), ready for `importFcstd`. */
+  bytes: Uint8Array;
+};
 
-    let resolved = false;
-    const cleanup = () => {
-      if (resolved) return;
-      resolved = true;
-      input.remove();
-      window.removeEventListener('focus', onFocus);
-    };
-    const onFocus = () => {
-      setTimeout(() => {
-        if (resolved) return;
-        if (!input.files || input.files.length === 0) {
-          cleanup();
-          resolve(null);
-        }
-      }, 200);
-    };
-
-    input.addEventListener('change', async () => {
-      const file = input.files?.[0];
-      if (!file) { cleanup(); resolve(null); return; }
-      try {
-        const text = await file.text();
-        cleanup();
-        resolve({ fileName: file.name, text });
-      } catch (err) {
-        cleanup();
-        reject(err);
-      }
-    });
-
-    document.body.appendChild(input);
-    window.addEventListener('focus', onFocus, { once: true });
-    input.click();
+/**
+ * Prompt for a `.fcstd` (FreeCAD) file and return its raw bytes, ready for
+ * `importFcstd`. Returns null if the user cancels.
+ */
+export function pickFcstdForImport(): Promise<FcstdImportPickResult | null> {
+  return pickImportFile({
+    types: FCSTD_IMPORT_TYPES,
+    accept: '.fcstd,application/x-extension-fcstd',
+    read: async (file) => ({ fileName: file.name, bytes: new Uint8Array(await file.arrayBuffer()) }),
   });
 }
 
@@ -478,70 +477,11 @@ function pickTextViaInput(accept: string): Promise<SketchTextImportResult | null
  * Errors during pick / parse propagate; callers should `try / catch`
  * and surface a user-visible message.
  */
-export async function pickComponentForImport(): Promise<ComponentImportPickResult | null> {
-  if (isFileSystemAccessSupported()) {
-    return pickComponentViaFSA();
-  }
-  return pickComponentViaInput();
-}
-
-async function pickComponentViaFSA(): Promise<ComponentImportPickResult | null> {
-  const picker = window.showOpenFilePicker!;
-  try {
-    const [handle] = await picker({
-      multiple: false,
-      types: COMPONENT_IMPORT_TYPES,
-      excludeAcceptAllOption: false,
-    });
-    if (!handle) return null;
-    const file = await handle.getFile();
-    return await fileToComponentResult(file);
-  } catch (err) {
-    if ((err as DOMException)?.name === 'AbortError') return null;
-    throw err;
-  }
-}
-
-function pickComponentViaInput(): Promise<ComponentImportPickResult | null> {
-  return new Promise((resolve, reject) => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.cadcomponent,.cadjson,application/json';
-    input.style.display = 'none';
-
-    let resolved = false;
-    const cleanup = () => {
-      if (resolved) return;
-      resolved = true;
-      input.remove();
-      window.removeEventListener('focus', onFocus);
-    };
-    const onFocus = () => {
-      setTimeout(() => {
-        if (resolved) return;
-        if (!input.files || input.files.length === 0) {
-          cleanup();
-          resolve(null);
-        }
-      }, 200);
-    };
-
-    input.addEventListener('change', async () => {
-      const file = input.files?.[0];
-      if (!file) { cleanup(); resolve(null); return; }
-      try {
-        const result = await fileToComponentResult(file);
-        cleanup();
-        resolve(result);
-      } catch (err) {
-        cleanup();
-        reject(err);
-      }
-    });
-
-    document.body.appendChild(input);
-    window.addEventListener('focus', onFocus, { once: true });
-    input.click();
+export function pickComponentForImport(): Promise<ComponentImportPickResult | null> {
+  return pickImportFile({
+    types: COMPONENT_IMPORT_TYPES,
+    accept: '.cadcomponent,.cadjson,application/json',
+    read: fileToComponentResult,
   });
 }
 
@@ -573,7 +513,7 @@ async function fileToComponentResult(file: File): Promise<ComponentImportPickRes
   }
   const parts = obj.parts as Record<string, unknown>;
   if (Object.keys(parts).length === 0) {
-    throw new Error(`"${file.name}" has no parts — nothing to instance as a component.`);
+    throw new Error(`"${file.name}" has no parts, so there is nothing to instance as a component.`);
   }
 
   const source = parsed as CadProject;

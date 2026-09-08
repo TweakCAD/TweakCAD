@@ -94,7 +94,11 @@ export function parseExtrudeProperties(props: ObjectProperties): ExtrudeProperti
     reversed: toBool(props.scalars['Reversed'], false),
     midplane: toBool(props.scalars['Midplane'], false),
     type: toInt(props.scalars['Type'], 0),
-    profileName: props.links['Profile'],
+    // The profile sketch link is named `Profile` (App::PropertyLinkSub) in
+    // modern FreeCAD (≥ ~0.19) but `Sketch` (App::PropertyLink) in older
+    // files. Both decode into `links`, so accept either — preferring the
+    // modern name when both are present.
+    profileName: props.links['Profile'] ?? props.links['Sketch'],
   };
 }
 
@@ -105,17 +109,28 @@ export type BodyProperties = {
 };
 
 export function parseBodyProperties(props: ObjectProperties): BodyProperties {
+  // The Body's ordered children live under `Group` (App::PropertyLinkList) in
+  // modern FreeCAD but under `Model` in older files. Prefer a non-empty
+  // `Group`, falling back to `Model`.
+  const group = props.linkLists['Group'];
+  const model = props.linkLists['Model'];
   return {
-    groupLinks: props.linkLists['Group'] ?? [],
+    groupLinks: (group && group.length > 0 ? group : model) ?? [],
     tip: props.links['Tip'],
   };
 }
 
-/** First support link target — e.g. "XY_Plane" for a sketch on the XY plane. */
+/**
+ * First support link target — e.g. "XY_Plane" for a sketch on the XY plane.
+ *
+ * The attachment link is named `AttachmentSupport` in modern FreeCAD
+ * (≥ ~0.21) and `Support` in older files; accept either.
+ */
 export function parseSketchSupport(propertiesNode: XmlNode | undefined): string | undefined {
   if (!propertiesNode) return undefined;
   for (const prop of findChildren(propertiesNode, 'Property')) {
-    if (prop.attrs['name'] !== 'Support') continue;
+    const name = prop.attrs['name'];
+    if (name !== 'AttachmentSupport' && name !== 'Support') continue;
     const inner = findChild(prop, 'LinkSubList') ?? findChild(prop, 'LinkList');
     if (!inner) return undefined;
     for (const link of inner.children) {
