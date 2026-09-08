@@ -98,7 +98,7 @@ function describe(status: Status, storage: DocumentStorage): string {
     case 'idle':
       return storage.kind === 'unsaved' ? 'no changes' : 'idle';
     case 'saving':
-      return 'saving…';
+      return 'saving...';
     case 'saved':
       return 'saved';
     case 'offline':

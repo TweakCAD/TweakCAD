@@ -69,7 +69,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   override componentDidCatch(error: Error, info: ErrorInfo): void {
     // Always log — the only signal a dev gets when a boundary catches.
-    // eslint-disable-next-line no-console
+     
     console.error(
       `[ErrorBoundary${this.props.scopeLabel ? `:${this.props.scopeLabel}` : ''}]`,
       error,
@@ -119,8 +119,8 @@ function DefaultFallback(props: {
       <div style={styles.card}>
         <div style={styles.title}>Something went wrong rendering {scope}.</div>
         <div style={styles.subtitle}>
-          The rest of the app is still running. You can retry — or, if the
-          problem persists, reload the page.
+          The rest of the app is still running. You can retry, or reload the
+          page if the problem persists.
         </div>
         <pre style={styles.errorBox}>{formatError(props.error)}</pre>
         <div style={styles.actions}>

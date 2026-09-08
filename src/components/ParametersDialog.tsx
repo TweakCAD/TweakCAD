@@ -10,8 +10,9 @@
  * (string-typed, picks from `options[]`).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, X, Trash2, RotateCcw, Check } from 'lucide-react';
+import { Plus, X, Trash2, RotateCcw, Check, Circle, ChevronRight } from 'lucide-react';
 import { useCommandBus, useDocumentState } from '../hooks/useDocumentStore.ts';
+import { useSeededState } from '../hooks/useSeededState.ts';
 import { resolveAllParameters } from '@tweakcad/core/src/parameters/evaluator.ts';
 import { evaluateExpression } from '@tweakcad/core/src/expressions.ts';
 import { formatWithUnit } from '@tweakcad/core/src/units.ts';
@@ -76,22 +77,30 @@ export function ParametersDialog({ open, onClose }: DialogProps) {
   const [syncKey, setSyncKey] = useState(0);
   const [applyError, setApplyError] = useState<string | null>(null);
 
-  useEffect(() => {
+  // Both resets are adjusted during render rather than in effects, so the
+  // dialog never paints the previous session's scope or staged edits for a
+  // frame before clearing them. Each keys off its own previous value, so
+  // opening the dialog and switching scope stay independent triggers.
+  const [lastOpen, setLastOpen] = useState(open);
+  if (open !== lastOpen) {
+    setLastOpen(open);
     if (open) {
       setScope('project');
       setPending({});
       setApplyError(null);
       setSyncKey(k => k + 1);
     }
-  }, [open]);
+  }
 
   // Switching tabs discards pending edits in the previous scope. A confirm
   // would be friendlier; deferred to a future polish pass.
-  useEffect(() => {
+  const [lastScope, setLastScope] = useState(scope);
+  if (scope !== lastScope) {
+    setLastScope(scope);
     setPending({});
     setApplyError(null);
     setSyncKey(k => k + 1);
-  }, [scope]);
+  }
 
   const activeTable = useMemo(() => {
     if (scope === 'project') return project.parameters;
@@ -314,21 +323,16 @@ function ParameterRow({ scope, param, pendingValue, isDirty, existingNames, reso
 
   // Local edit state — typing is local; commit pushes to the staged
   // `pending` map (NOT directly to the document store).
-  const [expr, setExpr] = useState(seed.expression);
-  const [unit, setUnit] = useState<ParameterUnit>(seed.unit);
-  const [pub, setPub] = useState<boolean>(seed.public ?? false);
-  const [desc, setDesc] = useState<string>(seed.description ?? '');
-  const [kind, setKind] = useState<Kind>(initialKind);
-  const [optsCsv, setOptsCsv] = useState<string>(optionsToCsv(seed.options));
+  // Each field re-seeds when the underlying parameter changes from outside
+  // (e.g. undo) but is otherwise free to edit — see `useSeededState`, which
+  // does the re-seed during render rather than in six separate effects.
+  const [expr, setExpr] = useSeededState(seed.expression);
+  const [unit, setUnit] = useSeededState<ParameterUnit>(seed.unit);
+  const [pub, setPub] = useSeededState<boolean>(seed.public ?? false);
+  const [desc, setDesc] = useSeededState<string>(seed.description ?? '');
+  const [kind, setKind] = useSeededState<Kind>(initialKind);
+  const [optsCsv, setOptsCsv] = useSeededState<string>(optionsToCsv(seed.options));
   const [error, setError] = useState<string | null>(null);
-
-  // Re-sync when the underlying parameter changes from outside (e.g. undo).
-  useEffect(() => { setExpr(seed.expression); }, [seed.expression]);
-  useEffect(() => { setUnit(seed.unit); }, [seed.unit]);
-  useEffect(() => { setPub(seed.public ?? false); }, [seed.public]);
-  useEffect(() => { setDesc(seed.description ?? ''); }, [seed.description]);
-  useEffect(() => { setKind(seed.kind ?? 'number'); }, [seed.kind]);
-  useEffect(() => { setOptsCsv(optionsToCsv(seed.options)); }, [seed.options]);
 
   // Preview value: numbers run through the evaluator; choice shows the
   // selected option text directly.
@@ -387,7 +391,7 @@ function ParameterRow({ scope, param, pendingValue, isDirty, existingNames, reso
     const msg = refsToMe.length > 0
       ? `Delete "${param.name}"? Referenced by: ${refsToMe.join(', ')}. Dependent expressions will fail until updated.`
       : `Delete "${param.name}"?`;
-    // eslint-disable-next-line no-alert
+     
     if (!confirm(msg)) return;
     dispatch({ type: 'DeleteParameter', scope, name: param.name });
   }, [param, scope, existingNames, expr, dispatch]);
@@ -446,7 +450,11 @@ function ParameterRow({ scope, param, pendingValue, isDirty, existingNames, reso
         </div>
         <div style={styles.colName}>
           <span style={styles.nameLabel}>
-            {isDirty && <span style={styles.dirtyDot} title="Pending change — click Apply to commit">●</span>}
+            {isDirty && (
+              <span style={styles.dirtyDot} title="Pending change; click Apply to commit">
+                <Circle size={7} fill="currentColor" strokeWidth={0} />
+              </span>
+            )}
             {param.name}
           </span>
         </div>
@@ -823,7 +831,9 @@ function ConfigurationsSection({ part, dispatch }: { part: CadPart; dispatch: Ro
               borderBottom: '1px solid #eee',
             }}
           >
-            <div title="Active row">▸</div>
+            <div title="Active row" style={{ display: 'flex', alignItems: 'center' }}>
+              <ChevronRight size={12} />
+            </div>
             <div>Name</div>
             {overridableParams.map(p => (
               <div key={p.name} title={`Override for "${p.name}" (default: ${p.expression})`}>{p.name}</div>
@@ -856,12 +866,13 @@ function ConfigurationRowView({ row, isActive, partId, params, onSetActive, disp
   onSetActive: () => void;
   dispatch: RowDispatch;
 }) {
-  const [name, setName] = useState(row.name);
-  const [overrides, setOverrides] = useState<Record<string, string>>(row.overrides);
+  // Re-seed from the configuration row when it changes underneath. Same
+  // pattern (and same `Object.is` comparison) the effects used, minus the
+  // extra render pass — `overrides` is compared by identity exactly as the
+  // dependency array did.
+  const [name, setName] = useSeededState(row.name);
+  const [overrides, setOverrides] = useSeededState<Record<string, string>>(row.overrides);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => setName(row.name), [row.name]);
-  useEffect(() => setOverrides(row.overrides), [row.overrides]);
 
   function commit(nextOverrides: Record<string, string>, nextName: string) {
     // Strip empty overrides — blank cell = "use default" not "override
@@ -880,7 +891,7 @@ function ConfigurationRowView({ row, isActive, partId, params, onSetActive, disp
   }
 
   function onDelete() {
-    // eslint-disable-next-line no-alert
+     
     if (!confirm(`Delete configuration "${row.name}"?`)) return;
     const result = dispatch({ type: 'DeleteConfigurationRow', partId, rowId: row.id });
     if (!result.ok) setError(result.error.message);
@@ -1156,9 +1167,9 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: 'pre-line',
   },
   dirtyDot: {
-    display: 'inline-block',
+    display: 'inline-flex',
+    alignItems: 'center',
     color: '#f59e0b',
-    fontSize: 10,
     marginRight: 4,
     lineHeight: 1,
   },

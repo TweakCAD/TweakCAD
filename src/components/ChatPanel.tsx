@@ -31,7 +31,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Wand2, X, Trash2, Send, ChevronDown } from 'lucide-react';
+import { Wand2, X, Trash2, Send, ChevronDown, ChevronRight } from 'lucide-react';
 import type { SaasState } from '../storage/index.ts';
 
 /**
@@ -193,11 +193,18 @@ export function ChatPanel({
 
   // Reload from storage when the project changes (e.g. user opens a
   // different file). Avoids cross-project transcript bleed.
-  useEffect(() => {
+  //
+  // Adjusted during render rather than in an effect: an effect renders the
+  // previous project's transcript once before replacing it, which is a
+  // visible flash of another file's conversation. React discards this
+  // in-progress render and retries with the new state before painting.
+  const [lastProjectKey, setLastProjectKey] = useState(projectKey);
+  if (projectKey !== lastProjectKey) {
+    setLastProjectKey(projectKey);
     setMessages(loadHistory(projectKey));
     setSelectedModelId(loadModelPref(projectKey));
     setError(null);
-  }, [projectKey]);
+  }
 
   // Persist on any change.
   useEffect(() => {
@@ -294,7 +301,7 @@ export function ChatPanel({
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === assistantMsgId
-                  ? { ...m, text: '(no response — try a more specific prompt)' }
+                  ? { ...m, text: '(no response; try a more specific prompt)' }
                   : m,
               ),
             );
@@ -386,7 +393,12 @@ export function ChatPanel({
           <p style={styles.statePlaceholderBody}>
             The in-app assistant runs against your account's model quota. Local
             users with their own API key can use the MCP bridge from{' '}
-            <strong>Settings → AI</strong> instead.
+            <strong style={{ display: 'inline-flex', alignItems: 'center', gap: 1, verticalAlign: 'text-bottom' }}>
+              Settings
+              <ChevronRight size={11} aria-hidden />
+              AI
+            </strong>{' '}
+            instead.
           </p>
           <button
             type="button"
@@ -435,7 +447,7 @@ export function ChatPanel({
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Ask the assistant…"
+              placeholder="Ask the assistant..."
               rows={2}
               style={styles.input}
               disabled={sending}

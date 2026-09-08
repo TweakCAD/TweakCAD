@@ -114,7 +114,7 @@ export async function* streamChat(req: ChatRequest): AsyncIterable<ChatStreamEve
     yield {
       type: 'done',
       stopReason: 'error',
-      error: { message: 'No response body — SSE stream is empty.' },
+      error: { message: 'No response body; the SSE stream is empty.' },
     };
     return;
   }

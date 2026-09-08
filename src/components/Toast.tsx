@@ -33,10 +33,16 @@ export function Toast({
 }: ToastProps) {
   const [visible, setVisible] = useState(true);
 
-  // Reset visibility when id changes (new toast).
-  useEffect(() => {
+  // Reset visibility when id changes (new toast). Adjusted during render
+  // rather than in an effect: an effect would paint the previous toast's
+  // dismissed state for one frame before showing the new one. Kept inside
+  // this component instead of asking callers for `key={id}` so the reset
+  // can't be forgotten at a new call site.
+  const [lastId, setLastId] = useState(id);
+  if (id !== lastId) {
+    setLastId(id);
     setVisible(true);
-  }, [id]);
+  }
 
   // Auto-dismiss timer.
   useEffect(() => {

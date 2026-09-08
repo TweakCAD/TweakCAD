@@ -156,7 +156,7 @@ export function PatternDialog({
               </button>
             </div>
           ) : (
-            <div style={styles.emptyHint}>Click a body in the viewport…</div>
+            <div style={styles.emptyHint}>Click a body in the viewport...</div>
           )}
         </div>
 

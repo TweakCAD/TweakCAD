@@ -96,7 +96,7 @@ export function ChamferDialog({
           </div>
           <div style={styles.edgeList}>
             {edges.length === 0 && (
-              <div style={styles.emptyHint}>Click body edges in the viewport…</div>
+              <div style={styles.emptyHint}>Click body edges in the viewport...</div>
             )}
             {edges.map((e, idx) => (
               <div key={e.key} style={styles.edgeRow}>

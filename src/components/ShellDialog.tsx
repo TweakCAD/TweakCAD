@@ -102,7 +102,7 @@ export function ShellDialog({
           </div>
           <div style={styles.faceList}>
             {faces.length === 0 && (
-              <div style={styles.emptyHint}>Click body faces in the viewport…</div>
+              <div style={styles.emptyHint}>Click body faces in the viewport...</div>
             )}
             {faces.map((f, idx) => (
               <div key={f.key} style={styles.faceRow}>

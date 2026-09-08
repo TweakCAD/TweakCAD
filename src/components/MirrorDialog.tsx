@@ -101,7 +101,7 @@ export function MirrorDialog({
               </button>
             </div>
           ) : (
-            <div style={styles.emptyHint}>Click a body in the viewport…</div>
+            <div style={styles.emptyHint}>Click a body in the viewport...</div>
           )}
         </div>
 
@@ -138,7 +138,7 @@ export function MirrorDialog({
                 color: operation === 'join' ? '#fff' : '#555',
                 borderColor: operation === 'join' ? '#a855f7' : '#d0d0d0',
               }}
-              title="Fuse mirror back with source — single symmetric body"
+              title="Fuse mirror back with source (single symmetric body)"
             >
               Join
             </button>

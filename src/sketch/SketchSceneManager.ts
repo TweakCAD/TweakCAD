@@ -927,7 +927,7 @@ export class SketchSceneManager {
         break;
       }
       case 'arc': {
-        let start = preview.startAngle;
+        const start = preview.startAngle;
         let end = preview.endAngle;
         if (end < start) end += Math.PI * 2;
         const segments = Math.max(16, Math.ceil(CIRCLE_SEGMENTS * (end - start) / (Math.PI * 2)));

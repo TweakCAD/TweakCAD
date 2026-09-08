@@ -44,11 +44,19 @@ export function SettingsDialog({ open, onClose }: DialogProps) {
     if (!open && el.open) el.close();
   }, [open]);
 
-  // Reset to AI tab when re-opening so the user always lands on the
-  // most-likely-needed pane. Cheap; trivial to revisit later.
-  useEffect(() => {
+  // Reset to the AI tab when re-opening so the user always lands on the
+  // most-likely-needed pane.
+  //
+  // Adjusted during render rather than in an effect: an effect would paint
+  // the stale tab first and then immediately re-render with the right one.
+  // This is react.dev's "adjusting state when a prop changes" pattern —
+  // React discards the in-progress render and retries with the new state
+  // before touching the DOM, so there's no visible intermediate frame.
+  const [lastOpen, setLastOpen] = useState(open);
+  if (open !== lastOpen) {
+    setLastOpen(open);
     if (open) setActiveTab('ai');
-  }, [open]);
+  }
 
   const onDialogClick = useCallback((e: React.MouseEvent<HTMLDialogElement>) => {
     // Click on the backdrop (the dialog element itself, not its
@@ -110,10 +118,14 @@ function AiTab() {
   const [portDraft, setPortDraft] = useState(String(ai.bridgePort));
 
   // Re-sync the draft if the store changes from outside (e.g. another
-  // tab in the same browser, or a settings reset).
-  useEffect(() => {
+  // tab in the same browser, or a settings reset). Adjusted during render
+  // for the same reason as the tab reset above — an effect would show the
+  // stale port for one frame.
+  const [lastBridgePort, setLastBridgePort] = useState(ai.bridgePort);
+  if (ai.bridgePort !== lastBridgePort) {
+    setLastBridgePort(ai.bridgePort);
     setPortDraft(String(ai.bridgePort));
-  }, [ai.bridgePort]);
+  }
 
   const onPortChange = useCallback((raw: string) => {
     setPortDraft(raw);
@@ -131,7 +143,7 @@ function AiTab() {
       <h3 style={styles.sectionTitle}>Local AI Bridge (MCP)</h3>
       <p style={styles.sectionLead}>
         Connect this CAD app to any <strong>MCP-capable AI assistant</strong>
-        {' '}(Claude Desktop, Claude Code, Cursor, Codex, VS Code…) via a local
+        {' '}(Claude Desktop, Claude Code, Cursor, Codex, VS Code...) via a local
         bridge process. The assistant can then inspect and modify your
         project through the same commands the human UI uses.
       </p>
@@ -190,7 +202,7 @@ function AiTab() {
           <li>Enable the toggle above.</li>
           <li>
             Register the bridge in your assistant's MCP server config (see the
-            bridge's README for client-specific snippets — Claude Desktop,
+            bridge's README for client-specific snippets: Claude Desktop,
             Cursor, VS Code, etc.).
           </li>
         </ol>

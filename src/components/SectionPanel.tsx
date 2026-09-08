@@ -8,6 +8,7 @@
  * the ViewportController (see setSectionPlane / flipSection).
  */
 
+import { SquareSplitHorizontal } from 'lucide-react';
 import { PanelHeader } from './PanelHeader.tsx';
 
 export type SectionOrientation = 'XY' | 'XZ' | 'YZ';
@@ -29,7 +30,7 @@ export function SectionPanel({ orientation, onOrientationChange, onFlip, onDone 
   return (
     <div style={styles.overlay}>
       <div style={styles.panel}>
-        <PanelHeader title="Section" icon={<span style={styles.headerIcon}>◧</span>} onClose={onDone} closeTitle="End section (Esc)" />
+        <PanelHeader title="Section" icon={<SquareSplitHorizontal size={14} color="#059669" />} onClose={onDone} closeTitle="End section (Esc)" />
 
         <div style={styles.section}>
           <div style={styles.sectionLabel}>Plane</div>
@@ -90,7 +91,6 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px',
     borderBottom: '1px solid #e8e8e8', background: '#fafafa',
   },
-  headerIcon: { fontSize: 15, color: '#059669', fontWeight: 700, width: 16, textAlign: 'center' },
   headerTitle: { flex: 1, fontSize: 13, fontWeight: 600, color: '#333' },
   closeBtn: {
     width: 24, height: 24, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',

@@ -82,7 +82,7 @@ export function SketchBrowser() {
   useEffect(() => {
     if (unsatisfied.size > 0) {
       consoleLog('warn',
-        `Sketch has ${unsatisfied.size} unsatisfied constraint(s) — check the Constraints list for red rows.`,
+        `Sketch has ${unsatisfied.size} unsatisfied constraint(s); check the Constraints list for red rows.`,
         'sketch',
       );
       return;
@@ -308,7 +308,7 @@ function Row({ icon, label, sub, onDelete, onHover, warn, isConstruction, onTogg
       }}
       onMouseEnter={() => { setHover(true); onHover?.(true); }}
       onMouseLeave={() => { setHover(false); onHover?.(false); }}
-      title={warn ? 'Over-constrained — this constraint can\'t be satisfied' : undefined}
+      title={warn ? 'Over-constrained; this constraint can\'t be satisfied' : undefined}
     >
       {warn && (
         <span style={styles.warnIcon} title="Over-constrained">

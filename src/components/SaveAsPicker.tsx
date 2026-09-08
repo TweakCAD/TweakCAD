@@ -96,7 +96,7 @@ export function SaveAsPicker({
     >
       <div style={styles.body}>
         <div>
-          <h2 style={styles.title}>Save a copy as…</h2>
+          <h2 style={styles.title}>Save a copy as...</h2>
           <p style={styles.subtitle}>Choose where to save the current document.</p>
         </div>
 
@@ -200,7 +200,7 @@ export function SaveAsPicker({
                       (e.currentTarget as HTMLButtonElement).style.background = '#1a6fd1';
                     }}
                   >
-                    {submitting ? 'Creating…' : 'Create & save'}
+                    {submitting ? 'Creating...' : 'Create & save'}
                   </button>
                 </div>
               </form>
