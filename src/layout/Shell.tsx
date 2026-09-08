@@ -185,6 +185,11 @@ export type ShellProps = {
    */
   onFileImport?: (format?: 'step' | 'stl' | 'brep') => void;
   /**
+   * Import a FreeCAD `.fcstd` file as a new document (replaces the active
+   * document — a .fcstd carries a whole parametric tree).
+   */
+  onImportFcstd?: () => void;
+  /**
    * Import a parametric component (.cadcomponent / .cadjson) and embed it
    * as an `importedComponent` feature in the active part's timeline.
    */
@@ -209,6 +214,7 @@ export function Shell({
   onFileNew,
   onFileOpen,
   onFileImport,
+  onImportFcstd,
   onComponentImport,
   onFileSave,
   onFileSaveAs,
@@ -726,7 +732,7 @@ export function Shell({
       consoleLog('warn', `DXF: skipped unsupported entities: ${skipped.join(', ')}`, 'sketch');
     }
     if (state.geometries.size === 0) {
-      consoleLog('warn', `DXF "${pick.fileName}" had no supported geometry — nothing imported`, 'sketch');
+      consoleLog('warn', `DXF "${pick.fileName}" had no supported geometry, so nothing was imported`, 'sketch');
       return;
     }
     if (unitName) {
@@ -738,7 +744,7 @@ export function Shell({
       snapshot: toSnapshot(state) as unknown as import('@tweakcad/core/src/document/schema.ts').SketchEditorSnapshot,
       name: baseName || 'Imported sketch',
     };
-    consoleLog('info', `DXF "${pick.fileName}": ${state.geometries.size} curve(s) — pick a plane`, 'sketch');
+    consoleLog('info', `DXF "${pick.fileName}": ${state.geometries.size} curve(s). Pick a plane`, 'sketch');
     setSketchPickingPlane(true);
   }, [sketchActive]);
 
@@ -770,13 +776,13 @@ export function Shell({
     if (tooComplex) {
       consoleLog(
         'warn',
-        `SVG "${pick.fileName}" has ${primitiveCount} shapes — too complex for the experimental SVG import (limit ${MAX_SVG_IMPORT_PRIMITIVES}). Try a simpler file or split it up.`,
+        `SVG "${pick.fileName}" has ${primitiveCount} shapes, too complex for the experimental SVG import (limit ${MAX_SVG_IMPORT_PRIMITIVES}). Try a simpler file or split it up.`,
         'sketch',
       );
       return;
     }
     if (state.geometries.size === 0) {
-      consoleLog('warn', `SVG "${pick.fileName}" had no supported geometry — nothing imported`, 'sketch');
+      consoleLog('warn', `SVG "${pick.fileName}" had no supported geometry, so nothing was imported`, 'sketch');
       return;
     }
 
@@ -785,7 +791,7 @@ export function Shell({
       snapshot: toSnapshot(state) as unknown as import('@tweakcad/core/src/document/schema.ts').SketchEditorSnapshot,
       name: baseName || 'Imported sketch',
     };
-    consoleLog('info', `SVG "${pick.fileName}": ${state.geometries.size} curve(s) — pick a plane`, 'sketch');
+    consoleLog('info', `SVG "${pick.fileName}": ${state.geometries.size} curve(s). Pick a plane`, 'sketch');
     setSketchPickingPlane(true);
   }, [sketchActive]);
 
@@ -896,7 +902,7 @@ export function Shell({
     sketchActions.exitSketch();
     useSketchEditorStore.getState().clearAll();
     setSketchPlaneConfig(null);
-    consoleLog('info', 'Sketch feature undone — exiting sketch mode', 'sketch');
+    consoleLog('info', 'Sketch feature undone, exiting sketch mode', 'sketch');
   }, [sketchActions]);
 
   // ---- Edit Sketch handler ----
@@ -2085,7 +2091,7 @@ export function Shell({
           // Body labels follow a "Body N" convention; the index is just
           // the sort position of the bodyId among visible bodies. Good
           // enough without threading a body→name map through.
-          label: `Body (${String(sel.bodyId).slice(0, 12)}…)`,
+          label: `Body (${String(sel.bodyId).slice(0, 12)}...)`,
         },
       }));
     });
@@ -2288,7 +2294,7 @@ export function Shell({
         ...prev,
         pickedBody: {
           bodyId: String(sel.bodyId),
-          label: `Body (${String(sel.bodyId).slice(0, 12)}…)`,
+          label: `Body (${String(sel.bodyId).slice(0, 12)}...)`,
         },
       }));
     });
@@ -2458,7 +2464,7 @@ export function Shell({
     const { viewportStore } = getAppState();
     const bodyMap = viewportStore.getState().bodyToFeatureMap;
     if (Object.keys(bodyMap).length === 0) {
-      consoleLog('warn', 'Plane from Face needs an existing body — create an extrude/revolve/loft first', 'plane');
+      consoleLog('warn', 'Plane from Face needs an existing body. Create an extrude/revolve/loft first', 'plane');
       return;
     }
     setPlaneState({
@@ -2678,7 +2684,7 @@ export function Shell({
     const { viewportStore } = getAppState();
     const bodyMap = viewportStore.getState().bodyToFeatureMap;
     if (Object.keys(bodyMap).length === 0) {
-      consoleLog('warn', 'Hole needs an existing body — create an extrude/revolve/loft first', 'hole');
+      consoleLog('warn', 'Hole needs an existing body. Create an extrude/revolve/loft first', 'hole');
       return;
     }
     setHoleState({ visible: true, pickedFace: null });
@@ -3369,6 +3375,7 @@ export function Shell({
         onNew={onFileNew}
         onOpen={onFileOpen}
         onImport={onFileImport}
+        onImportFcstd={onImportFcstd}
         onImportComponent={onComponentImport}
         onImportSketchDxf={handleImportSketchDxf}
         onImportSketchSvg={handleImportSketchSvg}

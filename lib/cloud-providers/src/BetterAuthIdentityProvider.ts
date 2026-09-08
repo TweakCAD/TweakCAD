@@ -34,6 +34,14 @@ const SessionResponse = z
   .nullable();
 export type SessionResponse = z.infer<typeof SessionResponse>;
 
+/** One entry from `/api/v1/auth-providers` — id + display label, no secrets. */
+const SocialProvider = z.object({
+  id: z.string(),
+  label: z.string(),
+});
+const SocialProviderList = z.array(SocialProvider);
+export type SocialProvider = z.infer<typeof SocialProvider>;
+
 export type IdentityConfig = {
   baseUrl: string;
   fetch?: typeof fetch;
@@ -112,6 +120,80 @@ export class BetterAuthIdentityProvider {
       | null;
     return {
       ok: false,
+      message: body?.message ?? `Sign-in failed (${res.status})`,
+    };
+  }
+
+  /**
+   * Which social providers the SaaS deployment has credentials for.
+   *
+   * The CAD app is a static bundle with no server env, so it can't read
+   * `GOOGLE_CLIENT_ID` the way the site's server components do — it has to
+   * ask. Served by `/api/v1/auth-providers` (deliberately outside Better
+   * Auth's `/api/v1/auth/` catch-all namespace).
+   *
+   * Returns `[]` rather than throwing when the request fails: an empty list
+   * means "offer no social buttons", which is exactly the right degradation.
+   * Callers must not treat this as an availability signal — that's
+   * `probeSaas()`'s job.
+   */
+  async listSocialProviders(): Promise<SocialProvider[]> {
+    try {
+      const res = await this.fetchImpl(`${this.baseUrl}/api/v1/auth-providers`, {
+        credentials: 'include',
+      });
+      if (!res.ok) return [];
+      const body = (await res.json()) as { items?: unknown };
+      const parsed = SocialProviderList.safeParse(body.items);
+      return parsed.success ? parsed.data : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Begin a social sign-in. Asks Better Auth for the provider's authorization
+   * URL and navigates there; the browser comes back to `callbackURL` with a
+   * session cookie set.
+   *
+   * This NAVIGATES THE PAGE AWAY, so the caller must flush any pending work
+   * first — the editor's autosave is debounced, not per-action.
+   *
+   * The result is a discriminated union rather than a message string the
+   * caller pattern-matches on: navigation is asynchronous, so this still
+   * resolves after `location.href` is set, and the caller has to tell "the
+   * redirect is under way, keep the spinner" from "it failed, show the
+   * error". Encoding that as a sentinel message couples the two files
+   * through prose — one reworded string and the modal starts rendering
+   * "Redirecting" as an error.
+   */
+  async signInSocial(input: {
+    provider: string;
+    callbackURL: string;
+  }): Promise<{ redirected: true } | { redirected: false; message: string }> {
+    let res: Response;
+    try {
+      res = await this.fetchImpl(`${this.baseUrl}/api/v1/auth/sign-in/social`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+        credentials: 'include',
+      });
+    } catch (err) {
+      return {
+        redirected: false,
+        message: (err as Error).message || 'Network error',
+      };
+    }
+    const body = (await res.json().catch(() => null)) as
+      | { url?: string; message?: string }
+      | null;
+    if (res.ok && body?.url) {
+      window.location.href = body.url;
+      return { redirected: true };
+    }
+    return {
+      redirected: false,
       message: body?.message ?? `Sign-in failed (${res.status})`,
     };
   }

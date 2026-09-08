@@ -222,3 +222,41 @@ describe('editorModelToBuildGeometry — ellipse / spline / point projection (ta
     }
   });
 });
+
+describe('editorModelToBuildGeometry — never emits scientific notation', () => {
+  // Coordinate strings are parsed by the expression evaluator, whose grammar
+  // has no exponent form — so floating-point noise (FreeCAD's solved coords,
+  // a full arc's `R*sin(π)` endpoint) must serialize as a plain decimal or 0,
+  // never `String(1e-15)` → "1e-15". Otherwise the entity fails to resolve.
+  const EXP = /e/i;
+
+  it('snaps sub-nanometre coordinate noise to "0"', () => {
+    const factory = makeCounterIdFactory();
+    const state = drawLine(emptyEditorState(), [-2.6636067881454926e-15, 5], [10, 1.5e-11], {
+      idFactory: factory,
+    }).state;
+    const line = Object.values(editorModelToBuildGeometry(state))[0] as SketchLineEntity;
+    expect(line.start[0]).toBe('0');
+    expect(line.end[1]).toBe('0');
+    expect(line.start[0]).not.toMatch(EXP);
+    expect(line.end[1]).not.toMatch(EXP);
+  });
+
+  it('expands a small-but-real coordinate to decimal, not exponent', () => {
+    const factory = makeCounterIdFactory();
+    // 1e-7 is below JS's scientific-notation threshold but above the 1e-9
+    // noise floor: it must round-trip as a parseable decimal.
+    const state = drawLine(emptyEditorState(), [1e-7, 0], [10, 10], { idFactory: factory }).state;
+    const line = Object.values(editorModelToBuildGeometry(state))[0] as SketchLineEntity;
+    expect(line.start[0]).not.toMatch(EXP);
+    expect(Number(line.start[0])).toBeCloseTo(1e-7, 12);
+  });
+
+  it('leaves ordinary coordinates byte-for-byte unchanged', () => {
+    const factory = makeCounterIdFactory();
+    const state = drawLine(emptyEditorState(), [12.5, -3], [10, 0], { idFactory: factory }).state;
+    const line = Object.values(editorModelToBuildGeometry(state))[0] as SketchLineEntity;
+    expect(line.start).toEqual(['12.5', '-3']);
+    expect(line.end).toEqual(['10', '0']);
+  });
+});

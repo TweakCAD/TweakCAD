@@ -259,3 +259,88 @@ describe('parseDocumentXml — error path', () => {
     expect(r.ok).toBe(false);
   });
 });
+
+describe('importFcstdFromXml — older FreeCAD schema (Model / Sketch link / AttachmentSupport)', () => {
+  // Pre-~0.19 FreeCAD names the Body's child list `Model` (not `Group`), the
+  // Pad's profile link `Sketch` (App::PropertyLink, not `Profile`
+  // App::PropertyLinkSub), and the sketch attachment `Support` rather than the
+  // modern `AttachmentSupport`. Here the sketch uses the *modern*
+  // `AttachmentSupport` while the body/pad use the *older* names — a real mix
+  // seen across files. All three must resolve, or the Pad is dropped and the
+  // body rebuilds to zero solids.
+  const oldSchemaXml = `<?xml version='1.0' encoding='utf-8'?>
+<Document SchemaVersion="4">
+  <Objects Count="4">
+    <Object type="PartDesign::Body" name="Body" />
+    <Object type="App::Plane" name="XZ_Plane" />
+    <Object type="Sketcher::SketchObject" name="Sketch" />
+    <Object type="PartDesign::Pad" name="Pad" />
+  </Objects>
+  <ObjectData Count="4">
+    <Object name="Body">
+      <Properties Count="2">
+        <Property name="Label" type="App::PropertyString"><String value="Body"/></Property>
+        <Property name="Model" type="App::PropertyLinkList">
+          <LinkList count="2">
+            <Link value="Sketch"/>
+            <Link value="Pad"/>
+          </LinkList>
+        </Property>
+      </Properties>
+    </Object>
+    <Object name="XZ_Plane">
+      <Properties Count="1">
+        <Property name="Label" type="App::PropertyString"><String value="XZ_Plane"/></Property>
+      </Properties>
+    </Object>
+    <Object name="Sketch">
+      <Properties Count="3">
+        <Property name="Label" type="App::PropertyString"><String value="Sketch"/></Property>
+        <Property name="Geometry" type="Part::PropertyGeometryList">
+          <GeometryList count="1">
+            <Geometry type="Part::GeomLineSegment">
+              <Construction value="0"/>
+              <LineSegment StartX="0.0" StartY="0.0" EndX="10.0" EndY="0.0"/>
+            </Geometry>
+          </GeometryList>
+        </Property>
+        <Property name="AttachmentSupport" type="App::PropertyLinkSubList">
+          <LinkSubList count="1">
+            <Link obj="XZ_Plane" sub=""/>
+          </LinkSubList>
+        </Property>
+      </Properties>
+    </Object>
+    <Object name="Pad">
+      <Properties Count="3">
+        <Property name="Label" type="App::PropertyString"><String value="Pad"/></Property>
+        <Property name="Length" type="App::PropertyLength"><Float value="20"/></Property>
+        <Property name="Sketch" type="App::PropertyLink"><Link value="Sketch"/></Property>
+      </Properties>
+    </Object>
+  </ObjectData>
+</Document>`;
+
+  const result = importFcstdFromXml(oldSchemaXml);
+  if (!result.ok) throw new Error(`import failed: ${result.error}`);
+  const part = onlyPart(result.value.project.parts);
+
+  it('reads the Body children from the older `Model` link-list', () => {
+    expect(part.timeline.map((f) => `${f.type}:${f.name}`)).toEqual(['sketch:Sketch', 'extrude:Pad']);
+  });
+
+  it('resolves the Pad profile from the older `Sketch` link', () => {
+    const sketch = part.timeline.find((f) => f.name === 'Sketch')!;
+    const pad = part.timeline.find((f) => f.name === 'Pad')!;
+    const inputs = pad.inputs as unknown as ExtrudeFeatureInputs;
+    expect(inputs.operation).toBe('newBody');
+    expect(inputs.extent).toEqual({ type: 'distance', value: '20' });
+    expect(inputs.profiles[0]!.sketchId).toBe(sketch.id);
+  });
+
+  it('reads the sketch plane from `AttachmentSupport`', () => {
+    const sketch = part.timeline.find((f) => f.name === 'Sketch')!;
+    const inputs = sketch.inputs as unknown as SketchFeatureInputs;
+    expect(inputs.plane).toEqual({ type: 'defaultPlane', name: 'XZ' });
+  });
+});

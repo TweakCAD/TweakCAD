@@ -29,6 +29,7 @@ import {
   Package,
   Box,
   Wand2,
+  ExternalLink,
 } from 'lucide-react';
 import {
   SketchIcon,
@@ -145,6 +146,8 @@ interface AppBarProps {
    * picker to a single format.
    */
   onImport?: ((format?: 'step' | 'stl' | 'brep') => void) | undefined;
+  /** Import a FreeCAD `.fcstd` file as a new document (replaces the active doc). */
+  onImportFcstd?: (() => void) | undefined;
   /**
    * Import a parametric component (.cadcomponent / .cadjson) and embed
    * it as an `importedComponent` feature.
@@ -383,6 +386,7 @@ export function MainAppBar({
   onNew,
   onOpen,
   onImport,
+  onImportFcstd,
   onImportComponent,
   onImportSketchDxf,
   onImportSketchSvg,
@@ -436,7 +440,7 @@ export function MainAppBar({
 
       <IconBtn icon={<FilePlus size={16} />}   label="New (Ctrl+Alt+N)" onClick={() => onNew?.()} />
       <IconBtn icon={<FolderOpen size={16} />} label="Open (Ctrl+O)"    onClick={() => onOpen?.()} />
-      <ImportButton onImport={onImport} onImportComponent={onImportComponent} onImportSketchDxf={onImportSketchDxf} onImportSketchSvg={onImportSketchSvg} />
+      <ImportButton onImport={onImport} onImportFcstd={onImportFcstd} onImportComponent={onImportComponent} onImportSketchDxf={onImportSketchDxf} onImportSketchSvg={onImportSketchSvg} />
       <IconBtn icon={<Save size={16} />}       label="Save (Ctrl+S)"    onClick={() => onSave?.()} />
       <IconBtn icon={<FileDown size={16} />}   label="Save as (Ctrl+Shift+S)" onClick={() => onSaveAs?.()} />
       <ExportButton onExport={onExport} />
@@ -509,9 +513,17 @@ function ProjectNameField({
   // Keep draft in sync when the underlying name changes externally
   // (e.g. opening a different project while NOT editing). When the
   // user is mid-edit, leave their draft alone.
-  useEffect(() => {
+  //
+  // Adjusted during render rather than in an effect, so the toolbar never
+  // shows the previous project's name for a frame after switching. Tracks
+  // both triggers the effect's dependency array had — the name changing,
+  // and leaving edit mode — since the reset is conditional on `editing`
+  // and so can't use the plain `useSeededState` helper.
+  const [lastNameSync, setLastNameSync] = useState({ name, editing });
+  if (name !== lastNameSync.name || editing !== lastNameSync.editing) {
+    setLastNameSync({ name, editing });
     if (!editing) setDraft(name);
-  }, [name, editing]);
+  }
 
   // After flipping into edit mode, focus + select the text.
   useEffect(() => {
@@ -554,7 +566,7 @@ function ProjectNameField({
           ...styles.projectName,
           cursor: editable ? 'text' : 'default',
         }}
-        title={editable ? `${name} — double-click to rename` : name}
+        title={editable ? `${name} (double-click to rename)` : name}
         onDoubleClick={editable ? () => setEditing(true) : undefined}
       >
         {name}
@@ -652,7 +664,7 @@ function BridgeStatusDot({ onClick }: { onClick: () => void }) {
   const label =
     status.state === 'connecting' ? `AI bridge: connecting to ${status.url}` :
     status.state === 'connected' ? `AI bridge: connected (${status.url})` :
-    `AI bridge: error — ${status.message}`;
+    `AI bridge: error: ${status.message}`;
 
   return (
     <button
@@ -784,7 +796,8 @@ function AccountChip({
             href="/dashboard"
             target="_blank"
             rel="noopener noreferrer"
-            style={accountStyles.menuItem}
+            aria-label="My projects (opens in a new tab)"
+            style={accountStyles.menuItemExternal}
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLAnchorElement).style.background = '#f5f5f5';
             }}
@@ -792,13 +805,15 @@ function AccountChip({
               (e.currentTarget as HTMLAnchorElement).style.background = 'transparent';
             }}
           >
-            My projects ↗
+            My projects
+            <ExternalLink size={11} aria-hidden />
           </a>
           <a
             href="/account"
             target="_blank"
             rel="noopener noreferrer"
-            style={accountStyles.menuItem}
+            aria-label="Account settings (opens in a new tab)"
+            style={accountStyles.menuItemExternal}
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLAnchorElement).style.background = '#f5f5f5';
             }}
@@ -806,7 +821,8 @@ function AccountChip({
               (e.currentTarget as HTMLAnchorElement).style.background = 'transparent';
             }}
           >
-            Account settings ↗
+            Account settings
+            <ExternalLink size={11} aria-hidden />
           </a>
           <div style={accountStyles.menuDivider} />
           <button
@@ -831,6 +847,21 @@ function AccountChip({
     </div>
   );
 }
+
+const menuItemBase: React.CSSProperties = {
+  display: 'block',
+  width: '100%',
+  padding: '6px 12px',
+  fontSize: 12,
+  color: '#333',
+  background: 'transparent',
+  border: 'none',
+  textAlign: 'left',
+  textDecoration: 'none',
+  cursor: 'pointer',
+  fontFamily: 'inherit',
+  transition: 'background 0.1s',
+};
 
 const accountStyles: Record<string, React.CSSProperties> = {
   wrapper: {
@@ -894,19 +925,15 @@ const accountStyles: Record<string, React.CSSProperties> = {
     background: '#eee',
     margin: '4px 0',
   },
-  menuItem: {
-    display: 'block',
-    width: '100%',
-    padding: '6px 12px',
-    fontSize: 12,
-    color: '#333',
-    background: 'transparent',
-    border: 'none',
-    textAlign: 'left',
-    textDecoration: 'none',
-    cursor: 'pointer',
-    fontFamily: 'inherit',
-    transition: 'background 0.1s',
+  menuItem: menuItemBase,
+  // Same row, laid out to seat the trailing "opens in a new tab" marker
+  // next to the label instead of on its own line.
+  menuItemExternal: {
+    ...menuItemBase,
+    display: 'flex',
+    alignItems: 'center',
+    gap: 5,
+    boxSizing: 'border-box',
   },
 };
 
@@ -1435,7 +1462,7 @@ function RibbonGroupView({
           }}
           onClick={toggle}
           title={collapsedCount > 0
-            ? `${label} (${collapsedCount} more hidden — click to see all)`
+            ? `${label} (${collapsedCount} more hidden, click to see all)`
             : `Show all ${label.toLowerCase()} tools`}
         >
           {label} <ChevronDown size={10} style={{ marginLeft: 2, verticalAlign: 'middle' }} />
@@ -1569,11 +1596,12 @@ interface IconBtnProps {
 
 /**
  * Dropdown variant of IconBtn — clicking the FileInput icon opens a
- * small menu listing the importable formats (STEP, STL, BREP today;
- * FCStd and Component-JSON later when the underlying support lands). Each
- * entry calls back with a format hint, which the
- * App layer forwards to `pickGeometryForImport(format)` so the
- * native file picker only shows files of that format.
+ * small menu listing the importable formats: component (.cadcomponent),
+ * STEP / STL / BREP body geometry, a FreeCAD `.fcstd` document, and
+ * DXF / SVG sketches. The 3D-body entries call back with a format hint,
+ * which the App layer forwards to `pickGeometryForImport(format)` so the
+ * native file picker only shows files of that format; the others trigger
+ * their own dedicated pick flows.
  *
  * Shares `exportMenuStyles` with `ExportButton` for a consistent
  * dropdown look. Kept structurally identical to ExportButton so the
@@ -1582,11 +1610,13 @@ interface IconBtnProps {
  */
 function ImportButton({
   onImport,
+  onImportFcstd,
   onImportComponent,
   onImportSketchDxf,
   onImportSketchSvg,
 }: {
   onImport?: ((format?: 'step' | 'stl' | 'brep') => void) | undefined;
+  onImportFcstd?: (() => void) | undefined;
   onImportComponent?: (() => void) | undefined;
   onImportSketchDxf?: (() => void) | undefined;
   onImportSketchSvg?: (() => void) | undefined;
@@ -1625,6 +1655,12 @@ function ImportButton({
     onImportComponent();
   }
 
+  function pickFcstd() {
+    if (!onImportFcstd) return;
+    setOpen(false);
+    onImportFcstd();
+  }
+
   function pickSketchDxf() {
     if (!onImportSketchDxf) return;
     setOpen(false);
@@ -1642,7 +1678,7 @@ function ImportButton({
       <button
         type="button"
         onClick={() => setOpen(v => !v)}
-        title="Import (STEP / STL / BREP / Component)"
+        title="Import (Component / STEP / STL / BREP / FreeCAD / DXF / SVG)"
         style={{
           ...styles.iconBtn,
           background: hover ? '#ebebeb' : 'transparent',
@@ -1655,32 +1691,37 @@ function ImportButton({
       {open && (
         <div role="menu" style={exportMenuStyles.menu}>
           <ExportMenuItem
-            label="Import Component…"
+            label="Import Component..."
             sub=".cadcomponent / .cadjson · embed as a parametric instance"
             onClick={pickComponent}
           />
           <ExportMenuItem
-            label="Import STEP…"
+            label="Import STEP..."
             sub=".step / .stp · precise parametric geometry"
             onClick={() => pick('step')}
           />
           <ExportMenuItem
-            label="Import STL…"
+            label="Import STL..."
             sub=".stl · faceted mesh (3D-printable shells)"
             onClick={() => pick('stl')}
           />
           <ExportMenuItem
-            label="Import BREP…"
+            label="Import BREP..."
             sub=".brep / .brp · OpenCASCADE native B-Rep"
             onClick={() => pick('brep')}
           />
           <ExportMenuItem
-            label="Import DXF (sketch)…"
+            label="Import FreeCAD..."
+            sub=".fcstd · parametric Sketch/Pad/Pocket tree → opens as a new document"
+            onClick={pickFcstd}
+          />
+          <ExportMenuItem
+            label="Import DXF (sketch)..."
             sub=".dxf · 2D curves → new sketch on a chosen plane"
             onClick={pickSketchDxf}
           />
           <ExportMenuItem
-            label="Import SVG (sketch) — experimental…"
+            label="Import SVG (sketch, experimental)..."
             sub=".svg · small files only · large/detailed art may be slow or rejected"
             onClick={pickSketchSvg}
           />
@@ -1740,7 +1781,7 @@ function ExportButton({
         type="button"
         onClick={() => setOpen((v) => !v)}
         disabled={busy !== null}
-        title={busy ? `Exporting ${busy.toUpperCase()}…` : 'Export (STL / STEP / BREP / 3MF)'}
+        title={busy ? `Exporting ${busy.toUpperCase()}...` : 'Export (STL / STEP / BREP / 3MF)'}
         style={{
           ...styles.iconBtn,
           background: hover && busy === null ? '#ebebeb' : 'transparent',
@@ -1755,22 +1796,22 @@ function ExportButton({
       {open && (
         <div role="menu" style={exportMenuStyles.menu}>
           <ExportMenuItem
-            label="Export STL…"
+            label="Export STL..."
             sub=".stl · 3D printing"
             onClick={() => pick('stl')}
           />
           <ExportMenuItem
-            label="Export STEP…"
+            label="Export STEP..."
             sub=".step · parametric CAD interchange"
             onClick={() => pick('step')}
           />
           <ExportMenuItem
-            label="Export BREP…"
+            label="Export BREP..."
             sub=".brep · OpenCASCADE native B-Rep"
             onClick={() => pick('brep')}
           />
           <ExportMenuItem
-            label="Export 3MF…"
+            label="Export 3MF..."
             sub=".3mf · modern slicer format"
             onClick={() => pick('3mf')}
           />
