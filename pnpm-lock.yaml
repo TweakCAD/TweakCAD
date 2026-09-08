@@ -1,3 +1,104 @@
+---
+lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    configDependencies: {}
+    packageManagerDependencies:
+      pnpm:
+        specifier: 12.3.4
+        version: 12.3.4
+
+packages:
+
+  '@pnpm/exe.darwin-arm64@12.3.4':
+    resolution: {integrity: sha512-PAyUol8T1+/+ViOiXAt51ECA+QnfXCqz6foL4bW+LsoX0NcVd5XVEM2mRQu+LV4oc7uRz9zf9U0P+XFfuQeDAw==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@pnpm/exe.darwin-x64@12.3.4':
+    resolution: {integrity: sha512-fxP9JCk0Cdye+ePuj+GJJLMUMTqHGWRdb1dtv4How876uQ2ehxvenpgiYAir/ceO9PsYUZkFTtyZdx+rRu5QOA==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@pnpm/exe.linux-arm64-musl@12.3.4':
+    resolution: {integrity: sha512-FBOt0/7ye6O6q4AllVV5QMviB6qE6fqkeczV/+MDWQsmo+QJrlfsh6X7CpH/tClVpBZEyIbjpUoT8bNhCYBxEg==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@pnpm/exe.linux-arm64@12.3.4':
+    resolution: {integrity: sha512-t71AVA7LRqiKTyZ5xMYaZc2n5DfdpMbfokZuiIOXHBOM03ECnF0t4iYwaBDqJgVjlKYUOwaF/bRQajGNA4cJ4w==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@pnpm/exe.linux-x64-musl@12.3.4':
+    resolution: {integrity: sha512-RPmk7Jb/aYaFvL2iyDN/AtMY+hUEsue732WmXpcuQ9tBpMnGyA5py7Z3+e+qmQaJ0zY/4ni9jJiyPBQHujmv6w==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@pnpm/exe.linux-x64@12.3.4':
+    resolution: {integrity: sha512-2ZqOlSPkfwX1h5cR+FPiWf8+F+2hZT/3TvhUK5sigHqwaQCIiq8R7CGxhndKs63JtcLi2a1Qpo+wX/EoyfjyJQ==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@pnpm/exe.win32-arm64@12.3.4':
+    resolution: {integrity: sha512-ANyrHqyqco6SXBysUTRF74itDyyraea7IbFsKFdNXTjcFnfycTDx37EwuhdpPYFNSIh2JhUG4fByclsRfiHX7w==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@pnpm/exe.win32-x64@12.3.4':
+    resolution: {integrity: sha512-WH/KqBPY/hq2Tb7SgQltEZytimcjgKRaCRL/aM9CI0c67iKc5TVmHUhIiL3Ux9FB4bWn36i6XewUcScQI+zG8w==}
+    cpu: [x64]
+    os: [win32]
+
+  pnpm@12.3.4:
+    resolution: {integrity: sha512-lhqkH7B32joEpEHZ+OFevAyW2o73ELLrZ7+e58sGEOq9SPH9hfUc/+c4RnhfoPh8VqOocqHYk/hEZ0G1zORUVw==}
+    engines: {node: '>=18.*'}
+    hasBin: true
+
+snapshots:
+
+  '@pnpm/exe.darwin-arm64@12.3.4':
+    optional: true
+
+  '@pnpm/exe.darwin-x64@12.3.4':
+    optional: true
+
+  '@pnpm/exe.linux-arm64-musl@12.3.4':
+    optional: true
+
+  '@pnpm/exe.linux-arm64@12.3.4':
+    optional: true
+
+  '@pnpm/exe.linux-x64-musl@12.3.4':
+    optional: true
+
+  '@pnpm/exe.linux-x64@12.3.4':
+    optional: true
+
+  '@pnpm/exe.win32-arm64@12.3.4':
+    optional: true
+
+  '@pnpm/exe.win32-x64@12.3.4':
+    optional: true
+
+  pnpm@12.3.4:
+    optionalDependencies:
+      '@pnpm/exe.darwin-arm64': 12.3.4
+      '@pnpm/exe.darwin-x64': 12.3.4
+      '@pnpm/exe.linux-arm64': 12.3.4
+      '@pnpm/exe.linux-arm64-musl': 12.3.4
+      '@pnpm/exe.linux-x64': 12.3.4
+      '@pnpm/exe.linux-x64-musl': 12.3.4
+      '@pnpm/exe.win32-arm64': 12.3.4
+      '@pnpm/exe.win32-x64': 12.3.4
+
+---
 lockfileVersion: '9.0'
 
 settings:
@@ -15,65 +116,65 @@ importers:
         specifier: 1.1.7
         version: 1.1.7
       '@xstate/react':
-        specifier: ^6.1.0
+        specifier: 6.1.0
         version: 6.1.0(@types/react@19.2.15)(react@19.2.6)(xstate@5.32.0)
       comlink:
-        specifier: ^4.4.2
+        specifier: 4.4.2
         version: 4.4.2
       fflate:
         specifier: 0.8.3
         version: 0.8.3
       immer:
-        specifier: ^10.1.0
+        specifier: 10.2.0
         version: 10.2.0
       lucide-react:
-        specifier: ^1.16.0
+        specifier: 1.17.0
         version: 1.17.0(react@19.2.6)
       occt-wasm:
-        specifier: 3.3.1
-        version: 3.3.1
+        specifier: 4.4.0
+        version: 4.4.0
       react:
-        specifier: ^19.0.0
+        specifier: 19.2.6
         version: 19.2.6
       react-dom:
-        specifier: ^19.0.0
+        specifier: 19.2.6
         version: 19.2.6(react@19.2.6)
       three:
-        specifier: ^0.172.0
+        specifier: 0.172.0
         version: 0.172.0
       xstate:
-        specifier: ^5.31.1
+        specifier: 5.32.0
         version: 5.32.0
       zod:
         specifier: 3.25.76
         version: 3.25.76
       zustand:
-        specifier: ^5.0.13
+        specifier: 5.0.14
         version: 5.0.14(@types/react@19.2.15)(immer@10.2.0)(react@19.2.6)(use-sync-external-store@1.6.0(react@19.2.6))
     devDependencies:
       '@types/react':
-        specifier: ^19.0.0
+        specifier: 19.2.15
         version: 19.2.15
       '@types/react-dom':
-        specifier: ^19.0.0
+        specifier: 19.2.3
         version: 19.2.3(@types/react@19.2.15)
       '@types/three':
-        specifier: ^0.170.0
+        specifier: 0.170.0
         version: 0.170.0
       '@vitejs/plugin-react':
-        specifier: ^4.3.0
+        specifier: 4.7.0
         version: 4.7.0(vite@6.4.3)
       typescript:
-        specifier: ^5.8.0
+        specifier: 5.9.3
         version: 5.9.3
       vite:
         specifier: 6.4.3
         version: 6.4.3
       vite-plugin-top-level-await:
-        specifier: ^1.6.0
+        specifier: 1.6.0
         version: 1.6.0(rollup@4.60.4)(vite@6.4.3)
       vite-plugin-wasm:
-        specifier: ^3.6.0
+        specifier: 3.6.0
         version: 3.6.0(vite@6.4.3)
       vitest:
         specifier: 3.2.6
@@ -818,8 +919,8 @@ packages:
     resolution: {integrity: sha512-GYVXHE2KnrzAfsAjl4uP++evGFCrAU1jta4ubEjIG7YWt/64Gqv66a30yKwWczVjA6j3bM4nBwH7Pk1JmDHaxQ==}
     engines: {node: '>=18'}
 
-  occt-wasm@3.3.1:
-    resolution: {integrity: sha512-wjR+0iHv/GHnZat8+YbDvPED15DPxicR9uXzKpHedoi1RiKD5dwyCkGETf8CNE/OVmPIsMu2Y7fj7/Bz8cXGDA==}
+  occt-wasm@4.4.0:
+    resolution: {integrity: sha512-Nj6SncbgBQtk0ASpd7eqizrNVsWRGXY168iVqt4upYPguZjFZUBw4RCHT3oGZozuvaN4KeZmJ/VnAimcsSNnPQ==}
 
   pathe@2.0.3:
     resolution: {integrity: sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==}
@@ -1688,7 +1789,7 @@ snapshots:
 
   node-releases@2.0.46: {}
 
-  occt-wasm@3.3.1:
+  occt-wasm@4.4.0:
     dependencies:
       comlink: 4.4.2
 

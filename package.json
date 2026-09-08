@@ -14,29 +14,29 @@
   },
   "dependencies": {
     "@salusoft89/planegcs": "1.1.7",
-    "@xstate/react": "^6.1.0",
-    "comlink": "^4.4.2",
+    "@xstate/react": "6.1.0",
+    "comlink": "4.4.2",
     "fflate": "0.8.3",
-    "immer": "^10.1.0",
-    "lucide-react": "^1.16.0",
-    "occt-wasm": "3.3.1",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "three": "^0.172.0",
-    "xstate": "^5.31.1",
+    "immer": "10.2.0",
+    "lucide-react": "1.17.0",
+    "occt-wasm": "4.4.0",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "three": "0.172.0",
+    "xstate": "5.32.0",
     "zod": "3.25.76",
-    "zustand": "^5.0.13"
+    "zustand": "5.0.14"
   },
   "devDependencies": {
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
-    "@types/three": "^0.170.0",
-    "@vitejs/plugin-react": "^4.3.0",
-    "typescript": "^5.8.0",
+    "@types/react": "19.2.15",
+    "@types/react-dom": "19.2.3",
+    "@types/three": "0.170.0",
+    "@vitejs/plugin-react": "4.7.0",
+    "typescript": "5.9.3",
     "vite": "6.4.3",
-    "vite-plugin-top-level-await": "^1.6.0",
-    "vite-plugin-wasm": "^3.6.0",
+    "vite-plugin-top-level-await": "1.6.0",
+    "vite-plugin-wasm": "3.6.0",
     "vitest": "3.2.6"
   },
-  "packageManager": "pnpm@11.1.2+sha512.415a1cc25974731e75455c1468371be74c5aa5fb7621b50d4056d222451609f11412f23fd602e6169f1e060466641f798597e1be961a10688836a67b16569499"
+  "packageManager": "pnpm@12.3.4+sha512.961aa41fb077da3a04a441d9f8e15ebc0c96da8ef710b2eb67bf9ee7cb0610eabd48f1fd85f51cffe73846785fa0f87c56a3a872a1d893f8446741b5cce45457"
 }

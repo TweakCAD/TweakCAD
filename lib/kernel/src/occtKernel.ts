@@ -1,5 +1,5 @@
 /**
- * OcctKernel — occt-wasm@3.x implementation of {@link CadKernel}.
+ * OcctKernel — occt-wasm@4.x implementation of {@link CadKernel}.
  *
  * Wraps the upstream `OcctKernel` from `occt-wasm` behind our internal
  * `CadKernel` interface so feature builders, the rebuilder, and the worker
@@ -173,7 +173,7 @@ export class OcctKernel implements CadKernel {
    *
    * **Why hash-keyed and not index-keyed:** the mesher (`meshShape`) and
    * the topology walker (`getSubShapes('face')`) do not guarantee the same
-   * iteration order over a shape's faces. occt-wasm@3 already ships the
+   * iteration order over a shape's faces. occt-wasm@4 already ships the
    * face hash inside `faceGroups[3*i + 2]` and the edge hash inside
    * `edgeGroups[3*i + 2]`, so we can bridge by hash instead of trusting
    * positional alignment. The previous index-keyed cache caused
@@ -1640,8 +1640,9 @@ export class OcctKernel implements CadKernel {
     if (bodies.length === 0) throw new Error('exportStep: no bodies provided');
     const k = this.getKernel();
     // occt-wasm's exportStep takes a single shape; wrap multi-body exports in
-    // a transient compound. Schema is not user-selectable in occt-wasm@3.1.0
-    // (it picks AP214 internally — same default as v1).
+    // a transient compound. Schema is still not user-selectable as of
+    // occt-wasm 4.4.0 — `exportStep(shape)` takes no options and picks AP214
+    // internally.
     const shapes = bodies.map(b => this.getBodyShape(b));
     let target: ShapeHandle;
     let release = false;
