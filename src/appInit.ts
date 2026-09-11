@@ -53,6 +53,7 @@ import {
   sketchDrawSplineHandler,
   sketchMovePointHandler,
   sketchMovePointsBatchHandler,
+  sketchSetRadiusHandler,
   sketchApplyConstraintHandler,
   sketchRemoveConstraintHandler,
   sketchTrimHandler,
@@ -129,6 +130,7 @@ export function initializeApp(): AppState {
   commandBus.register('SketchDrawSpline', sketchDrawSplineHandler);
   commandBus.register('SketchMovePoint', sketchMovePointHandler);
   commandBus.register('SketchMovePointsBatch', sketchMovePointsBatchHandler);
+  commandBus.register('SketchSetRadius', sketchSetRadiusHandler);
   commandBus.register('SketchApplyConstraint', sketchApplyConstraintHandler);
   commandBus.register('SketchRemoveConstraint', sketchRemoveConstraintHandler);
   // Modify-tool handlers

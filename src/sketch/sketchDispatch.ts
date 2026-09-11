@@ -276,6 +276,25 @@ export function dispatchMovePointsBatch(
   })).ok;
 }
 
+/**
+ * Dispatch a `SketchSetRadius` — the commit half of a circumference drag.
+ *
+ * Radius isn't a point, so this can't ride on `dispatchMovePointsBatch` the
+ * way every other drag does.
+ */
+export function dispatchSetRadius(
+  geometryId: SketchGeometryId,
+  radius: number,
+): boolean {
+  if (!Number.isFinite(radius) || radius <= 0) return false;
+  return dispatchInSketch((sketchId) => ({
+    type: 'SketchSetRadius',
+    sketchId,
+    geometryId,
+    radius,
+  })).ok;
+}
+
 // ---- Constraint helper ---------------------------------------------------
 
 /**
