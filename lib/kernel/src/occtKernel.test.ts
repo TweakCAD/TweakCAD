@@ -875,9 +875,17 @@ describe('OcctKernel — STL round-trip', () => {
     // The header must not start with "solid", or format sniffers misread it.
     expect(String.fromCharCode(...bytes.slice(0, 5))).not.toBe('solid');
     // A box's face normals are exactly -1/0/1. Under the old corruption this
-    // read as 0x0000FDFD instead of 0xBF800000.
+    // read as 0x0000FDFD instead of 0xBF800000. This is the sharp assertion:
+    // an exact float that cannot survive a lossy byte transform.
     expect(dv.getFloat32(84, true)).toBe(-1);
-    expect([...bytes].filter(b => b === 0xfd)).toHaveLength(0);
+
+    // The corruption signature was that EVERY byte >= 0x80 collapsed to 0xFD.
+    // Asserting simply "no 0xFD anywhere" would be wrong on a real mesh —
+    // 0xFD occurs naturally in float mantissas about 1 byte in 128, so a
+    // 35k-facet export legitimately contains thousands. Assert the signature.
+    const high = [...bytes].filter(b => b > 0x7f);
+    expect(high.length).toBeGreaterThan(0);
+    expect(high.every(b => b === 0xfd)).toBe(false);
   });
 
   it('binary STL re-imports with the source volume', async () => {
