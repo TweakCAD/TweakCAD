@@ -45,6 +45,56 @@ type CachedRebuildState = {
 let cachedState: CachedRebuildState | null = null;
 
 /**
+ * Bodies that survived to the end of the previous rebuild, per kernel.
+ *
+ * A rebuild's final bodies stay alive after it returns — the caller
+ * tessellates and exports from them. They only become garbage when the NEXT
+ * rebuild supersedes them, which is why they're swept at the start of one
+ * rather than the end of this one: nothing in flight can be freed.
+ *
+ * Safe because a rebuild is always from scratch. `findIncrementalStartIndex`
+ * is stubbed to 0, so cached bodies are never reused; no worker API accepts a
+ * `KernelBody` from outside; and the main thread only ever receives body IDs.
+ * The one place a handle outlives its rebuild is the export path, which runs
+ * its OWN rebuild and consumes the handles immediately — and exports run on a
+ * separate worker with a separate kernel, so they can't sweep each other.
+ *
+ * Keyed weakly so a discarded kernel doesn't pin its handle list.
+ */
+const previousFinalBodies = new WeakMap<CadKernel, KernelBody[]>();
+
+/**
+ * Release the previous rebuild's surviving bodies on this kernel.
+ *
+ * Call immediately before starting a fresh rebuild. Deliberately NOT called
+ * from inside `incrementalRebuild`: the export paths call that too, and an
+ * export must not free the bodies of an export still assembling its blob.
+ */
+export function sweepPreviousRebuild(kernel: CadKernel): void {
+  const stale = previousFinalBodies.get(kernel);
+  if (!stale) return;
+  previousFinalBodies.delete(kernel);
+  for (const handle of stale) {
+    try {
+      kernel.dispose(handle);
+    } catch (e) {
+      console.warn('[Rebuilder] Failed to release a retired body:', e);
+    }
+  }
+}
+
+/** Release the bodies a one-shot rebuild produced, once they've been used. */
+export function releaseRebuildBodies(kernel: CadKernel, bodies: { handle: KernelBody }[]): void {
+  for (const b of bodies) {
+    try {
+      kernel.dispose(b.handle);
+    } catch (e) {
+      console.warn('[Rebuilder] Failed to release an export body:', e);
+    }
+  }
+}
+
+/**
  * Incremental rebuild is DISABLED until the caching logic is stable.
  * Always returns 0 (full rebuild from scratch).
  *
@@ -250,7 +300,10 @@ export async function incrementalRebuild(
     try {
       let result;
 
-      // Track bodies before the build for consumed/created tracking
+      // Track bodies before the build for consumed/created tracking.
+      // Snapshotted as id -> HANDLE (not just ids) so the orphan sweep below
+      // can free shapes the builder replaced or consumed.
+      const handlesBefore = new Map(context.bodies);
       const bodiesBefore = new Set(context.bodies.keys());
 
       // Dispatch through the shared switch in subTimelineRunner.ts so
@@ -284,6 +337,31 @@ export async function incrementalRebuild(
       }
 
       effects.set(feature.id, { consumed, created });
+
+      // Free the shapes this feature orphaned. A builder that consumes a body
+      // (fillet, chamfer, a join/cut extrude) deletes it from `context.bodies`
+      // — or rebinds the same id to a new handle — but never releases the old
+      // shape, so it stays in the WASM heap for the worker's lifetime. On a
+      // large mesh that is tens of MB per rebuild.
+      //
+      // A handle is orphaned when its id is gone from the context, or still
+      // present but now pointing at a different handle. Either way nothing can
+      // reach it: downstream features resolve bodies by id, and the builder has
+      // already consumed it to produce its replacement (including any stable-id
+      // propagation, which happens inside the kernel call).
+      for (const [bid, before] of handlesBefore) {
+        const after = context.bodies.get(bid);
+        if (after === before) continue;
+        try {
+          // `BuildContext.bodies` stores handles opaquely; every producer puts
+          // a KernelBody in, the same cast the tessellation loop below makes.
+          kernel.dispose(before as KernelBody);
+        } catch (e) {
+          // Never let cleanup fail a rebuild — a missed free is a leak, a
+          // thrown one loses the user's geometry.
+          console.warn(`[Rebuilder] Failed to release orphaned body ${String(bid)}:`, e);
+        }
+      }
       // Stamp each newly-created body with its producing feature so
       // downstream features that reference it can be cascade-blocked
       // if this feature later fails or is suppressed.
@@ -395,6 +473,11 @@ export async function incrementalRebuild(
   }
 
   const hasFailures = featureResults.some(r => r.status === 'failed');
+
+  // Hand these to the next rebuild on this kernel to free — see
+  // `previousFinalBodies`. Recorded unconditionally, but only ever acted on by
+  // a caller that opts in via `sweepPreviousRebuild`.
+  previousFinalBodies.set(kernel, bodyEntries.map(e => e.handle));
 
   return {
     partId: part.id,
