@@ -14,7 +14,7 @@ import type { CadPart, CadProject, DisplayMesh, TopologyMap, FeatureBuildResult 
 import type { PartId } from '@tweakcad/core/src/ids.ts';
 import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
 import { OcctKernel } from '@tweakcad/kernel/src/occtKernel.ts';
-import { incrementalRebuild } from './rebuilder.ts';
+import { incrementalRebuild, sweepPreviousRebuild, releaseRebuildBodies } from './rebuilder.ts';
 
 // ---- Types (serializable across worker boundary) ----
 
@@ -59,7 +59,7 @@ async function ensureKernel(): Promise<CadKernel> {
     kernel = new OcctKernel();
     await kernel.init();
     const elapsed = (performance.now() - startTime).toFixed(0);
-    console.log(`[CadWorker] OcctKernel (occt-wasm@4) loaded in ${elapsed}ms`);
+    console.log(`[CadWorker] OcctKernel (occt-wasm@5) loaded in ${elapsed}ms`);
     ready = true;
   })();
 
@@ -91,6 +91,12 @@ const api = {
     fromIndex?: number,
   ): Promise<WorkerRebuildResult> {
     const k = await ensureKernel();
+    // Free the bodies the LAST rebuild left behind before building new ones.
+    // Done here rather than inside `incrementalRebuild` because the export
+    // paths call that too, and an export must not free bodies belonging to an
+    // export still assembling its blob. This worker only ever serves rebuilds,
+    // so by the time a new one starts the previous result is finished with.
+    sweepPreviousRebuild(k);
     const result = await incrementalRebuild(part, project, k, fromIndex);
 
     // Strip non-serializable kernel handles from the result.
@@ -125,8 +131,12 @@ const api = {
     }
 
     // Export via kernel (uses OCCT's StlAPI_Writer)
-    const blob = await k.exportStl(bodyHandles);
-    return blob.arrayBuffer();
+    try {
+      const blob = await k.exportStl(bodyHandles);
+      return await blob.arrayBuffer();
+    } finally {
+      releaseRebuildBodies(k, result.bodies);
+    }
   },
 
   /**
@@ -145,8 +155,12 @@ const api = {
       return new ArrayBuffer(0);
     }
 
-    const blob = await k.exportStep(bodyHandles);
-    return blob.arrayBuffer();
+    try {
+      const blob = await k.exportStep(bodyHandles);
+      return await blob.arrayBuffer();
+    } finally {
+      releaseRebuildBodies(k, result.bodies);
+    }
   },
 
   /**
@@ -165,8 +179,12 @@ const api = {
       return new ArrayBuffer(0);
     }
 
-    const blob = await k.exportBrep(bodyHandles);
-    return blob.arrayBuffer();
+    try {
+      const blob = await k.exportBrep(bodyHandles);
+      return await blob.arrayBuffer();
+    } finally {
+      releaseRebuildBodies(k, result.bodies);
+    }
   },
 
   /**
@@ -185,15 +203,20 @@ const api = {
       return new ArrayBuffer(0);
     }
 
-    const blob = await k.export3MF(bodyHandles, { name: part.name });
-    return blob.arrayBuffer();
+    try {
+      const blob = await k.export3MF(bodyHandles, { name: part.name });
+      return await blob.arrayBuffer();
+    } finally {
+      releaseRebuildBodies(k, result.bodies);
+    }
   },
 
   /**
-   * Reset worker state. Kernel WASM memory is freed when the worker
-   * is terminated by the browser (Worker.terminate()). Individual
-   * shape handles should be freed via kernel.dispose(handle) during
-   * rebuilds, but that's managed within the rebuild cycle.
+   * Reset worker state. Kernel WASM memory is freed when the worker is
+   * terminated by the browser (Worker.terminate()). Individual shape handles
+   * are released during the rebuild cycle: the rebuilder frees shapes a
+   * feature orphans, `buildPart` sweeps the previous rebuild's survivors, and
+   * each export releases the bodies its own rebuild produced.
    */
   async reset(): Promise<void> {
     kernel = null;

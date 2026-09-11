@@ -159,4 +159,45 @@ describe('buildImportedGeometry', () => {
     await expect(buildImportedGeometry(makeNode(), {} as ResolvedParams, emptyCtx(), kernel))
       .rejects.toThrow(/Import "cube.step" failed: unexpected EOF/);
   });
+
+  /**
+   * `kernel.transform` returns a NEW shape and does not consume its input, so
+   * every placement step leaves the pre-transform shape behind. For an
+   * imported mesh that shape is the whole file. Measured against the real
+   * kernel, a moved import leaked THREE full copies of the mesh per rebuild
+   * (the import plus both transform inputs) until the WASM heap ran out and
+   * tessellation died with "Array buffer allocation failed" — which, before
+   * the rebuilder reported it, looked like a body that simply never appeared.
+   */
+  it('releases each intermediate shape when applying placements', async () => {
+    const kernel = new MockKernel();
+    await kernel.init();
+    const disposed: string[] = [];
+    vi.spyOn(kernel, 'dispose').mockImplementation((h) => { disposed.push(h.handle); });
+
+    const node = makeNode({
+      transform: { position: [1, 2, 3], rotation: [0, 0, 0, 1] },
+      bodyTransforms: {
+        body_import_import_1_0: { position: [4, 5, 6], rotation: [0, 0, 0, 1] },
+      },
+    });
+    const result = await buildImportedGeometry(node, {} as ResolvedParams, emptyCtx(), kernel);
+
+    // Two placements applied → two superseded shapes released, and never the
+    // one actually handed back.
+    expect(disposed).toHaveLength(2);
+    expect(disposed).not.toContain(result.bodies[0]!.handle.handle);
+  });
+
+  it('releases nothing when no placement is applied', async () => {
+    const kernel = new MockKernel();
+    await kernel.init();
+    const disposed: string[] = [];
+    vi.spyOn(kernel, 'dispose').mockImplementation((h) => { disposed.push(h.handle); });
+
+    // An as-imported body is the one the kernel returned; releasing it would
+    // free the shape still being handed back.
+    await buildImportedGeometry(makeNode(), {} as ResolvedParams, emptyCtx(), kernel);
+    expect(disposed).toHaveLength(0);
+  });
 });

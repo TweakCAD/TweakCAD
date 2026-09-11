@@ -41,6 +41,7 @@ import {
   LockOpen,
   Settings,
   Move,
+  ArrowDownToLine,
   Download,
   Pause,
 } from 'lucide-react';
@@ -104,7 +105,7 @@ interface TreePart {
   timeline: TreeFeature[];
 }
 
-export type ContextMenuAction = 'extrude' | 'editSketch' | 'exportSketchDxf' | 'exportSketchSvg' | 'editFeature' | 'editComponent' | 'duplicateComponent' | 'move' | 'moveAll' | 'rename' | 'delete' | 'suppress' | 'enable';
+export type ContextMenuAction = 'extrude' | 'editSketch' | 'exportSketchDxf' | 'exportSketchSvg' | 'editFeature' | 'editComponent' | 'duplicateComponent' | 'move' | 'moveAll' | 'centreAtOrigin' | 'dropOnPlane' | 'rename' | 'delete' | 'suppress' | 'enable';
 
 interface ContextMenuEvent {
   featureId: string;
@@ -899,6 +900,21 @@ const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
         items.push(target === 'feature'
           ? { action: 'moveAll', label: 'Move all', icon: <Move size={14} />, accent: true }
           : { action: 'move', label: 'Move', icon: <Move size={14} />, accent: true });
+        // One-click placement for imports that carry their own far-from-origin
+        // coordinates — common for a part exported out of an assembly. These
+        // move the whole import (the group transform), so a multi-body import
+        // keeps its internal arrangement. Import itself stays faithful to the
+        // file; placing is always an explicit, undoable step.
+        items.push({
+          action: 'centreAtOrigin',
+          label: 'Move to origin',
+          icon: <Crosshair size={14} />,
+        });
+        items.push({
+          action: 'dropOnPlane',
+          label: 'Drop on XY plane',
+          icon: <ArrowDownToLine size={14} />,
+        });
       } else {
         items.push({
           action: 'editFeature',

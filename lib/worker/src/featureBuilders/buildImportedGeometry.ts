@@ -22,6 +22,7 @@ import type { ResolvedParams } from '@tweakcad/core/src/expressions.ts';
 import { bodyId as bodyIdBrand } from '@tweakcad/core/src/ids.ts';
 import type { BodyId } from '@tweakcad/core/src/ids.ts';
 import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
+import type { KernelBody } from '@tweakcad/kernel/src/types.ts';
 import type { BuildContext, BuildResult } from '@tweakcad/core/src/features/contracts.ts';
 
 export async function buildImportedGeometry(
@@ -74,16 +75,35 @@ export async function buildImportedGeometry(
   for (let i = 0; i < bodies.length; i++) {
     let handle = bodies[i]!;
     const id = bodyIdBrand(`body_import_${node.id}_${i}`);
+
+    // `kernel.transform` returns a NEW shape and does not consume its input,
+    // so each placement step leaves the pre-transform shape behind. For an
+    // imported mesh that shape is the entire file — tens of thousands of
+    // facets — and a moved import applies two of them per rebuild. Left
+    // unreleased that is three full copies of the mesh accumulating in the
+    // WASM heap on every rebuild, until tessellation fails with
+    // "Array buffer allocation failed" and the body silently stops rendering.
+    //
+    // Release each intermediate as soon as it has been superseded. The
+    // pre-transform handle is dead at that point: `storeModifiedBody` has
+    // already read it to propagate face IDs, and nothing downstream refers
+    // to it. Only the final `handle` is returned and kept.
+    const replace = async (next: KernelBody): Promise<void> => {
+      const previous = handle;
+      handle = next;
+      kernel.dispose(previous);
+    };
+
     const bt = perBody[String(id)];
     if (bt && !isIdentityTransform(bt)) {
       const r = await kernel.transform(handle, bt);
       if (!r.ok) throw new Error(`Placing "${inputs.fileName}" body ${i} failed: ${r.error.message}`);
-      handle = r.value;
+      await replace(r.value);
     }
     if (groupT && !isIdentityTransform(groupT)) {
       const r = await kernel.transform(handle, groupT);
       if (!r.ok) throw new Error(`Placing "${inputs.fileName}" failed: ${r.error.message}`);
-      handle = r.value;
+      await replace(r.value);
     }
     out.push({ bodyId: id, handle });
   }

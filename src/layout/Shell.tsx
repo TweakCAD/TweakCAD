@@ -1293,6 +1293,72 @@ export function Shell({
         consoleLog('info', 'Move: drag the arrows; Esc to cancel, Done to keep', 'move');
         break;
       }
+      case 'centreAtOrigin':
+      case 'dropOnPlane': {
+        // Place the whole import by composing a translation onto its GROUP
+        // transform, so a multi-body import keeps its internal arrangement —
+        // the same reason Move all edits the group rather than each body.
+        //
+        // The bounds come from the rendered meshes, which are the geometry as
+        // currently placed (the kernel bakes transforms in), so the delta is
+        // simply "where it is now" -> "where we want it". No need to unwind
+        // the existing transform.
+        const ids = Object.entries(bodyToFeatureMap)
+          .filter(([, fid]) => String(fid) === featureId)
+          .map(([bid]) => bid as BodyId);
+        if (ids.length === 0) {
+          consoleLog('warn', 'No body to place for this import', 'move');
+          break;
+        }
+        const bounds = viewportCtrl?.getBodiesBounds(ids);
+        if (!bounds) {
+          consoleLog('warn', 'Cannot read the import bounds — is it still building?', 'move');
+          break;
+        }
+        const { min, max } = bounds;
+        const centre: [number, number, number] = [
+          (min[0] + max[0]) / 2,
+          (min[1] + max[1]) / 2,
+          (min[2] + max[2]) / 2,
+        ];
+        // Centre: bbox centre -> origin. Drop: keep X/Y, put the lowest point
+        // on Z=0 so the part rests on the build plate.
+        const delta: [number, number, number] = action === 'centreAtOrigin'
+          ? [-centre[0], -centre[1], -centre[2]]
+          : [0, 0, -min[2]];
+
+        const docP = getAppState().documentStore.getState();
+        for (const part of Object.values(docP.parts)) {
+          const f = part.timeline.find(ff => ff.id === featureId);
+          if (!f) continue;
+          const cur = (f.inputs as { transform?: { position: [number, number, number]; rotation: [number, number, number, number] } }).transform;
+          const curPos = cur?.position ?? [0, 0, 0];
+          const next = {
+            // Translation composes additively; rotation is carried untouched
+            // because both placements are pure translations.
+            position: [
+              Math.round((curPos[0] + delta[0]) * 1000) / 1000,
+              Math.round((curPos[1] + delta[1]) * 1000) / 1000,
+              Math.round((curPos[2] + delta[2]) * 1000) / 1000,
+            ] as [number, number, number],
+            rotation: cur?.rotation ?? ([0, 0, 0, 1] as [number, number, number, number]),
+          };
+          commandBus.dispatch({
+            type: 'UpdateFeatureInput', partId: part.id as PartId,
+            featureId: featureId as FeatureId, path: ['transform'], value: next,
+          });
+          const moved = Math.hypot(...delta);
+          consoleLog(
+            'success',
+            action === 'centreAtOrigin'
+              ? `Moved import to the origin (${moved.toFixed(1)} mm)`
+              : `Dropped import onto the XY plane (${moved.toFixed(1)} mm)`,
+            'move',
+          );
+          break;
+        }
+        break;
+      }
       case 'moveAll': {
         // Move the whole import as a group (the feature's group transform).
         // The gizmo attaches to any one of its bodies for interaction.

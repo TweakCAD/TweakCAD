@@ -477,6 +477,20 @@ export class ViewportController {
       }
     };
 
+    // Diagnostics for the runaway-delta bug: a single small drag has been
+    // observed committing a delta far larger than the gesture. The delta is
+    // derived from `proxy.position` relative to `pivot`, and `pivot` comes
+    // from the meshes' WORLD bounds, so a stale `matrixWorld` at attach time
+    // would poison every subsequent drag. Logging both ends makes which one
+    // is wrong obvious from one gesture. Attach + commit are user-initiated
+    // and rare, so this is not a hot path. Remove once the cause is fixed.
+    const fmt = (v: THREE.Vector3): string =>
+      `(${v.x.toFixed(2)}, ${v.y.toFixed(2)}, ${v.z.toFixed(2)})`;
+    console.log(
+      `[MoveGizmo] attach bodies=${bodyIds.length} mode=${mode}` +
+        ` worldBounds=min${fmt(box.min)} max${fmt(box.max)} pivot=${fmt(pivot)}`,
+    );
+
     this.transformGizmo.attach(
       proxy,
       { mode, space: 'world', showX: true, showY: true, showZ: true },
@@ -486,10 +500,45 @@ export class ViewportController {
           const m = deltaMatrix();
           const p = new THREE.Vector3(); const q = new THREE.Quaternion(); const s = new THREE.Vector3();
           m.decompose(p, q, s);
+          console.log(
+            `[MoveGizmo] commit pivot=${fmt(pivot)} proxy=${fmt(proxy.position)}` +
+              ` -> delta=${fmt(p)} |delta|=${p.length().toFixed(2)}mm`,
+          );
           onCommit({ position: [p.x, p.y, p.z], quaternion: [q.x, q.y, q.z, q.w] });
         },
       },
     );
+  }
+
+  /**
+   * World-space bounds of a specific set of bodies, or null when none of them
+   * are currently rendered. Scoped rather than whole-scene (`MeshRegistry`'s
+   * `getBodiesBoundingBox`) so a placement action can measure just the import
+   * it is about to move, ignoring everything else in the document.
+   *
+   * Reads the rendered geometry, which the kernel bakes transforms into — so
+   * this is where the bodies actually ARE, not where they started.
+   */
+  getBodiesBounds(
+    bodyIds: BodyId[],
+  ): { min: [number, number, number]; max: [number, number, number] } | null {
+    const box = new THREE.Box3();
+    let found = false;
+    for (const id of bodyIds) {
+      const entry = this.meshRegistry.getEntry(id);
+      if (!entry) continue;
+      entry.mesh.updateWorldMatrix(true, false);
+      entry.mesh.geometry.computeBoundingBox();
+      const bb = entry.mesh.geometry.boundingBox;
+      if (!bb) continue;
+      box.union(bb.clone().applyMatrix4(entry.mesh.matrixWorld));
+      found = true;
+    }
+    if (!found || box.isEmpty()) return null;
+    return {
+      min: [box.min.x, box.min.y, box.min.z],
+      max: [box.max.x, box.max.y, box.max.z],
+    };
   }
 
   /** Tear down the move proxy and restore the driven meshes' auto-matrices. */

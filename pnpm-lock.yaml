@@ -131,8 +131,8 @@ importers:
         specifier: 1.17.0
         version: 1.17.0(react@19.2.6)
       occt-wasm:
-        specifier: 4.4.0
-        version: 4.4.0
+        specifier: 5.0.0
+        version: 5.0.0
       react:
         specifier: 19.2.6
         version: 19.2.6
@@ -1242,8 +1242,8 @@ packages:
     resolution: {integrity: sha512-GYVXHE2KnrzAfsAjl4uP++evGFCrAU1jta4ubEjIG7YWt/64Gqv66a30yKwWczVjA6j3bM4nBwH7Pk1JmDHaxQ==}
     engines: {node: '>=18'}
 
-  occt-wasm@4.4.0:
-    resolution: {integrity: sha512-Nj6SncbgBQtk0ASpd7eqizrNVsWRGXY168iVqt4upYPguZjFZUBw4RCHT3oGZozuvaN4KeZmJ/VnAimcsSNnPQ==}
+  occt-wasm@5.0.0:
+    resolution: {integrity: sha512-FDMYmmgcMEus+a4sY/4oJTIok6Ar3EDcqBzhGQa4orcQ2VIl8k5tq64ccA6COptYBz3rppMsqeqRqPIjV1lBtA==}
 
   optionator@0.9.4:
     resolution: {integrity: sha512-6IpQ7mKUxRcZNLIObR0hz7lxsapSSIYNZJwXPGeF0mTVqGKFIXj1DQcMoT22S3ROcLyY/rz0PWaWZ9ayWmad9g==}
@@ -2551,7 +2551,7 @@ snapshots:
 
   node-releases@2.0.46: {}
 
-  occt-wasm@4.4.0:
+  occt-wasm@5.0.0:
     dependencies:
       comlink: 4.4.2
 
