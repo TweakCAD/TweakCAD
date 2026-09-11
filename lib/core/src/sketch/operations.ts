@@ -1259,6 +1259,23 @@ export function movePoint(
   if (!existing) {
     throw new Error(`movePoint: point ${pointId} does not exist in this sketch`);
   }
+  // A fixed point is pinned — a drag must not move it.
+  //
+  // This matters most for the sketch origin. `findOrCreatePoint` merges by
+  // position, and deliberately does not exclude `pt_origin`, so drawing a
+  // circle centred on the origin makes the origin ITSELF the circle's centre
+  // — which is the right outcome: the circle is anchored and the sketch loses
+  // two degrees of freedom, the same as Fusion's behaviour.
+  //
+  // Dragging that circle then dragged the origin with it. The sketch's anchor
+  // ended up somewhere arbitrary, `con_origin_fixed` went unsatisfiable, and
+  // DOF accounting could never reach zero again — the very thing the origin
+  // exists to make possible.
+  //
+  // A silent no-op rather than a throw: this is reached from a pointer drag,
+  // and refusing to move is the correct, undramatic outcome. The caller sees
+  // the state come back unchanged.
+  if (existing.fixed) return { state, pointId };
   const points = new Map(state.points);
   points.set(pointId, { ...existing, x: to[0], y: to[1] });
   return { state: { ...state, points }, pointId };
