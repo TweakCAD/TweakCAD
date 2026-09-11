@@ -345,8 +345,21 @@ export async function incrementalRebuild(
 
       bodyEntries.push({ bodyId: bid, handle: kernelHandle });
     } catch (tessError) {
-      // Tessellation failure for a body is non-fatal
+      // Non-fatal for the rebuild — the body exists and every downstream
+      // feature can still consume it — but it IS fatal for the user, because
+      // a body with no mesh renders as nothing at all.
+      //
+      // This used to only `console.error`, so the symptom was a feature that
+      // appeared in the timeline, produced a body, and drew nothing, with no
+      // indication anywhere in the app that something had gone wrong. Push it
+      // into `diagnostics` so it reaches the in-app console like any other
+      // build failure.
+      const message = tessError instanceof Error ? tessError.message : String(tessError);
       console.error(`[Rebuilder] Tessellation failed for body ${bid}:`, tessError);
+      diagnostics.push(
+        `Tessellation failed for body ${bid} — the body exists but cannot be ` +
+          `displayed: ${message}`,
+      );
     }
   }
 

@@ -7,7 +7,7 @@
  * archive uses store-only ZIP entries with CRC-32 integrity checks, all
  * in-memory.
  *
- * STEP and STL writers are no longer here — occt-wasm@4.x exposes
+ * STEP and STL writers are no longer here — occt-wasm@5.x exposes
  * `kernel.exportStep(shape)` / `kernel.exportStl(shape, ...)` directly, so
  * the previous Emscripten-FS round-trip code is gone.
  */

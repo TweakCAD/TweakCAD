@@ -59,7 +59,7 @@ async function ensureKernel(): Promise<CadKernel> {
     kernel = new OcctKernel();
     await kernel.init();
     const elapsed = (performance.now() - startTime).toFixed(0);
-    console.log(`[CadWorker] OcctKernel (occt-wasm@4) loaded in ${elapsed}ms`);
+    console.log(`[CadWorker] OcctKernel (occt-wasm@5) loaded in ${elapsed}ms`);
     ready = true;
   })();
 

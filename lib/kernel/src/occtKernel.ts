@@ -1,5 +1,5 @@
 /**
- * OcctKernel — occt-wasm@4.x implementation of {@link CadKernel}.
+ * OcctKernel — occt-wasm@5.x implementation of {@link CadKernel}.
  *
  * Wraps the upstream `OcctKernel` from `occt-wasm` behind our internal
  * `CadKernel` interface so feature builders, the rebuilder, and the worker
@@ -165,7 +165,7 @@ export class OcctKernel implements CadKernel {
    *
    * **Why hash-keyed and not index-keyed:** the mesher (`meshShape`) and
    * the topology walker (`getSubShapes('face')`) do not guarantee the same
-   * iteration order over a shape's faces. occt-wasm@4 already ships the
+   * iteration order over a shape's faces. occt-wasm@5 already ships the
    * face hash inside `faceGroups[3*i + 2]` and the edge hash inside
    * `edgeGroups[3*i + 2]`, so we can bridge by hash instead of trusting
    * positional alignment. The previous index-keyed cache caused
