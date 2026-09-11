@@ -839,6 +839,20 @@ function handleSelectClick(
   // Normal editGeometry mode
   if (target) {
     if (target.type === 'point') {
+      // A fixed point is pinned, so never begin a drag on one. Selecting it is
+      // still useful (you can inspect it, or hang a constraint off it) — it
+      // just doesn't move.
+      //
+      // Without this the origin followed the cursor for the whole gesture and
+      // snapped back on release, because the commit path refuses the move
+      // while the live-drag path did not. Letting something appear to move and
+      // then undoing it reads as a bug; refusing up front reads as "pinned".
+      const targetPoint = store.points.get(target.id);
+      if (targetPoint?.fixed) {
+        store.selectPoint(target.id, shiftKey);
+        session = { tool: 'select', phase: 'idle' };
+        return;
+      }
       // Start dragging the point
       session = {
         tool: 'select',

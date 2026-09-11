@@ -645,9 +645,12 @@ export const useSketchEditorStore = create<SketchEditorState>((set, get) => ({
     set((state: SketchEditorState) => {
       const points = new Map(state.points);
       const existing = points.get(id);
-      if (existing) {
-        points.set(id, { ...existing, x, y });
-      }
+      // A fixed point doesn't move, and must not be anchored either: anchoring
+      // tells the solver to treat this position as authoritative, which for a
+      // pinned point is exactly backwards — it would drag the rest of the
+      // sketch to meet a position the point isn't allowed to be in.
+      if (!existing || existing.fixed) return state;
+      points.set(id, { ...existing, x, y });
       const anchored = new Set<SketchPointId>([id]);
       const result = solveConstraints(points, state.geometries, state.constraints, anchored);
       const geometries = syncDerivedGeometryFields(result.geometries, result.points);
@@ -662,10 +665,12 @@ export const useSketchEditorStore = create<SketchEditorState>((set, get) => ({
       const anchored = new Set<SketchPointId>();
       for (const u of updates) {
         const existing = points.get(u.id);
-        if (existing) {
-          points.set(u.id, { ...existing, x: u.x, y: u.y });
-          anchored.add(u.id);
-        }
+        // Same rule as `movePoint` — skip fixed points entirely rather than
+        // moving or anchoring them. A multi-point drag that happens to include
+        // the origin moves everything else and leaves the origin alone.
+        if (!existing || existing.fixed) continue;
+        points.set(u.id, { ...existing, x: u.x, y: u.y });
+        anchored.add(u.id);
       }
       const result = solveConstraints(points, state.geometries, state.constraints, anchored);
       const geometries = syncDerivedGeometryFields(result.geometries, result.points);
