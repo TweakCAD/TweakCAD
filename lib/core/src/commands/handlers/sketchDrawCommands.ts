@@ -64,7 +64,7 @@ import {
 } from '../../sketch/modifyOps.ts';
 import { editorModelToBuildGeometry } from '../../sketch/serialization.ts';
 import { applyConstraintWithSolver } from '../../sketch/applyConstraintPipeline.ts';
-import { getSolver } from '../../sketch/solver/index.ts';
+import { getSolver, solveDrag } from '../../sketch/solver/index.ts';
 import type { SketchConstraintInput } from '../../sketch/types.ts';
 
 // ---- Shared helpers --------------------------------------------------------
@@ -752,12 +752,18 @@ export const sketchMovePointHandler: CommandHandler = {
     const moved = movePoint(current, command.pointId, command.to);
     // Re-solve with the moved point anchored so coincident / parallel /
     // etc. constraints follow the drag instead of being broken silently.
-    const result = getSolver().solve(
+    // `solveDrag` handles the case where anchoring makes a constraint
+    // unsatisfiable — same ladder the live preview uses, so the committed
+    // result matches what the user saw mid-drag. `null` = the move has no
+    // consistent solution; leave the draft alone (no patches → no undo entry).
+    const result = solveDrag(
+      getSolver(),
       moved.state.points,
       moved.state.geometries,
       moved.state.constraints,
       new Set([command.pointId]),
     );
+    if (!result) return;
     applyEditorStateUpdate(draft, command.sketchId, {
       points: result.points,
       geometries: result.geometries,
@@ -840,8 +846,11 @@ export const sketchSetRadiusHandler: CommandHandler = {
     // Re-solve so anything hanging off this geometry (tangent, concentric,
     // point-on-circle) follows. Nothing is anchored: the radius is already
     // written, and anchoring would over-constrain the very points the solver
-    // needs to move.
-    const result = getSolver().solve(points, geometries, current.constraints, new Set());
+    // needs to move. Routed through `solveDrag` for its refuse-on-failure
+    // guard — a non-converged solve returns unsolved coordinates, and writing
+    // those would persist a torn sketch.
+    const result = solveDrag(getSolver(), points, geometries, current.constraints, new Set());
+    if (!result) return;
     applyEditorStateUpdate(draft, command.sketchId, {
       points: result.points,
       geometries: result.geometries,
@@ -883,12 +892,16 @@ export const sketchMovePointsBatchHandler: CommandHandler = {
       anchored.add(m.pointId);
     }
     if (anchored.size === 0) return;
-    const result = getSolver().solve(
+    // Same anchored → free → refuse ladder as the live preview; see
+    // `sketchMovePointHandler`.
+    const result = solveDrag(
+      getSolver(),
       current.points,
       current.geometries,
       current.constraints,
       anchored,
     );
+    if (!result) return;
     applyEditorStateUpdate(draft, command.sketchId, {
       points: result.points,
       geometries: result.geometries,

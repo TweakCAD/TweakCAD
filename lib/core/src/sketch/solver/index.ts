@@ -28,6 +28,7 @@ import type { GcsWrapper } from '@salusoft89/planegcs';
 import type { ISketchSolver } from './ISketchSolver.ts';
 
 export type { ISketchSolver, SolveResult, SolverKind } from './ISketchSolver.ts';
+export { solveDrag } from './solveDrag.ts';
 
 const planegcsSolver = new PlaneGCSSolver();
 

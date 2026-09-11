@@ -40,7 +40,7 @@ import { detectSketchRegions, pointInRegion, findRegionForEntity } from '@tweakc
 import type { SketchRegion } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import type { SketchEntity } from '@tweakcad/core/src/document/schema.ts';
 import { entityId } from '@tweakcad/core/src/ids.ts';
-import { getSolver } from '@tweakcad/core/src/sketch/solver/index.ts';
+import { getSolver, solveDrag } from '@tweakcad/core/src/sketch/solver/index.ts';
 
 /**
  * Solve via the active solver (planegcs — the only solver).
@@ -652,7 +652,12 @@ export const useSketchEditorStore = create<SketchEditorState>((set, get) => ({
       if (!existing || existing.fixed) return state;
       points.set(id, { ...existing, x, y });
       const anchored = new Set<SketchPointId>([id]);
-      const result = solveConstraints(points, state.geometries, state.constraints, anchored);
+      // `solveDrag` falls back to an unanchored solve when pinning the dragged
+      // point makes a constraint unsatisfiable, so the point slides along the
+      // constraint instead of tearing the sketch apart. `null` = no consistent
+      // solution either way; leave the sketch exactly as it was.
+      const result = solveDrag(getSolver(), points, state.geometries, state.constraints, anchored);
+      if (!result) return state;
       const geometries = syncDerivedGeometryFields(result.geometries, result.points);
       return { points: result.points, geometries, unsatisfiedConstraints: result.diagnostic.unsatisfied, dof: result.diagnostic.dof };
     });
@@ -672,7 +677,9 @@ export const useSketchEditorStore = create<SketchEditorState>((set, get) => ({
         points.set(u.id, { ...existing, x: u.x, y: u.y });
         anchored.add(u.id);
       }
-      const result = solveConstraints(points, state.geometries, state.constraints, anchored);
+      // Same anchored → free → refuse ladder as `movePoint`.
+      const result = solveDrag(getSolver(), points, state.geometries, state.constraints, anchored);
+      if (!result) return state;
       const geometries = syncDerivedGeometryFields(result.geometries, result.points);
       return { points: result.points, geometries, unsatisfiedConstraints: result.diagnostic.unsatisfied, dof: result.diagnostic.dof };
     });
