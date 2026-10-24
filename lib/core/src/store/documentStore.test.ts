@@ -453,6 +453,9 @@ describe('DocumentStore — arrays and record keys', () => {
 
     store.mutate('Add and delete keys', draft => {
       const inputs = draft.parts[partId]!.timeline[0]!.inputs as unknown as SketchFeatureInputs;
+      // Deleting a computed record key is precisely what this test exercises:
+      // Immer emits a different patch op for key removal than for replacement.
+      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
       delete inputs.buildGeometry[entityId('line_a')];
       inputs.buildGeometry[entityId('circle_a')] = {
         id: entityId('circle_a'),
