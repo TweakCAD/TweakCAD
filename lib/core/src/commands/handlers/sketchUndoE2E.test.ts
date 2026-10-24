@@ -38,6 +38,7 @@ import {
   sketchDrawCircleHandler,
   sketchApplyConstraintHandler,
   sketchMovePointsBatchHandler,
+  sketchSetRadiusHandler,
 } from './sketchDrawCommands.ts';
 import type { SketchFeatureInputs } from '../../document/schema.ts';
 import type { PartId, FeatureId } from '../../ids.ts';
@@ -60,6 +61,7 @@ function newHarness(): {
   bus.register('SketchDrawCircle', sketchDrawCircleHandler);
   bus.register('SketchApplyConstraint', sketchApplyConstraintHandler);
   bus.register('SketchMovePointsBatch', sketchMovePointsBatchHandler);
+  bus.register('SketchSetRadius', sketchSetRadiusHandler);
   const partId = Object.keys(project.parts)[0] as PartId;
   return { bus, store, partId };
 }
@@ -457,3 +459,69 @@ function countUndoSteps(store: DocumentStore): number {
   }
   return n;
 }
+
+// ---------------------------------------------------------------------------
+// SketchSetRadius — the commit half of the circumference drag
+// ---------------------------------------------------------------------------
+
+describe('SketchSetRadius', () => {
+  /**
+   * Radius is a number on the geometry, not a point, so it cannot ride on
+   * `SketchMovePointsBatch` like every other drag — hence its own command.
+   * Before it existed, a circle's size could only be changed by typing a
+   * dimension; there was no way to resize by dragging at all.
+   */
+  function circleRadius(store: DocumentStore, partId: PartId, sketchId: FeatureId): number {
+    const model = sketchInputs(store, partId, sketchId).editorModel!;
+    const circle = model.geometries.find((g) => g.type === 'circle')!;
+    return (circle as unknown as { radius: number }).radius;
+  }
+
+  function firstCircleId(store: DocumentStore, partId: PartId, sketchId: FeatureId): SketchGeometryId {
+    const model = sketchInputs(store, partId, sketchId).editorModel!;
+    return model.geometries.find((g) => g.type === 'circle')!.id as SketchGeometryId;
+  }
+
+  it('resizes a circle and undoes back to the original radius', () => {
+    const { bus, store, partId } = newHarness();
+    const sketchId = createSketch(bus, store, partId);
+    bus.dispatch({ type: 'SketchDrawCircle', sketchId, center: [0, 0], radius: 5 });
+    expect(circleRadius(store, partId, sketchId)).toBeCloseTo(5, 6);
+
+    const gid = firstCircleId(store, partId, sketchId);
+    const res = bus.dispatch({ type: 'SketchSetRadius', sketchId, geometryId: gid, radius: 12.5 });
+    expect(res.ok).toBe(true);
+    expect(circleRadius(store, partId, sketchId)).toBeCloseTo(12.5, 6);
+
+    // One command = one undo entry, same contract as every other sketch edit.
+    store.undo();
+    expect(circleRadius(store, partId, sketchId)).toBeCloseTo(5, 6);
+  });
+
+  it('rejects a non-positive radius rather than producing degenerate geometry', () => {
+    const { bus, store, partId } = newHarness();
+    const sketchId = createSketch(bus, store, partId);
+    bus.dispatch({ type: 'SketchDrawCircle', sketchId, center: [0, 0], radius: 5 });
+    const gid = firstCircleId(store, partId, sketchId);
+
+    for (const bad of [0, -3, Number.NaN]) {
+      const res = bus.dispatch({ type: 'SketchSetRadius', sketchId, geometryId: gid, radius: bad });
+      expect(res.ok).toBe(false);
+    }
+    expect(circleRadius(store, partId, sketchId)).toBeCloseTo(5, 6);
+  });
+
+  it('leaves the centre where it was', () => {
+    const { bus, store, partId } = newHarness();
+    const sketchId = createSketch(bus, store, partId);
+    bus.dispatch({ type: 'SketchDrawCircle', sketchId, center: [7, -4], radius: 5 });
+    const gid = firstCircleId(store, partId, sketchId);
+    bus.dispatch({ type: 'SketchSetRadius', sketchId, geometryId: gid, radius: 20 });
+
+    const model = sketchInputs(store, partId, sketchId).editorModel!;
+    const circle = model.geometries.find((g) => g.type === 'circle') as unknown as { centerId: SketchPointId };
+    const centre = model.points.find((p) => p.id === circle.centerId)!;
+    expect(centre.x).toBeCloseTo(7, 6);
+    expect(centre.y).toBeCloseTo(-4, 6);
+  });
+});

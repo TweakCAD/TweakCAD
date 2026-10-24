@@ -18,6 +18,10 @@ import type {
   SketchToolId,
   SketchPointId,
   SketchGeometryId,
+  SketchGeometry,
+  SketchPoint,
+  SketchConstraint,
+  SketchConstraintId,
 } from '@tweakcad/core/src/sketch/types.ts';
 import { sketchRegionId } from '@tweakcad/core/src/sketch/types.ts';
 import { findRegionForEntity } from '@tweakcad/core/src/sketch/profileRegions.ts';
@@ -29,6 +33,7 @@ import {
   dispatchDrawRectangle,
   dispatchDrawCircle,
   dispatchMovePointsBatch,
+  dispatchSetRadius,
   dispatchApplyConstraint,
 } from './sketchDispatch.ts';
 import {
@@ -95,12 +100,56 @@ export type ToolSessionState =
       phase: 'idle' | 'dragging';
       dragPointId?: SketchPointId;
       dragGeometryId?: SketchGeometryId;
+      /**
+       * Circumference drag: resize this circle/arc instead of translating it.
+       * Set when the press landed on the rim rather than the interior, and
+       * mutually exclusive with `dragPointId` / `dragGeometryId`.
+       */
+      resizeGeometryId?: SketchGeometryId;
       dragStartX?: number;
       dragStartY?: number;
       lastX?: number;
       lastY?: number;
     }
   | null;
+
+/**
+ * Fraction of the radius within which a press counts as "on the rim" rather
+ * than "on the shape". Proportional rather than absolute so it feels the same
+ * on a 2 mm hole and a 200 mm bore; clamped so a huge circle doesn't turn its
+ * whole annulus into a resize zone.
+ */
+const RIM_GRAB_FRACTION = 0.15;
+const RIM_GRAB_MAX_MM = 3;
+
+/** Smallest radius a drag may produce. Below this the geometry is degenerate. */
+const MIN_DRAG_RADIUS_MM = 0.01;
+
+/** True when (x, y) is near the circumference of a circle/arc, not its body. */
+function isRimGrab(
+  store: { geometries: Map<SketchGeometryId, SketchGeometry>; points: Map<SketchPointId, SketchPoint> },
+  gid: SketchGeometryId,
+  x: number,
+  y: number,
+): boolean {
+  const geom = store.geometries.get(gid);
+  if (!geom || (geom.type !== 'circle' && geom.type !== 'arc')) return false;
+  const centre = store.points.get(geom.centerId);
+  if (!centre) return false;
+  const band = Math.min(geom.radius * RIM_GRAB_FRACTION, RIM_GRAB_MAX_MM);
+  return Math.abs(Math.hypot(x - centre.x, y - centre.y) - geom.radius) <= band;
+}
+
+/** True when a radius constraint already pins this geometry's size. */
+function hasRadiusConstraint(
+  store: { constraints: Map<SketchConstraintId, SketchConstraint> },
+  gid: SketchGeometryId,
+): boolean {
+  for (const c of store.constraints.values()) {
+    if (c.type === 'radius' && c.geometryId === gid) return true;
+  }
+  return false;
+}
 
 let session: ToolSessionState = null;
 
@@ -323,7 +372,19 @@ export function handleToolMove(
       }
       break;
     case 'select':
-      if (session.phase === 'dragging' && session.dragPointId) {
+      if (session.phase === 'dragging' && session.resizeGeometryId) {
+        // Radius follows the cursor's distance from the centre. Floored rather
+        // than allowed through zero: a zero or negative radius is degenerate
+        // geometry the kernel would reject later.
+        const geom = store.geometries.get(session.resizeGeometryId);
+        const centre = geom && 'centerId' in geom ? store.points.get(geom.centerId) : undefined;
+        if (centre) {
+          const r = Math.max(MIN_DRAG_RADIUS_MM, Math.hypot(x - centre.x, y - centre.y));
+          store.setRadius(session.resizeGeometryId, r);
+        }
+        session.lastX = x;
+        session.lastY = y;
+      } else if (session.phase === 'dragging' && session.dragPointId) {
         store.movePoint(session.dragPointId, x, y);
         session.lastX = x;
         session.lastY = y;
@@ -378,6 +439,16 @@ export function handleToolPointerUp(
     // Gather the set of points whose live position in the store now
     // differs from the dispatch destination. For both single-point and
     // geometry-level drag the set is derivable from the session.
+    // A radius drag commits its own command — radius isn't a point, so it
+    // can't be folded into the move batch below.
+    if (session.resizeGeometryId) {
+      const geom = store.geometries.get(session.resizeGeometryId);
+      if (geom && (geom.type === 'circle' || geom.type === 'arc')) {
+        dispatchSetRadius(session.resizeGeometryId, geom.radius);
+      }
+      session = { tool: 'select', phase: 'idle' };
+      return;
+    }
     const moves: { pointId: SketchPointId; to: [number, number] }[] = [];
     if (session.dragPointId) {
       const pt = store.points.get(session.dragPointId);
@@ -839,6 +910,20 @@ function handleSelectClick(
   // Normal editGeometry mode
   if (target) {
     if (target.type === 'point') {
+      // A fixed point is pinned, so never begin a drag on one. Selecting it is
+      // still useful (you can inspect it, or hang a constraint off it) — it
+      // just doesn't move.
+      //
+      // Without this the origin followed the cursor for the whole gesture and
+      // snapped back on release, because the commit path refuses the move
+      // while the live-drag path did not. Letting something appear to move and
+      // then undoing it reads as a bug; refusing up front reads as "pinned".
+      const targetPoint = store.points.get(target.id);
+      if (targetPoint?.fixed) {
+        store.selectPoint(target.id, shiftKey);
+        session = { tool: 'select', phase: 'idle' };
+        return;
+      }
       // Start dragging the point
       session = {
         tool: 'select',
@@ -850,6 +935,29 @@ function handleSelectClick(
         lastY: rawY,
       };
       store.selectPoint(target.id, shiftKey);
+    } else if (target.type === 'geometry' && isRimGrab(store, target.id, rawX, rawY)) {
+      // Pressed on a circle/arc's rim: resize rather than translate. Same
+      // shape as the point drag — live preview through the store, one command
+      // on release.
+      //
+      // Refused when a radius constraint already pins the size: the drag would
+      // fight the solver and lose on the next solve, which is exactly the
+      // move-then-snap-back behaviour a fixed point used to have.
+      if (hasRadiusConstraint(store, target.id)) {
+        store.selectGeometry(target.id, shiftKey);
+        session = { tool: 'select', phase: 'idle' };
+        return;
+      }
+      session = {
+        tool: 'select',
+        phase: 'dragging',
+        resizeGeometryId: target.id,
+        dragStartX: rawX,
+        dragStartY: rawY,
+        lastX: rawX,
+        lastY: rawY,
+      };
+      store.selectGeometry(target.id, shiftKey);
     } else if (target.type === 'geometry') {
       store.selectGeometry(target.id, shiftKey);
       session = {

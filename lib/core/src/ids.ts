@@ -49,6 +49,14 @@ export type ReferenceId = Brand<string, 'ReferenceId'>;
 /** Unique identifier for an assembly */
 export type AssemblyId = Brand<string, 'AssemblyId'>;
 
+/**
+ * Unique identifier for one placement of a part or sub-assembly inside an
+ * assembly. Distinct from `PartId`: the same part placed four times is one
+ * `PartId` and four `InstanceId`s. Joints, per-instance visibility and BOM
+ * quantities all key on this rather than on the part.
+ */
+export type InstanceId = Brand<string, 'InstanceId'>;
+
 // --- Factory functions ---
 
 /** @param raw - Raw string to brand as ProjectId */
@@ -104,6 +112,11 @@ export function referenceId(raw: string): ReferenceId {
 /** @param raw - Raw string to brand as AssemblyId */
 export function assemblyId(raw: string): AssemblyId {
   return raw as AssemblyId;
+}
+
+/** @param raw - Raw string to brand as InstanceId */
+export function instanceId(raw: string): InstanceId {
+  return raw as InstanceId;
 }
 
 /**

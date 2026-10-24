@@ -36,13 +36,21 @@ import type {
 import { sketchConstraintId } from '../types.ts';
 import { Algorithm, SolveStatus } from '@salusoft89/planegcs';
 import type { GcsWrapper, SketchPrimitive } from '@salusoft89/planegcs';
-import type { ISketchSolver, SolveResult, SolverKind } from './ISketchSolver.ts';
+import type { DragTarget, ISketchSolver, SolveResult, SolverKind } from './ISketchSolver.ts';
 
 export class PlaneGCSNotReadyError extends Error {
   constructor() {
     super('PlaneGCS solver not initialised — call initPlaneGCS() at app boot');
   }
 }
+
+/**
+ * Weight of a soft drag target relative to a real constraint (scale 1).
+ * Small enough that no geometric constraint ever loses to the cursor, large
+ * enough to dominate the otherwise-flat directions the constraints don't
+ * span.
+ */
+const DRAG_TARGET_SCALE = 0.01;
 
 const PID = (id: SketchPointId): string => `p:${id}`;
 const GID = (id: SketchGeometryId): string => `g:${id}`;
@@ -377,6 +385,7 @@ export class PlaneGCSSolver implements ISketchSolver {
     geometries: ReadonlyMap<SketchGeometryId, SketchGeometry>,
     constraints: ReadonlyMap<SketchConstraintId, SketchConstraint>,
     anchored: ReadonlySet<SketchPointId>,
+    dragTargets?: ReadonlyMap<SketchPointId, DragTarget>,
   ): SolveResult {
     if (!this.wrapper) throw new PlaneGCSNotReadyError();
     const w = this.wrapper;
@@ -490,6 +499,39 @@ export class PlaneGCSSolver implements ISketchSolver {
     for (const [cid, c] of constraints) {
       const pushed = this.translateConstraint(w, c, cid, geometries);
       for (const pid of pushed) ourIdByPlanegcsId.set(pid, cid);
+    }
+
+    // ---- 3b. Push soft drag targets ----
+    //
+    // `coordinate_x` / `coordinate_y` at a low `scale`, so a real constraint
+    // (scale 1) always outweighs the pull toward the cursor. The target
+    // decides only where the point settles inside the freedom the real
+    // constraints leave — drag the end of a horizontally constrained line
+    // diagonally and it tracks the cursor's x while staying on the horizontal.
+    //
+    // `temporary: true` gives them tagId -1, which keeps them out of
+    // planegcs's conflicting/redundant reports — a drag target is *expected*
+    // to end up unsatisfied, and it must not show up as a sketch problem.
+    if (dragTargets) {
+      for (const [id, target] of dragTargets) {
+        if (!solverPoints.has(id)) continue; // not in the system; nothing to pull
+        w.push_primitive({
+          type: 'coordinate_x',
+          id: `c:__drag_x_${id}`,
+          p_id: PID(id),
+          x: target.x,
+          temporary: true,
+          scale: DRAG_TARGET_SCALE,
+        });
+        w.push_primitive({
+          type: 'coordinate_y',
+          id: `c:__drag_y_${id}`,
+          p_id: PID(id),
+          y: target.y,
+          temporary: true,
+          scale: DRAG_TARGET_SCALE,
+        });
+      }
     }
 
     // ---- 4. Solve ----

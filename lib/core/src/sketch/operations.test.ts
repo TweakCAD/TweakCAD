@@ -1108,4 +1108,36 @@ describe('movePoint', () => {
     const state = emptyEditorState();
     expect(() => movePoint(state, sketchPointId('does_not_exist'), [0, 0])).toThrow();
   });
+
+  /**
+   * The sketch origin is a fixed point, and `findOrCreatePoint` merges by
+   * position without excluding it — so a circle drawn on the origin takes
+   * `pt_origin` as its centre. That merge is wanted (the circle is anchored,
+   * two DOF gone), but dragging the circle used to drag the origin with it:
+   * the anchor ended up somewhere arbitrary, `con_origin_fixed` became
+   * unsatisfiable, and DOF could never reach zero again.
+   */
+  it('refuses to move a fixed point', () => {
+    let state = emptyEditorState();
+    const points = new Map(state.points);
+    const pinned = sketchPointId('pt_pinned');
+    points.set(pinned, { id: pinned, x: 0, y: 0, fixed: true });
+    state = { ...state, points };
+
+    const result = movePoint(state, pinned, [40, 25]);
+    expect(result.state.points.get(pinned)).toMatchObject({ x: 0, y: 0 });
+    // Unchanged means unchanged — callers may rely on identity to skip work.
+    expect(result.state).toBe(state);
+  });
+
+  it('still moves an unfixed point', () => {
+    let state = emptyEditorState();
+    const points = new Map(state.points);
+    const free = sketchPointId('pt_free');
+    points.set(free, { id: free, x: 0, y: 0, fixed: false });
+    state = { ...state, points };
+
+    const result = movePoint(state, free, [40, 25]);
+    expect(result.state.points.get(free)).toMatchObject({ x: 40, y: 25 });
+  });
 });

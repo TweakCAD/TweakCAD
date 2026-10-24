@@ -64,7 +64,7 @@ import {
 } from '../../sketch/modifyOps.ts';
 import { editorModelToBuildGeometry } from '../../sketch/serialization.ts';
 import { applyConstraintWithSolver } from '../../sketch/applyConstraintPipeline.ts';
-import { getSolver } from '../../sketch/solver/index.ts';
+import { getSolver, solveDrag } from '../../sketch/solver/index.ts';
 import type { SketchConstraintInput } from '../../sketch/types.ts';
 
 // ---- Shared helpers --------------------------------------------------------
@@ -752,12 +752,18 @@ export const sketchMovePointHandler: CommandHandler = {
     const moved = movePoint(current, command.pointId, command.to);
     // Re-solve with the moved point anchored so coincident / parallel /
     // etc. constraints follow the drag instead of being broken silently.
-    const result = getSolver().solve(
+    // `solveDrag` handles the case where anchoring makes a constraint
+    // unsatisfiable — same ladder the live preview uses, so the committed
+    // result matches what the user saw mid-drag. `null` = the move has no
+    // consistent solution; leave the draft alone (no patches → no undo entry).
+    const result = solveDrag(
+      getSolver(),
       moved.state.points,
       moved.state.geometries,
       moved.state.constraints,
       new Set([command.pointId]),
     );
+    if (!result) return;
     applyEditorStateUpdate(draft, command.sketchId, {
       points: result.points,
       geometries: result.geometries,
@@ -777,6 +783,82 @@ export const sketchMovePointHandler: CommandHandler = {
  * Anchors the entire moved set so the user's positions stay authoritative.
  * Empty `moves` is a no-op (no patches → no undo entry).
  */
+// ---- SketchSetRadius -------------------------------------------------------
+
+/**
+ * Resize a circle or arc.
+ *
+ * Radius is a number on the geometry, not a point, so this can't ride on
+ * `SketchMovePointsBatch` like every other drag. For an arc the stored radius
+ * and its start/end points must agree — `syncDerivedGeometryFields` recomputes
+ * arc radius from `|start - centre|` after every solve — so the endpoints are
+ * scaled about the centre rather than the number being written on its own,
+ * which would be silently reverted by the next solve.
+ */
+export const sketchSetRadiusHandler: CommandHandler = {
+  validate(command: CadCommand, state: Readonly<CadProject>): Result<void, ValidationError> {
+    if (command.type !== 'SketchSetRadius') {
+      return err({ code: 'WRONG_TYPE', message: 'Expected SketchSetRadius command' });
+    }
+    const found = findSketch(state, command.sketchId);
+    if (!found.ok) return err(found.error);
+    const vg = validateGeometryId('geometryId', command.geometryId);
+    if (!vg.ok) return err(vg.error);
+    if (!Number.isFinite(command.radius) || command.radius <= 0) {
+      return err({ code: 'INVALID_INPUT', message: 'radius must be a positive number', field: 'radius' });
+    }
+    return ok(undefined);
+  },
+  execute(draft: CadProject, command: CadCommand): void {
+    if (command.type !== 'SketchSetRadius') return;
+    const current = loadEditorState(draft, command.sketchId);
+    const geom = current.geometries.get(command.geometryId);
+    if (!geom || (geom.type !== 'circle' && geom.type !== 'arc')) return;
+
+    const geometries = new Map(current.geometries);
+    let points = current.points;
+
+    if (geom.type === 'arc') {
+      const centre = current.points.get(geom.centerId);
+      const start = current.points.get(geom.startId);
+      const end = current.points.get(geom.endId);
+      if (!centre || !start || !end) return;
+      // Scale both endpoints along their own radial directions so the arc's
+      // angular span is preserved and `|start - centre|` matches the new
+      // radius — otherwise the post-solve sync would undo this immediately.
+      const moved = new Map(points);
+      for (const p of [start, end]) {
+        const dx = p.x - centre.x;
+        const dy = p.y - centre.y;
+        const len = Math.hypot(dx, dy);
+        if (len < 1e-9) continue; // degenerate; leave it where it is
+        moved.set(p.id, {
+          ...p,
+          x: centre.x + (dx / len) * command.radius,
+          y: centre.y + (dy / len) * command.radius,
+        });
+      }
+      points = moved;
+    }
+
+    geometries.set(command.geometryId, { ...geom, radius: command.radius });
+
+    // Re-solve so anything hanging off this geometry (tangent, concentric,
+    // point-on-circle) follows. Nothing is anchored: the radius is already
+    // written, and anchoring would over-constrain the very points the solver
+    // needs to move. Routed through `solveDrag` for its refuse-on-failure
+    // guard — a non-converged solve returns unsolved coordinates, and writing
+    // those would persist a torn sketch.
+    const result = solveDrag(getSolver(), points, geometries, current.constraints, new Set());
+    if (!result) return;
+    applyEditorStateUpdate(draft, command.sketchId, {
+      points: result.points,
+      geometries: result.geometries,
+      constraints: current.constraints,
+    });
+  },
+};
+
 export const sketchMovePointsBatchHandler: CommandHandler = {
   validate(command: CadCommand, state: Readonly<CadProject>): Result<void, ValidationError> {
     if (command.type !== 'SketchMovePointsBatch') {
@@ -810,12 +892,16 @@ export const sketchMovePointsBatchHandler: CommandHandler = {
       anchored.add(m.pointId);
     }
     if (anchored.size === 0) return;
-    const result = getSolver().solve(
+    // Same anchored → free → refuse ladder as the live preview; see
+    // `sketchMovePointHandler`.
+    const result = solveDrag(
+      getSolver(),
       current.points,
       current.geometries,
       current.constraints,
       anchored,
     );
+    if (!result) return;
     applyEditorStateUpdate(draft, command.sketchId, {
       points: result.points,
       geometries: result.geometries,

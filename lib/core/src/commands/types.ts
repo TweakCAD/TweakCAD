@@ -8,6 +8,7 @@ import type { PartId, FeatureId, EntityId } from '../ids.ts';
 import type {
   SketchConstraintInput,
   SketchConstraintId,
+  SketchGeometryId,
   SketchPointId,
 } from '../sketch/types.ts';
 import type {
@@ -59,6 +60,7 @@ export type CadCommand =
   | SketchDrawSplineCommand
   | SketchMovePointCommand
   | SketchMovePointsBatchCommand
+  | SketchSetRadiusCommand
   | SketchApplyConstraintCommand
   | SketchRemoveConstraintCommand
   // Modify-tool sketch commands
@@ -537,6 +539,27 @@ export type SketchMovePointsBatchCommand = {
   moves: ReadonlyArray<{ pointId: SketchPointId; to: [number, number] }>;
 };
 
+/**
+ * Set a circle's or arc's radius, then re-solve.
+ *
+ * Radius is a plain number on the geometry, not a point, so unlike every
+ * other sketch drag it cannot be expressed as a point move — hence its own
+ * command rather than reuse of `SketchMovePointsBatch`. Emitted by the
+ * circumference drag handle, and by any future numeric edit that changes size
+ * without adding a dimension.
+ *
+ * Distinct from applying a `radius` CONSTRAINT: this changes the current size
+ * and leaves the sketch as free as it was. A radius constraint pins it. If one
+ * already exists the drag is refused upstream, so this command never fights a
+ * constraint it cannot win.
+ */
+export type SketchSetRadiusCommand = {
+  type: 'SketchSetRadius';
+  sketchId: FeatureId;
+  geometryId: SketchGeometryId;
+  radius: number;
+};
+
 // --- Feature Commands ---
 
 export type CreateExtrudeCommand = {
@@ -792,6 +815,8 @@ export function commandLabel(command: CadCommand): string {
       return 'Move Point';
     case 'SketchMovePointsBatch':
       return `Move ${command.moves.length} point${command.moves.length === 1 ? '' : 's'}`;
+    case 'SketchSetRadius':
+      return `Resize to R ${command.radius.toFixed(2)}`;
     case 'SketchApplyConstraint':
       return `Apply ${command.constraint.type} constraint`;
     case 'SketchRemoveConstraint':

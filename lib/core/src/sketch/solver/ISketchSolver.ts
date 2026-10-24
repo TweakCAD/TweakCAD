@@ -73,5 +73,21 @@ export interface ISketchSolver {
     geometries: ReadonlyMap<SketchGeometryId, SketchGeometry>,
     constraints: ReadonlyMap<SketchConstraintId, SketchConstraint>,
     anchored: ReadonlySet<SketchPointId>,
+    dragTargets?: ReadonlyMap<SketchPointId, DragTarget>,
   ): SolveResult;
+}
+
+/**
+ * A position the solver should pull a point toward *without* pinning it.
+ *
+ * Anchoring removes a point from the parameter vector, which makes any
+ * constraint touching only anchored/fixed points unsatisfiable. A drag target
+ * is the soft alternative: the point stays free, so real constraints are
+ * satisfied first, and the target only decides where the point lands within
+ * the freedom those constraints leave. Used by `solveDrag`'s fallback tier so
+ * a dragged point slides along its constraint instead of breaking it.
+ */
+export interface DragTarget {
+  x: number;
+  y: number;
 }

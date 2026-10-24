@@ -40,7 +40,7 @@ import { detectSketchRegions, pointInRegion, findRegionForEntity } from '@tweakc
 import type { SketchRegion } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import type { SketchEntity } from '@tweakcad/core/src/document/schema.ts';
 import { entityId } from '@tweakcad/core/src/ids.ts';
-import { getSolver } from '@tweakcad/core/src/sketch/solver/index.ts';
+import { getSolver, solveDrag } from '@tweakcad/core/src/sketch/solver/index.ts';
 
 /**
  * Solve via the active solver (planegcs — the only solver).
@@ -645,11 +645,19 @@ export const useSketchEditorStore = create<SketchEditorState>((set, get) => ({
     set((state: SketchEditorState) => {
       const points = new Map(state.points);
       const existing = points.get(id);
-      if (existing) {
-        points.set(id, { ...existing, x, y });
-      }
+      // A fixed point doesn't move, and must not be anchored either: anchoring
+      // tells the solver to treat this position as authoritative, which for a
+      // pinned point is exactly backwards — it would drag the rest of the
+      // sketch to meet a position the point isn't allowed to be in.
+      if (!existing || existing.fixed) return state;
+      points.set(id, { ...existing, x, y });
       const anchored = new Set<SketchPointId>([id]);
-      const result = solveConstraints(points, state.geometries, state.constraints, anchored);
+      // `solveDrag` falls back to an unanchored solve when pinning the dragged
+      // point makes a constraint unsatisfiable, so the point slides along the
+      // constraint instead of tearing the sketch apart. `null` = no consistent
+      // solution either way; leave the sketch exactly as it was.
+      const result = solveDrag(getSolver(), points, state.geometries, state.constraints, anchored);
+      if (!result) return state;
       const geometries = syncDerivedGeometryFields(result.geometries, result.points);
       return { points: result.points, geometries, unsatisfiedConstraints: result.diagnostic.unsatisfied, dof: result.diagnostic.dof };
     });
@@ -662,12 +670,16 @@ export const useSketchEditorStore = create<SketchEditorState>((set, get) => ({
       const anchored = new Set<SketchPointId>();
       for (const u of updates) {
         const existing = points.get(u.id);
-        if (existing) {
-          points.set(u.id, { ...existing, x: u.x, y: u.y });
-          anchored.add(u.id);
-        }
+        // Same rule as `movePoint` — skip fixed points entirely rather than
+        // moving or anchoring them. A multi-point drag that happens to include
+        // the origin moves everything else and leaves the origin alone.
+        if (!existing || existing.fixed) continue;
+        points.set(u.id, { ...existing, x: u.x, y: u.y });
+        anchored.add(u.id);
       }
-      const result = solveConstraints(points, state.geometries, state.constraints, anchored);
+      // Same anchored → free → refuse ladder as `movePoint`.
+      const result = solveDrag(getSolver(), points, state.geometries, state.constraints, anchored);
+      if (!result) return state;
       const geometries = syncDerivedGeometryFields(result.geometries, result.points);
       return { points: result.points, geometries, unsatisfiedConstraints: result.diagnostic.unsatisfied, dof: result.diagnostic.dof };
     });

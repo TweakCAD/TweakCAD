@@ -28,7 +28,6 @@ export const createPartHandler: CommandHandler = {
     draft.parts[id] = {
       id,
       name: command.name,
-      transform: { position: [0, 0, 0], rotation: [0, 0, 0, 1] },
       parameters: { values: {} },
       timeline: [],
       defaultPlanes: {
