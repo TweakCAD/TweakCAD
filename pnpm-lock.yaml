@@ -130,8 +130,8 @@ importers:
         specifier: 0.8.3
         version: 0.8.3
       immer:
-        specifier: 10.2.0
-        version: 10.2.0
+        specifier: 11.2.9
+        version: 11.2.9
       lucide-react:
         specifier: 1.61.0
         version: 1.61.0(@types/react@19.3.0)(react@19.3.1)
@@ -155,7 +155,7 @@ importers:
         version: 3.25.76
       zustand:
         specifier: 5.0.16
-        version: 5.0.16(@types/react@19.3.0)(immer@10.2.0)(react@19.3.1)(use-sync-external-store@1.6.0(react@19.3.1))
+        version: 5.0.16(@types/react@19.3.0)(immer@11.2.9)(react@19.3.1)(use-sync-external-store@1.6.0(react@19.3.1))
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -1151,8 +1151,8 @@ packages:
     resolution: {integrity: sha512-YYNsSlXBjMk92SKnkwvB5LOVSa6OznlFUGcsvrFgNJbJCd0M1XKeFVRc8ZByeCqz32FivYNHJVooLmdqrmvp/Q==}
     engines: {node: '>= 4'}
 
-  immer@10.2.0:
-    resolution: {integrity: sha512-d/+XTN3zfODyjr89gM3mPq1WNX2B8pYsu7eORitdwyA2sBubnTl3laYlBk4sXY5FUa5qTZGBDPJICVbvqzjlbw==}
+  immer@11.2.9:
+    resolution: {integrity: sha512-IQ4UEtXjZjyefyWjtLEDXUSrF6T2hwjKPi6BIJl3bY/2XXW24d6cNGdXJSBOA/+KNnuiXkZY6DR0C3efolhitA==}
 
   imurmurhash@0.1.4:
     resolution: {integrity: sha512-JmXMZ6wuvDmLiHEml9ykzqO6lwFbof0GG4IkcGaENdCRDDmMVnny7s5HsIgHCbaq0w2MyPhDqkhTUgS2LU2PHA==}
@@ -2427,7 +2427,7 @@ snapshots:
 
   ignore@7.0.8: {}
 
-  immer@10.2.0: {}
+  immer@11.2.9: {}
 
   imurmurhash@0.1.4: {}
 
@@ -2727,9 +2727,9 @@ snapshots:
 
   zod@3.25.76: {}
 
-  zustand@5.0.16(@types/react@19.3.0)(immer@10.2.0)(react@19.3.1)(use-sync-external-store@1.6.0(react@19.3.1)):
+  zustand@5.0.16(@types/react@19.3.0)(immer@11.2.9)(react@19.3.1)(use-sync-external-store@1.6.0(react@19.3.1)):
     optionalDependencies:
       '@types/react': 19.3.0
-      immer: 10.2.0
+      immer: 11.2.9
       react: 19.3.1
       use-sync-external-store: 1.6.0(react@19.3.1)
