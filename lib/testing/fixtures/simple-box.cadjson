@@ -1,6 +1,5 @@
 {
   "schemaVersion": "0.2",
-  "units": "mm",
   "metadata": {
     "name": "Simple Box",
     "description": "A simple box for testing",
@@ -19,7 +18,6 @@
     "part_1": {
       "id": "part_1",
       "name": "Box",
-      "transform": { "position": [0, 0, 0], "rotation": [0, 0, 0, 1] },
       "parameters": { "values": {} },
       "timeline": [
         {

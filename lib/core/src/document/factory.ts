@@ -37,7 +37,6 @@ export function createPart(name: string): CadPart {
   return {
     id: partId(generateId('part')),
     name,
-    transform: { position: [0, 0, 0], rotation: [0, 0, 0, 1] },
     parameters: emptyParameterTable(),
     timeline: [],
     defaultPlanes: createDefaultPlanes(),
@@ -53,7 +52,6 @@ export function emptyProject(name = 'Untitled Project'): CadProject {
   const now = new Date().toISOString();
   return {
     schemaVersion: '0.1',
-    units: 'mm',
     metadata: {
       name,
       description: '',

@@ -62,7 +62,6 @@ function makeProject(features: FeatureNode[], extraParts: Record<string, Feature
   }
   return {
     schemaVersion: '0.2',
-    units: 'mm',
     metadata: { name: 'test', description: '', createdAt: '', updatedAt: '', appVersion: '0' },
     parameters: { values: {} },
     parts,

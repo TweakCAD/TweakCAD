@@ -1,6 +1,5 @@
 {
   "schemaVersion": "0.2",
-  "units": "mm",
   "metadata": {
     "name": "Plate with Hole",
     "description": "Simple test model - plate with center hole",
@@ -20,7 +19,6 @@
     "part_1": {
       "id": "part_1",
       "name": "Plate",
-      "transform": { "position": [0, 0, 0], "rotation": [0, 0, 0, 1] },
       "parameters": { "values": {} },
       "timeline": [
         {

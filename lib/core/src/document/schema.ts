@@ -4,16 +4,22 @@
  * Plain objects only - no classes, no methods.
  */
 
-import type { PartId, FeatureId, BodyId, FaceId, EdgeId, StableFaceId, StableEdgeId, EntityId, ReferenceId, AssemblyId } from '../ids.ts';
+import type { PartId, FeatureId, BodyId, FaceId, EdgeId, StableFaceId, StableEdgeId, EntityId, ReferenceId, AssemblyId, InstanceId } from '../ids.ts';
 import type { Transform3D, BoundingBox3D, MassProperties, Vec3 } from '../math.ts';
 import type { Expression } from '../expressions.ts';
-import type { UnitSystem, ParameterUnit } from '../units.ts';
+import type { ParameterUnit } from '../units.ts';
 
 // --- Top-Level Project ---
 
 export type CadProject = {
   schemaVersion: '0.1' | '0.2';
-  units: UnitSystem;
+  // No `units` field. Every length in this document is millimetres and every
+  // angle is degrees — see the units invariant in `../units.ts`. The field
+  // used to be `units: 'mm' | 'inch'`, but nothing read it and nothing
+  // converted, so a document declaring inches would have had every length
+  // silently taken as millimetres. A field whose only legal value is 'mm'
+  // carries no information; an inch *readout* is a formatting concern and
+  // needs no storage.
   metadata: ProjectMetadata;
   parameters: ParameterTable;
   parts: Record<PartId, CadPart>;
@@ -35,7 +41,10 @@ export type ProjectMetadata = {
 export type CadPart = {
   id: PartId;
   name: string;
-  transform: Transform3D;
+  // No `transform` here on purpose. Placement belongs to an
+  // {@link AssemblyInstance}, not to the part definition — a part placed
+  // twice in an assembly needs two placements, and a definition can only
+  // hold one. A part's own geometry is always authored at its local origin.
   parameters: ParameterTable;
   timeline: FeatureNode[];
   defaultPlanes: DefaultPlaneSet;
@@ -1100,14 +1109,52 @@ export type ReferenceAsset = {
   data: string;
 };
 
+/**
+ * An assembly: a tree of placed instances.
+ *
+ * **Not built yet** — `CadProject.assemblies` is `{}` in every document the
+ * app writes today, and no builder or viewport code reads this. It is
+ * defined now, pre-launch, because one field in {@link AssemblyInstance}
+ * cannot be added later without migrating every saved file: `instanceId`.
+ *
+ * Everything an assembly eventually needs — joints, per-instance visibility,
+ * suppression, appearance overrides, exploded-view offsets, BOM quantities —
+ * is an optional field or a separate table keyed by `instanceId`, so all of
+ * it is additive once instance identity exists. Nothing else is reserved
+ * here; adding an optional field to an object is free, and a field nothing
+ * reads is a field that lies.
+ */
 export type CadAssembly = {
   id: AssemblyId;
   name: string;
-  components: AssemblyComponent[];
+  /**
+   * True for the assembly the document opens as. Exactly one assembly in
+   * `CadProject.assemblies` should carry it. Structural rather than
+   * behavioural: a tree needs a designated entry point, and inferring one
+   * after the fact ("the first key", "the one nothing references") is
+   * ambiguous the moment a document has two top-level assemblies.
+   */
+  root: boolean;
+  instances: AssemblyInstance[];
 };
 
-export type AssemblyComponent = {
-  partId: PartId;
+/**
+ * One placement of a part or a sub-assembly.
+ *
+ * `instanceId` is the whole reason this type exists now. Without it, two
+ * placements of the same part are indistinguishable — there is no way to say
+ * "the left bracket" rather than "a bracket". Every downstream assembly
+ * feature needs that distinction: a joint connects two *instances*, never two
+ * part definitions; per-instance visibility, suppression and appearance are
+ * keyed by it; BOM quantities count it.
+ */
+export type AssemblyInstance = {
+  instanceId: InstanceId;
+  /** What is placed. The union is what makes sub-assemblies possible. */
+  of:
+    | { kind: 'part'; partId: PartId }
+    | { kind: 'assembly'; assemblyId: AssemblyId };
+  /** Placement relative to the parent assembly's frame. */
   transform: Transform3D;
 };
 

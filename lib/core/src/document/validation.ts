@@ -431,11 +431,33 @@ const ConfigurationTableSchema = z.object({
 const CadPartSchema = z.object({
   id: z.string(),
   name: z.string(),
-  transform: Transform3DSchema,
   parameters: ParameterTableSchema,
   timeline: z.array(FeatureNodeSchema),
   defaultPlanes: DefaultPlaneSetSchema,
   configurations: ConfigurationTableSchema.optional(),
+});
+
+// --- Assemblies ---
+//
+// Validated for real rather than left as `z.unknown()`: the app writes `{}`
+// today, so the only documents that could carry instances are hand-authored
+// or from a future version, and those are exactly the ones worth rejecting
+// early rather than letting a malformed tree reach a builder.
+
+const AssemblyInstanceSchema = z.object({
+  instanceId: z.string(),
+  of: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('part'), partId: z.string() }),
+    z.object({ kind: z.literal('assembly'), assemblyId: z.string() }),
+  ]),
+  transform: Transform3DSchema,
+});
+
+const CadAssemblySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  root: z.boolean(),
+  instances: z.array(AssemblyInstanceSchema),
 });
 
 // --- Project Metadata ---
@@ -452,12 +474,11 @@ const ProjectMetadataSchema = z.object({
 
 export const CadProjectSchema = z.object({
   schemaVersion: z.union([z.literal('0.1'), z.literal('0.2')]),
-  units: z.union([z.literal('mm'), z.literal('inch')]),
   metadata: ProjectMetadataSchema,
   parameters: ParameterTableSchema,
   parts: z.record(z.string(), CadPartSchema),
   references: z.record(z.string(), z.unknown()),
-  assemblies: z.record(z.string(), z.unknown()),
+  assemblies: z.record(z.string(), CadAssemblySchema),
   embeddedComponents: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -469,6 +490,8 @@ export {
   FeatureNodeSchema,
   FeatureTypeSchema,
   CadPartSchema,
+  CadAssemblySchema,
+  AssemblyInstanceSchema,
   PlaneRefSchema,
   DirectionSpecSchema,
   ExtentSpecSchema,

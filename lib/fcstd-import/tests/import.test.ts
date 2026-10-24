@@ -149,8 +149,10 @@ describe('importFcstdFromXml — real Exercise-2D-10 model', () => {
     expect(nonDefaults).toHaveLength(0);
   });
 
-  it('produces a CadProject with mm units and schemaVersion 0.2', () => {
-    expect(project.units).toBe('mm');
+  it('produces a CadProject at schemaVersion 0.2 with no unit system', () => {
+    // FreeCAD authors in mm, and so do we — there is no document-level unit
+    // field to translate into. See the units invariant in `core/src/units.ts`.
+    expect(project).not.toHaveProperty('units');
     expect(project.schemaVersion).toBe('0.2');
   });
 });

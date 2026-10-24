@@ -82,7 +82,6 @@ export function convertDocument(
     const part: CadPart = {
       id: pid,
       name: body.label ?? body.name,
-      transform: { position: [0, 0, 0], rotation: [0, 0, 0, 1] },
       parameters: { values: {} },
       timeline: partResult.timeline,
       defaultPlanes: {
@@ -96,7 +95,6 @@ export function convertDocument(
 
   const project: CadProject = {
     schemaVersion: '0.2',
-    units: 'mm',
     metadata: {
       name: options.name ?? doc.objects['Body']?.label ?? 'Imported FreeCAD model',
       description: `Imported from FreeCAD .fcstd (ProgramVersion=${doc.programVersion ?? 'unknown'})`,

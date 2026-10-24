@@ -1,29 +1,27 @@
 /**
- * Unit system definitions and conversion utilities.
+ * Parameter units and value formatting.
+ *
+ * **Units invariant: TweakCAD is millimetre-native. Every length stored
+ * anywhere in a `.cadjson` is in millimetres, and every angle is in
+ * degrees.** Importers normalise on the way in — DXF scales by `$INSUNITS`
+ * (`sketch/io/dxfImport.ts`), SVG by its viewBox ratio — so no consumer ever
+ * has to ask what unit a stored number is in, and the expression grammar
+ * needs no unit literals.
+ *
+ * There is deliberately no document-level unit system and no length
+ * converter. `CadProject` carried `units: 'mm' | 'inch'` until this was
+ * settled, but nothing read it and nothing converted, so a file declaring
+ * inches would have had every length silently taken as millimetres. If an
+ * inch *readout* is ever wanted it belongs in the formatting layer, converting
+ * on the way to the screen and never on the way into the document.
+ *
+ * {@link ParameterUnit} below is a different thing: a per-parameter tag that
+ * says how to render one parameter's value, and whether it is a length, an
+ * angle or a count.
  */
-
-/** Supported unit systems */
-export type UnitSystem = 'mm' | 'inch';
 
 /** Supported parameter units */
 export type ParameterUnit = 'mm' | 'deg' | 'count' | 'none';
-
-/** Conversion factor from inches to millimeters */
-const MM_PER_INCH = 25.4;
-
-/**
- * Convert a value from one unit system to another.
- * @param value - The numeric value to convert
- * @param from - Source unit system
- * @param to - Target unit system
- * @returns Converted value
- */
-export function convertLength(value: number, from: UnitSystem, to: UnitSystem): number {
-  if (from === to) return value;
-  if (from === 'inch' && to === 'mm') return value * MM_PER_INCH;
-  if (from === 'mm' && to === 'inch') return value / MM_PER_INCH;
-  return value;
-}
 
 /**
  * Format a value with its unit suffix.
