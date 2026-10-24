@@ -13,15 +13,19 @@ overrides:
   uuid: 11.1.1
   # postcss <=8.5.22 (stringify XSS, and the incomplete fix that followed) —
   # via vite-plugin-top-level-await > vite > postcss.
-  postcss: 8.5.28
+  postcss: 8.5.31
   # nanoid <3.3.18 (non-secure generators loop on negative/zero size) — comes
   # in under postcss, which wants the 3.x line, so pin within it rather than
   # forcing nanoid 6 and breaking postcss.
-  nanoid: ^3.3.18
+  nanoid: 3.3.19
   # browserslist <=4.28.6 and the baseline-browser-mapping it pulls — via
   # eslint-plugin-react-hooks > @babel/core > @babel/helper-compilation-targets.
-  browserslist: ^4.28.9
-  baseline-browser-mapping: ^2.11.22
+  browserslist: 4.29.4
+  baseline-browser-mapping: 2.11.32
+  # brace-expansion >=4.0.0 <5.0.12 — three DoS advisories (GHSA-6j4f-fj2g-mc7p
+  # and GHSA-qhr7-859c-m2p7 recurse until the stack blows, GHSA-q2hr-2g5m-vwhr
+  # is quadratic-time expansion). Arrives under eslint > minimatch.
+  brace-expansion: 5.0.12
 allowBuilds:
   '@swc/core': true
   esbuild: true
