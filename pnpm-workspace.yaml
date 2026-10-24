@@ -29,3 +29,14 @@ overrides:
 allowBuilds:
   '@swc/core': true
   esbuild: true
+# pnpm 12 refuses packages younger than its built-in minimum release age — the
+# window that lets a compromised publish be caught before anyone installs it.
+# Each entry here is a deliberate waiver of that protection, so each one needs a
+# reason and should be removed once the version ages past the window.
+minimumReleaseAgeExclude:
+  # occt-wasm 5.8.0 published 2026-10-23, adopted 2026-10-24. Taken a day old
+  # for 5.3.3 (unbuildable fillet returns an error instead of trapping the
+  # WASM module) and 5.7.1 (frees exceptions and restores the stack when a
+  # kernel call throws). Single-publisher package, scanned clean by
+  # check-supply-chain-all.mjs. Drop this entry once it is no longer new.
+  - occt-wasm@5.8.0
