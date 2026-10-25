@@ -12,6 +12,7 @@ import type { FeatureNode, ExtrudeFeatureInputs, ProfileRef, PlaneRef, BodyRef }
 import type { ResolvedParams } from '@tweakcad/core/src/expressions.ts';
 import { evaluateExpression } from '@tweakcad/core/src/expressions.ts';
 import { bodyId } from '@tweakcad/core/src/ids.ts';
+import { carryBodyId } from './bodyIdentity.ts';
 import type { FeatureId, BodyId } from '@tweakcad/core/src/ids.ts';
 import type { Vec3 } from '@tweakcad/core/src/math.ts';
 import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
@@ -211,8 +212,18 @@ export async function buildExtrude(
     if (!fuseResult.ok) {
       throw new Error(`Join failed: ${fuseResult.error.message}`);
     }
+    // Merge: the result carries the PRIMARY target's id; the other inputs
+    // are consumed and their ids retire. Minting a fresh id here would
+    // invalidate every stored BodyRef pointing at the target the user joined
+    // onto, which is the body they still think of as theirs.
+    //
+    // `targetEntries` is non-empty in this branch — the guard above routes
+    // the empty case to newBody — but read it without an assertion so the
+    // invariant is enforced rather than asserted.
+    const [primaryTarget] = targetEntries;
+    if (!primaryTarget) throw new Error('Join reached with no target bodies.');
     for (const [tid] of targetEntries) context.bodies.delete(tid);
-    allBodies.push({ bodyId: bodyId(`body_${node.id}_0`), handle: fuseResult.value });
+    allBodies.push({ bodyId: carryBodyId(primaryTarget[0]), handle: fuseResult.value });
   } else {
     // cut — targetEntries[0] is the user-picked target (or the
     // insertion-order first body in the back-compat all-context path).
@@ -221,8 +232,10 @@ export async function buildExtrude(
     if (!cutResult.ok) {
       throw new Error(`Cut failed: ${cutResult.error.message}`);
     }
+    // Cut modifies the target in place — same body, material removed — so it
+    // carries the target's id rather than minting one.
     context.bodies.delete(tid);
-    allBodies.push({ bodyId: bodyId(`body_${node.id}_0`), handle: cutResult.value });
+    allBodies.push({ bodyId: carryBodyId(tid), handle: cutResult.value });
   }
 
   return {

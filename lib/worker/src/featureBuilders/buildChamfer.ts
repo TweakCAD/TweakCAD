@@ -20,7 +20,7 @@ import type {
 } from '@tweakcad/core/src/document/schema.ts';
 import type { ResolvedParams } from '@tweakcad/core/src/expressions.ts';
 import { evaluateExpression } from '@tweakcad/core/src/expressions.ts';
-import { bodyId as bodyIdBrand } from '@tweakcad/core/src/ids.ts';
+import { carryBodyId } from './bodyIdentity.ts';
 import type { BodyId } from '@tweakcad/core/src/ids.ts';
 import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
 import type { KernelBody, KernelEdge } from '@tweakcad/kernel/src/types.ts';
@@ -91,16 +91,16 @@ export async function buildChamfer(
     throw new Error(`Chamfer failed: ${bodyResult.error.message}`);
   }
 
-  // Same body-replacement convention as Fillet: drop the old bodyId
-  // from the context so the rebuilder's diff sees it as consumed, then
-  // return a deterministic new bodyId derived from the feature id.
+  // Same body-replacement convention as Fillet: drop the old entry so the
+  // rebuilder's diff sees it as consumed, then re-emit the SAME id — chamfer
+  // is a modifier and the body keeps its identity. See ./bodyIdentity.ts.
   context.bodies.delete(targetBodyId as BodyId);
 
-  const newBodyId = bodyIdBrand(`body_${node.id}_0`);
+  const resultBodyId = carryBodyId(targetBodyId);
   return {
-    bodies: [{ bodyId: newBodyId, handle: bodyResult.value }],
+    bodies: [{ bodyId: resultBodyId, handle: bodyResult.value }],
     outputs: {
-      bodies: { main: newBodyId },
+      bodies: { main: resultBodyId },
     },
   };
 }

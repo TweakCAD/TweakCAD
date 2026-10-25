@@ -25,7 +25,7 @@ import type {
 } from '@tweakcad/core/src/document/schema.ts';
 import type { ResolvedParams } from '@tweakcad/core/src/expressions.ts';
 import { evaluateExpression } from '@tweakcad/core/src/expressions.ts';
-import { bodyId as bodyIdBrand } from '@tweakcad/core/src/ids.ts';
+import { carryBodyId } from './bodyIdentity.ts';
 import type { BodyId } from '@tweakcad/core/src/ids.ts';
 import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
 import type { KernelBody, KernelEdge } from '@tweakcad/kernel/src/types.ts';
@@ -98,20 +98,23 @@ export async function buildFillet(
     throw new Error(`Fillet failed: ${bodyResult.error.message}`);
   }
 
-  // Fillet replaces the input body. We delete the old body from the build
-  // context here so the rebuilder's "consumed bodies" detector picks it up
-  // (it diffs the post-build context against the pre-build snapshot).
-  // The topology tracker keeps stable face/edge IDs across this transition;
-  // the bodyId itself is just a registry handle and is allowed to change.
+  // Fillet replaces the input body. Delete the old entry so the rebuilder's
+  // "consumed bodies" detector picks it up (it diffs the post-build context
+  // against the pre-build snapshot).
   context.bodies.delete(targetBodyId as BodyId);
 
-  // Deterministic id derived from the feature so user-captured
-  // FaceRef/EdgeRef on this filleted body survive subsequent rebuilds.
-  const newBodyId = bodyIdBrand(`body_${node.id}_0`);
+  // Fillet is a modifier: the body keeps its identity. This used to mint
+  // `body_${node.id}_0` on the reasoning that "the bodyId is just a registry
+  // handle and is allowed to change" — but body ids are persisted inside
+  // every stored BodyRef, so re-keying here silently invalidated the stored
+  // references of every downstream feature. Inserting a fillet above a shell
+  // broke the shell; inserting a hole in the same slot did not, because hole
+  // carried the id. See ./bodyIdentity.ts.
+  const resultBodyId = carryBodyId(targetBodyId);
   return {
-    bodies: [{ bodyId: newBodyId, handle: bodyResult.value }],
+    bodies: [{ bodyId: resultBodyId, handle: bodyResult.value }],
     outputs: {
-      bodies: { main: newBodyId },
+      bodies: { main: resultBodyId },
     },
   };
 }
