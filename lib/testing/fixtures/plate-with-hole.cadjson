@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "0.2",
+  "schemaVersion": 1,
   "metadata": {
     "name": "Plate with Hole",
     "description": "Simple test model - plate with center hole",

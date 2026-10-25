@@ -17,6 +17,7 @@
  *     they're Sketcher::SketchObject which IS supported, just unused).
  */
 
+import { CURRENT_SCHEMA_VERSION } from '@tweakcad/core/src/document/version.ts';
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -149,11 +150,13 @@ describe('importFcstdFromXml — real Exercise-2D-10 model', () => {
     expect(nonDefaults).toHaveLength(0);
   });
 
-  it('produces a CadProject at schemaVersion 0.2 with no unit system', () => {
+  it('produces a CadProject at the current schema version with no unit system', () => {
     // FreeCAD authors in mm, and so do we — there is no document-level unit
     // field to translate into. See the units invariant in `core/src/units.ts`.
     expect(project).not.toHaveProperty('units');
-    expect(project.schemaVersion).toBe('0.2');
+    // Compared against the constant, not a literal: the importer must write
+    // whatever this build writes, or its output fails to load.
+    expect(project.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
   });
 });
 

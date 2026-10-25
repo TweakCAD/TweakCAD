@@ -11,6 +11,7 @@
 import { CloudStorageProvider } from '@tweakcad/cloud-providers';
 import type { CadProject } from '@tweakcad/core/src/document/schema.ts';
 import { captureThumbnail } from './thumbnailCapture.ts';
+import { loadCadDocumentOrThrow } from '@tweakcad/core/src/document/loader.ts';
 
 let cached: CloudStorageProvider | null = null;
 
@@ -35,8 +36,14 @@ export async function loadCloudProject(projectId: string): Promise<CloudLoadResu
   }
   const res = await fetch(result.downloadUrl, { credentials: 'omit' });
   if (!res.ok) throw new Error(`Cloud document fetch failed: ${res.status}`);
-  const doc = (await res.json()) as CadProject;
-  return { name: result.project.name, doc, etag: result.etag };
+  // Validated, not cast. This was `(await res.json()) as CadProject` — the
+  // least-checked path in the app, and the one that loads documents the user
+  // did not author, including anything remixed from the public gallery.
+  const loaded = loadCadDocumentOrThrow(await res.json());
+  for (const d of loaded.diagnostics) {
+    console.warn(`[cloud load] ${d.message}`);
+  }
+  return { name: result.project.name, doc: loaded.project, etag: result.etag };
 }
 
 export async function saveCloudProject(

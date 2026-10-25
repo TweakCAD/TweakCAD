@@ -3,32 +3,13 @@
  * Handles reading and writing of project documents.
  */
 
-import type { Result } from '../result.ts';
-import { ok, err } from '../result.ts';
 import type { CadProject } from './schema.ts';
-import { CadProjectSchema } from './validation.ts';
 
-/**
- * Parse a .cadjson string into a CadProject.
- * @param json - Raw JSON string
- * @returns Validated CadProject or error
- */
-export function parseCadJson(json: string): Result<CadProject, string> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(json);
-  } catch (e) {
-    return err(`Invalid JSON: ${e instanceof Error ? e.message : String(e)}`);
-  }
-
-  const result = CadProjectSchema.safeParse(parsed);
-  if (!result.success) {
-    const issues = result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`);
-    return err(`Validation failed:\n${issues.join('\n')}`);
-  }
-
-  return ok(result.data as CadProject);
-}
+// Reading lives in `./loader.ts` (`loadCadDocument`). A `parseCadJson` used
+// to sit here — the only validating parser in the repo, and imported by
+// nothing, because `diskAdapter.ts` declared a weaker local function with the
+// same name that shadowed it at every call site. The collision is why it went
+// unnoticed; removing it means the mistake cannot be made again.
 
 /**
  * Serialize a CadProject to a .cadjson string.

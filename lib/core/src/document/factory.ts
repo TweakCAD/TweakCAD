@@ -5,6 +5,7 @@
 import type { CadProject, CadPart, ParameterTable, DefaultPlaneSet } from './schema.ts';
 import type { PartId } from '../ids.ts';
 import { partId, generateId } from '../ids.ts';
+import { CURRENT_SCHEMA_VERSION } from './version.ts';
 
 const APP_VERSION = '0.1.0';
 
@@ -51,7 +52,7 @@ export function createPart(name: string): CadPart {
 export function emptyProject(name = 'Untitled Project'): CadProject {
   const now = new Date().toISOString();
   return {
-    schemaVersion: '0.1',
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     metadata: {
       name,
       description: '',

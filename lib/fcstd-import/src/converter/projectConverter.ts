@@ -20,6 +20,7 @@
  */
 
 import { partId as makePartId, generateId } from '@tweakcad/core/src/ids.ts';
+import { CURRENT_SCHEMA_VERSION } from '@tweakcad/core/src/document/version.ts';
 import type {
   CadProject,
   CadPart,
@@ -94,7 +95,7 @@ export function convertDocument(
   }
 
   const project: CadProject = {
-    schemaVersion: '0.2',
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     metadata: {
       name: options.name ?? doc.objects['Body']?.label ?? 'Imported FreeCAD model',
       description: `Imported from FreeCAD .fcstd (ProgramVersion=${doc.programVersion ?? 'unknown'})`,
