@@ -196,6 +196,12 @@ describe('buildExtrude — operation semantics (one extrude → 1..N bodies)', (
     // One feature → one body (even when the new geometry is disjoint).
     expect(result.bodies).toHaveLength(1);
 
+    // Join is a MERGE: the result carries the primary target's id rather
+    // than minting one from the extrude. Minting would invalidate every
+    // stored BodyRef pointing at the body the user joined onto — the one
+    // they still think of as theirs. See ./bodyIdentity.ts.
+    expect(result.bodies.map(b => String(b.bodyId))).toEqual([String(targetId)]);
+
     // Target consumed: the join handler must delete the previous body
     // from context.bodies; otherwise the rebuilder leaves stale entries
     // around and the timeline grows new bodies on every join.
@@ -230,6 +236,9 @@ describe('buildExtrude — operation semantics (one extrude → 1..N bodies)', (
     const result = await buildExtrude(extrude, {}, context, kernel);
 
     expect(result.bodies).toHaveLength(1);
+    // Cut modifies the target in place — same body, material removed — so it
+    // carries the target's id. See ./bodyIdentity.ts.
+    expect(result.bodies.map(b => String(b.bodyId))).toEqual([String(targetId)]);
     expect(context.bodies.has(targetId)).toBe(false);
     expect(cutSpy).toHaveBeenCalledTimes(1);
     const [cutTarget, cutTools] = cutSpy.mock.calls[0]!;
