@@ -13,7 +13,6 @@ import type {
 } from '../sketch/types.ts';
 import type {
   PlaneRef,
-  SketchEntity,
   ExtrudeFeatureInputs,
   RevolveFeatureInputs,
   LoftFeatureInputs,
@@ -44,7 +43,6 @@ export type CadCommand =
   // Sketch commands
   | CreateSketchCommand
   | CreateSketchFromImportCommand
-  | AddSketchEntityCommand
   | RemoveSketchEntityCommand
   // Higher-level sketch drawing commands — see
   // sketch/operations.ts for the shared primitives these route into.
@@ -152,12 +150,6 @@ export type CreateSketchFromImportCommand = {
   editorState: SketchEditorSnapshot;
   /** Optional display name; defaults to the auto-numbered "Sketch N". */
   name?: string;
-};
-
-export type AddSketchEntityCommand = {
-  type: 'AddSketchEntity';
-  sketchId: FeatureId;
-  entity: SketchEntity;
 };
 
 // `ReplaceSketchEntitiesCommand` was retired during the sketch-commands
@@ -777,8 +769,6 @@ export function commandLabel(command: CadCommand): string {
       return 'Create Sketch';
     case 'CreateSketchFromImport':
       return 'Import Sketch';
-    case 'AddSketchEntity':
-      return `Add ${command.entity.type}`;
     case 'SketchTrim':
       return 'Trim';
     case 'SketchExtend':

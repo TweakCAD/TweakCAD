@@ -6,7 +6,7 @@ import { isEmptyImportedData } from '../../document/importedData.ts';
 import type { Result } from '../../result.ts';
 import { ok, err } from '../../result.ts';
 import type { CadProject, FeatureNode, SketchFeatureInputs } from '../../document/schema.ts';
-import type { PartId, FeatureId, EntityId } from '../../ids.ts';
+import type { PartId, FeatureId } from '../../ids.ts';
 import { generateId, featureId } from '../../ids.ts';
 import type { CadCommand } from '../types.ts';
 import type { CommandHandler, ValidationError } from '../bus.ts';
@@ -19,7 +19,6 @@ import {
   removeGeometry as removeGeometryOp,
   type EditorState,
 } from '../../sketch/operations.ts';
-import { editorModelToBuildGeometry } from '../../sketch/serialization.ts';
 
 /** Find a part or return a validation error */
 function findPart(state: Readonly<CadProject>, id: PartId): Result<void, ValidationError> {
@@ -148,7 +147,6 @@ export const createSketchHandler: CommandHandler = {
     // there's no collision risk.
     const inputs: SketchFeatureInputs = {
       plane: command.plane,
-      buildGeometry: {},
       editorModel: {
         points: [{ id: ORIGIN_POINT_ID, x: 0, y: 0, fixed: true }],
         geometries: [],
@@ -237,7 +235,6 @@ export const createSketchFromImportHandler: CommandHandler = {
 
     const inputs: SketchFeatureInputs = {
       plane: command.plane,
-      buildGeometry: editorModelToBuildGeometry(editorState),
       editorModel: toSnapshot(editorState) as unknown as SketchEditorSnapshot,
     };
 
@@ -259,37 +256,12 @@ export const createSketchFromImportHandler: CommandHandler = {
   },
 };
 
-export const addSketchEntityHandler: CommandHandler = {
-  validate(command: CadCommand, state: Readonly<CadProject>): Result<void, ValidationError> {
-    if (command.type !== 'AddSketchEntity') {
-      return err({ code: 'WRONG_TYPE', message: 'Expected AddSketchEntity command' });
-    }
-    // Find the sketch feature in any part
-    for (const part of Object.values(state.parts)) {
-      const found = part.timeline.find(f => f.id === command.sketchId);
-      if (found) {
-        if (found.type !== 'sketch') {
-          return err({ code: 'INVALID_FEATURE', message: 'Target feature is not a sketch' });
-        }
-        return ok(undefined);
-      }
-    }
-    return err({ code: 'NOT_FOUND', message: `Sketch not found: ${command.sketchId}` });
-  },
-
-  execute(draft: CadProject, command: CadCommand): void {
-    if (command.type !== 'AddSketchEntity') return;
-    for (const part of Object.values(draft.parts)) {
-      const sketch = part.timeline.find(f => f.id === command.sketchId);
-      if (sketch && sketch.type === 'sketch') {
-        const inputs = sketch.inputs as unknown as SketchFeatureInputs;
-        inputs.buildGeometry[command.entity.id as EntityId] = command.entity;
-        sketch.updatedAt = new Date().toISOString();
-        return;
-      }
-    }
-  },
-};
+// `addSketchEntityHandler` was retired with the buildGeometry collapse. It
+// wrote a raw entity into the derived projection and never touched
+// `editorModel`, so even before the field became derived the next `Sketch*`
+// command regenerated the projection and discarded it. Nothing dispatched
+// it. Use the per-primitive `Sketch*` draw handlers, which mutate the
+// editor model everything else derives from.
 
 // `replaceSketchEntitiesHandler` was retired during the sketch-commands
 // unification. Its sole caller
@@ -348,7 +320,6 @@ export const removeSketchEntityHandler: CommandHandler = {
       const result = removeGeometryOp(current, command.entityId as unknown as SketchGeometryId);
       if (!result.removedGeometry) return; // idempotent no-op
 
-      inputs.buildGeometry = editorModelToBuildGeometry(result.state);
       inputs.editorModel = toSnapshot(result.state) as unknown as SketchEditorSnapshot;
       const now = new Date().toISOString();
       sketch.updatedAt = now;

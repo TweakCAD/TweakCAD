@@ -28,9 +28,9 @@ describe('component stub .cadjson files', () => {
   // These pass only while `inputs` is unvalidated. Every stub stores its
   // sketches as `{ plane, entities, constraints }` — the shape retired by the
   // sketch-commands unification — where the schema now requires
-  // `{ plane, buildGeometry, editorModel }`. They have been unloadable the
-  // whole time: `buildSketch` reads `inputs.buildGeometry` and would throw on
-  // `undefined`. Toothless validation hid it; per-type validation surfaces it.
+  // `{ plane, editorModel }`. They have been unloadable the
+  // whole time: `buildSketch` reads the derived projection, which is empty for them, so
+  // they build nothing. Toothless validation hid it; per-type validation surfaces it.
   //
   // Marked `it.fails` rather than deleted because `components/README.md`
   // advertises these as the catalog, and regenerating six component

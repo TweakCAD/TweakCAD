@@ -26,6 +26,7 @@
  * stays schema-free for portability — it just routes.
  */
 
+import { sketchBuildGeometry } from '../sketch/derivedGeometry.ts';
 import type { Result } from '../result.ts';
 import { ok, err } from '../result.ts';
 import type { ToolHost, ToolExecutionError } from './toolExecutor.ts';
@@ -140,7 +141,7 @@ function sketchEntities(
   const loc = findFeatureLocation(doc, sketchId);
   if (!loc || loc.feature.type !== 'sketch') return {};
   const inputs = loc.feature.inputs as unknown as SketchFeatureInputs;
-  return inputs.buildGeometry ?? {};
+  return sketchBuildGeometry(inputs);
 }
 
 /**
@@ -1581,7 +1582,7 @@ export async function executeListSketchRegions(
   if (loc.feature.type !== 'sketch') {
     return err(invalidInput(`Feature is not a sketch: ${sketchId}`));
   }
-  const entities = (loc.feature.inputs as unknown as SketchFeatureInputs).buildGeometry ?? {};
+  const entities = sketchBuildGeometry(loc.feature.inputs as unknown as SketchFeatureInputs);
   const regions = detectSketchRegions(entities);
   return ok(
     regions.map((r) => ({

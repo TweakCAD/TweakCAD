@@ -17,6 +17,7 @@
       "@tweakcad/cloud-providers/*": ["./lib/cloud-providers/*"],
       "@tweakcad/fcstd-import": ["./lib/fcstd-import/src/index.ts"],
       "@tweakcad/fcstd-import/*": ["./lib/fcstd-import/*"],
+      "@tweakcad/testing/*": ["./lib/testing/*"],
       "@tweakcad/api-types": ["./lib/api-types/src/index.ts"],
       "@tweakcad/cad-tools": ["./lib/cad-tools/src/index.ts"]
     }

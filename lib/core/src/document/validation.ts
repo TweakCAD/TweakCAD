@@ -224,8 +224,9 @@ const SketchEditorSnapshotSchema = z.object({
 
 const SketchFeatureInputsSchema = z.object({
   plane: PlaneRefSchema,
-  buildGeometry: z.record(z.string(), SketchEntitySchema),
-  entityOrder: z.array(z.string()).optional(),
+  // No `buildGeometry`: derived from `editorModel`, not stored. Validating
+  // a derived projection would only let a document claim one inconsistent
+  // with its source.
   /** The editing source of truth; `buildGeometry` above is derived from it. */
   editorModel: SketchEditorSnapshotSchema,
 });

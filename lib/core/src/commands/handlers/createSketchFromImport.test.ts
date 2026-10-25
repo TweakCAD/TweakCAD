@@ -6,6 +6,7 @@
  * source, and that the whole import is ONE undo entry.
  */
 
+import { sketchBuildGeometry } from '../../sketch/derivedGeometry.ts';
 import { describe, it, expect } from 'vitest';
 import { CommandBus } from '../bus.ts';
 import { DocumentStore } from '../../store/documentStore.ts';
@@ -55,7 +56,7 @@ describe('CreateSketchFromImport', () => {
 
     const inputs = sketch.inputs as unknown as SketchFeatureInputs;
     // 2 lines + 1 circle = 3 entities.
-    expect(Object.keys(inputs.buildGeometry)).toHaveLength(3);
+    expect(Object.keys(sketchBuildGeometry(inputs))).toHaveLength(3);
     expect(inputs.editorModel).toBeTruthy();
     expect(inputs.editorModel!.geometries).toHaveLength(3);
     // Distinct-endpoint junction model: 2 lines = 4 endpoints, plus the

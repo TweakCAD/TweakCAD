@@ -17,6 +17,7 @@
  * actually consume.
  */
 
+import { sketchBuildGeometry } from '../../sketch/derivedGeometry.ts';
 import { describe, it, expect } from 'vitest';
 import { CommandBus } from '../bus.ts';
 import { DocumentStore } from '../../store/documentStore.ts';
@@ -135,7 +136,7 @@ describe('SketchDrawLine', () => {
     expect(userEditorState(inputs).points).toHaveLength(1);
     expect(userEditorState(inputs).geometries).toHaveLength(1);
     // entities should have 1 SketchLineEntity with the right coords.
-    const entities = Object.values(inputs.buildGeometry);
+    const entities = Object.values(sketchBuildGeometry(inputs));
     expect(entities).toHaveLength(1);
     expect(entities[0]!.type).toBe('line');
   });
@@ -168,7 +169,7 @@ describe('SketchDrawLine', () => {
     expect(userEditorState(inputs).points).toHaveLength(3);
     expect(userEditorState(inputs).geometries).toHaveLength(4);
     // Region detector finds an extrudable profile (the closed quad).
-    const regions = detectSketchRegions(inputs.buildGeometry);
+    const regions = detectSketchRegions(sketchBuildGeometry(inputs));
     expect(regions.length).toBeGreaterThanOrEqual(1);
     // Area should match 60×30 = 1800. The closest region wins.
     const quad = regions.find((r) => Math.abs(r.area - 1800) < 0.01);
@@ -228,7 +229,7 @@ describe('SketchDrawRectangle', () => {
     expect(userEditorState(inputs).constraints).toHaveLength(8);
     // The serializer emits one entity per geometry — no composite
     // collapse (invariant #11).
-    const ents = Object.values(inputs.buildGeometry);
+    const ents = Object.values(sketchBuildGeometry(inputs));
     expect(ents).toHaveLength(4);
     for (const ent of ents) {
       expect(ent.type).toBe('line');
@@ -246,7 +247,7 @@ describe('SketchDrawRectangle', () => {
       height: 20,
     });
     const inputs = getSketchInputs(store, partId, sketchId);
-    const regions = detectSketchRegions(inputs.buildGeometry);
+    const regions = detectSketchRegions(sketchBuildGeometry(inputs));
     // The loop detector should find at least one closed quad with the
     // expected area.
     expect(regions.length).toBeGreaterThanOrEqual(1);
@@ -289,7 +290,7 @@ describe('SketchDrawRectangle', () => {
     // Canonical decomposition: each rectangle contributes 8 points + 4 edges.
     expect(userEditorState(inputs).points).toHaveLength(16);
     expect(userEditorState(inputs).geometries).toHaveLength(8);
-    const regions = detectSketchRegions(inputs.buildGeometry);
+    const regions = detectSketchRegions(sketchBuildGeometry(inputs));
     // At least 2 — the simple rectangle detector finds both. The
     // planar graph may add more (split sub-faces) but never fewer.
     expect(regions.length).toBeGreaterThanOrEqual(2);
@@ -313,7 +314,7 @@ describe('SketchDrawCircle', () => {
     const inputs = getSketchInputs(store, partId, sketchId);
     expect(userEditorState(inputs).points).toHaveLength(1);
     expect(userEditorState(inputs).geometries).toHaveLength(1);
-    const ents = Object.values(inputs.buildGeometry);
+    const ents = Object.values(sketchBuildGeometry(inputs));
     expect(ents).toHaveLength(1);
     expect(ents[0]!.type).toBe('circle');
   });
@@ -323,7 +324,7 @@ describe('SketchDrawCircle', () => {
     const sketchId = createSketch(bus, store, partId);
     bus.dispatch({ type: 'SketchDrawCircle', sketchId, center: [0, 0], radius: 5 });
     const inputs = getSketchInputs(store, partId, sketchId);
-    const regions = detectSketchRegions(inputs.buildGeometry);
+    const regions = detectSketchRegions(sketchBuildGeometry(inputs));
     expect(regions).toHaveLength(1);
     expect(regions[0]!.type).toBe('circle');
     expect(regions[0]!.area).toBeCloseTo(Math.PI * 25, 6);
@@ -368,7 +369,7 @@ describe('mixed drawing — incremental state', () => {
       radius: 3,
     });
     const inputs = getSketchInputs(store, partId, sketchId);
-    const regions = detectSketchRegions(inputs.buildGeometry);
+    const regions = detectSketchRegions(sketchBuildGeometry(inputs));
     // At least the rectangle and the circle; the planar walker may
     // also find an annular sub-region (rect minus circle) but never
     // fewer than the two we drew.
@@ -417,7 +418,7 @@ describe('SketchDrawSlot (decomposed: 2 lines + 2 arcs + constraints)', () => {
       'tangent', 'tangent', 'tangent', 'tangent',
     ]);
     // No composite slot entity in the serialized output — just lines + arcs.
-    const entities = Object.values(inputs.buildGeometry) as Array<{ type: string }>;
+    const entities = Object.values(sketchBuildGeometry(inputs)) as Array<{ type: string }>;
     const entityTypes = entities.map((e) => e.type).sort();
     expect(entityTypes).toEqual(['arc', 'arc', 'line', 'line']);
     expect(entityTypes).not.toContain('slot');
@@ -489,7 +490,7 @@ describe('SketchDrawPolygon (decomposed: N lines + center + constraints)', () =>
     expect(counts['equal']).toBe(5);
     expect(counts['angle']).toBe(5);
     // No composite polygon entity — only lines + the construction point.
-    const entities = Object.values(inputs.buildGeometry) as Array<{ type: string }>;
+    const entities = Object.values(sketchBuildGeometry(inputs)) as Array<{ type: string }>;
     const entityTypes = entities.map((e) => e.type).sort();
     expect(entityTypes).not.toContain('polygon');
   });
@@ -559,7 +560,7 @@ describe('SketchDrawArc', () => {
     // with the seeded origin → 2 user-visible points.
     expect(userEditorState(inputs).points).toHaveLength(2);
     expect(userEditorState(inputs).geometries).toHaveLength(1);
-    const entities = Object.values(inputs.buildGeometry);
+    const entities = Object.values(sketchBuildGeometry(inputs));
     expect(entities).toHaveLength(1);
     expect(entities[0]!.type).toBe('arc');
   });

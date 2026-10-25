@@ -62,7 +62,6 @@ import {
   offsetCurveAt,
   mirrorSelection,
 } from '../../sketch/modifyOps.ts';
-import { editorModelToBuildGeometry } from '../../sketch/serialization.ts';
 import { applyConstraintWithSolver } from '../../sketch/applyConstraintPipeline.ts';
 import { getSolver, solveDrag } from '../../sketch/solver/index.ts';
 import type { SketchConstraintInput } from '../../sketch/types.ts';
@@ -145,7 +144,6 @@ function applyEditorStateUpdate(
     const sketch = part.timeline.find((f) => f.id === sketchId);
     if (!sketch || sketch.type !== 'sketch') continue;
     const inputs = sketch.inputs as unknown as SketchFeatureInputs;
-    inputs.buildGeometry = editorModelToBuildGeometry(newState);
     inputs.editorModel = toSnapshot(newState) as unknown as SketchEditorSnapshot;
     const now = new Date().toISOString();
     sketch.updatedAt = now;

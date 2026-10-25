@@ -29,6 +29,10 @@ const alias = [
   { find: /^@tweakcad\/cloud-providers$/, replacement: rootEntry('cloud-providers') },
   { find: /^@tweakcad\/fcstd-import\/(.*)$/, replacement: `${lib('fcstd-import')}/$1` },
   { find: /^@tweakcad\/fcstd-import$/, replacement: rootEntry('fcstd-import') },
+  // Test-only: shared sketch fixtures. Tests import these by package
+  // specifier like everything else, so the path does not change with the
+  // importing file's depth.
+  { find: /^@tweakcad\/testing\/(.*)$/, replacement: `${lib('testing')}/$1` },
   { find: /^@tweakcad\/api-types$/, replacement: rootEntry('api-types') },
   { find: /^@tweakcad\/cad-tools$/, replacement: rootEntry('cad-tools') },
 ];

@@ -14,7 +14,8 @@
  * covered indirectly by these tests + the handler-level tests; full
  * end-to-end is verified separately in the browser.
  */
-import { describe, expect, it } from 'vitest';
+import { attachTestSolver } from '@tweakcad/testing/src/solver.ts';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { buildImportedComponent } from './buildImportedComponent.ts';
 import { MockKernel } from '@tweakcad/kernel/src/mockKernel.ts';
 import { emptyBuildContext } from '@tweakcad/core/src/features/contracts.ts';
@@ -44,8 +45,10 @@ function makeSourceWithBody(name: string): CadProject {
     dependsOn: [],
     inputs: {
       plane: { type: 'defaultPlane', name: 'XY' },
-      buildGeometry: {
-        c1: { id: 'c1', type: 'circle', center: ['0', '0'], diameter: '10' },
+      editorModel: {
+        points: [{ id: 'p1', x: 0, y: 0, fixed: true }],
+        geometries: [{ id: 'c1', type: 'circle', centerId: 'p1', radius: 5, construction: false }],
+        constraints: [],
       },
     },
     createdAt: now,
@@ -109,6 +112,8 @@ async function freshKernel(): Promise<MockKernel> {
 }
 
 describe('buildImportedComponent', () => {
+  beforeAll(attachTestSolver, 30_000);
+
   it('rebuilds an embedded component and surfaces its body under the host featureId', async () => {
     const kernel = await freshKernel();
     const ctx = emptyBuildContext({} as ResolvedParams);
@@ -198,7 +203,13 @@ describe('buildImportedComponent', () => {
       dependsOn: [],
       inputs: {
         plane: { type: 'defaultPlane', name: 'XY' },
-        buildGeometry: { c: { id: 'c', type: 'circle', center: ['0', '0'], diameter: 'D' } },
+        // D drives the radius through a dimension the solver enforces —
+        // the replacement for an Expression baked into a coordinate.
+        editorModel: {
+          points: [{ id: 'pc', x: 0, y: 0, fixed: true }],
+          geometries: [{ id: 'c', type: 'circle', centerId: 'pc', radius: 5, construction: false }],
+          constraints: [{ id: 'cr', type: 'radius', geometryId: 'c', value: 5, expression: 'D / 2' }],
+        },
       },
       createdAt: now, updatedAt: now,
     });
@@ -265,7 +276,13 @@ describe('buildImportedComponent', () => {
       dependsOn: [],
       inputs: {
         plane: { type: 'defaultPlane', name: 'XY' },
-        buildGeometry: { c: { id: 'c', type: 'circle', center: ['0', '0'], diameter: 'D' } },
+        // D drives the radius through a dimension the solver enforces —
+        // the replacement for an Expression baked into a coordinate.
+        editorModel: {
+          points: [{ id: 'pc', x: 0, y: 0, fixed: true }],
+          geometries: [{ id: 'c', type: 'circle', centerId: 'pc', radius: 5, construction: false }],
+          constraints: [{ id: 'cr', type: 'radius', geometryId: 'c', value: 5, expression: 'D / 2' }],
+        },
       },
       createdAt: now, updatedAt: now,
     });
