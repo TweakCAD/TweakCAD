@@ -8,6 +8,11 @@
  * the OCCT profile face.
  */
 
+import { sketchHasParametricDimensions } from '@tweakcad/core/src/sketch/derivedFields.ts';
+import { editorModelToBuildGeometry } from '@tweakcad/core/src/sketch/serialization.ts';
+import { fromSnapshot } from '@tweakcad/core/src/sketch/operations.ts';
+import { resolveSketchDimensions } from '../resolveSketchDimensions.ts';
+import { ensureSketchSolver } from '../planegcsWorkerLoader.ts';
 import type { FeatureNode, SketchFeatureInputs, SketchEntity } from '@tweakcad/core/src/document/schema.ts';
 import type { EntityId } from '@tweakcad/core/src/ids.ts';
 import type { ResolvedParams } from '@tweakcad/core/src/expressions.ts';
@@ -62,6 +67,26 @@ export async function buildSketch(
 ): Promise<BuildResult> {
   const inputs = node.inputs as unknown as SketchFeatureInputs;
 
+  // Parameter-driven dimensions: resolve each constraint's expression
+  // against this rebuild's parameters and re-solve, so the geometry actually
+  // moves. Only sketches that reference a parameter pay for a solve; the
+  // rest return untouched. Until this existed, a parameter could change how
+  // far a profile was extruded but never the profile itself.
+  // Stored projection by default — unchanged for every sketch that does not
+  // reference a parameter, which keeps the expression-valued coordinates
+  // that make an imported component parametric working as they do today.
+  let sketchGeometry = inputs.buildGeometry;
+  if (sketchHasParametricDimensions(inputs.editorModel)) {
+    await ensureSketchSolver();
+    const resolved = resolveSketchDimensions(fromSnapshot(inputs.editorModel), params);
+    for (const d of resolved.diagnostics) {
+      console.warn(`[buildSketch ${node.id}] ${d}`);
+    }
+    if (resolved.solved) {
+      sketchGeometry = editorModelToBuildGeometry(resolved.state);
+    }
+  }
+
   // Resolve all entity expressions to numeric values. We build TWO views
   // of the entities here:
   //   - `resolvedEntities`: stored as featureOutputs; downstream features
@@ -75,7 +100,7 @@ export async function buildSketch(
   const resolvedEntities: Record<string, ResolvedSketchEntityData> = {};
   const literalEntities: Record<EntityId, SketchEntity> = {};
 
-  for (const [id, entity] of Object.entries(inputs.buildGeometry)) {
+  for (const [id, entity] of Object.entries(sketchGeometry)) {
     const eid = id as EntityId;
     if (entity.type === 'circle') {
       const cx = evaluateExpression(entity.center[0], params);

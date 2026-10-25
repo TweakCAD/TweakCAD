@@ -41,6 +41,7 @@ import type { SketchRegion } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import type { SketchEntity } from '@tweakcad/core/src/document/schema.ts';
 import { entityId } from '@tweakcad/core/src/ids.ts';
 import { getSolver, solveDrag } from '@tweakcad/core/src/sketch/solver/index.ts';
+import { syncDerivedGeometryFields } from '@tweakcad/core/src/sketch/derivedFields.ts';
 
 /**
  * Solve via the active solver (planegcs — the only solver).
@@ -54,33 +55,6 @@ function solveConstraints(
   return getSolver().solve(...args);
 }
 
-/**
- * Walk the geometry map and update each arc's stored radius from its
- * actual current center-to-start distance. Called after every solve so
- * the persisted arc.radius stays consistent with the points the solver
- * just adjusted. A post-solve geometry-sync hook.
- *
- * Returns a new geometries map only if anything actually changed (to keep
- * Immer/Zustand reference equality where possible).
- */
-function syncDerivedGeometryFields(
-  geometries: Map<SketchGeometryId, SketchGeometry>,
-  points: Map<SketchPointId, SketchPoint>,
-): Map<SketchGeometryId, SketchGeometry> {
-  let next: Map<SketchGeometryId, SketchGeometry> | null = null;
-  for (const [gid, g] of geometries) {
-    if (g.type !== 'arc') continue;
-    const c = points.get(g.centerId);
-    const s = points.get(g.startId);
-    if (!c || !s) continue;
-    const r = Math.hypot(s.x - c.x, s.y - c.y);
-    if (Math.abs(r - g.radius) > 1e-6) {
-      if (!next) next = new Map(geometries);
-      next.set(gid, { ...g, radius: r });
-    }
-  }
-  return next ?? geometries;
-}
 
 /**
  * Selection intent: determines hit-test priority.

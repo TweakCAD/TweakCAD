@@ -186,7 +186,12 @@ const EditorGeometrySchema = z.discriminatedUnion('type', [
 ]);
 
 /** Dimensional constraints carry `driven`: false drives geometry, true just reports. */
-const driven = { driven: z.boolean().optional() };
+/** Dimensional constraints carry `driven` and an optional parameter
+ *  `expression` that drives the value at build time. */
+const driven = {
+  driven: z.boolean().optional(),
+  expression: z.string().optional(),
+};
 const cid = { id: z.string() };
 
 const EditorConstraintSchema = z.discriminatedUnion('type', [
