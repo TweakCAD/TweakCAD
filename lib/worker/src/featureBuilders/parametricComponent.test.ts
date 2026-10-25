@@ -15,31 +15,13 @@
  */
 
 import { describe, expect, it, beforeAll } from 'vitest';
-import { make_gcs_wrapper } from '@salusoft89/planegcs';
-import {
-  attachPlaneGCSWrapper,
-  getPlaneGCSSolver,
-} from '@tweakcad/core/src/sketch/solver/index.ts';
-import { existsSync, realpathSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { attachTestSolver } from '@tweakcad/testing/src/solver.ts';
 import { MockKernel } from '@tweakcad/kernel/src/mockKernel.ts';
 import { emptyBuildContext } from '@tweakcad/core/src/features/contracts.ts';
 import type { ResolvedParams } from '@tweakcad/core/src/expressions.ts';
 import type { FeatureNode } from '@tweakcad/core/src/document/schema.ts';
 import { featureId } from '@tweakcad/core/src/ids.ts';
 import { buildSketch } from './buildSketch.ts';
-
-function findWasm(): string {
-  const here = dirname(fileURLToPath(import.meta.url));
-  for (const c of [
-    resolve(here, '../../../../node_modules/@salusoft89/planegcs/dist/planegcs_dist/planegcs.wasm'),
-    resolve(here, '../../../../../node_modules/@salusoft89/planegcs/dist/planegcs_dist/planegcs.wasm'),
-  ]) {
-    if (existsSync(c)) return realpathSync(c);
-  }
-  throw new Error('planegcs.wasm not found');
-}
 
 /**
  * A component sketch: one circle whose radius is driven by the public
@@ -91,11 +73,7 @@ async function builtRadius(params: ResolvedParams): Promise<number> {
 }
 
 describe('parametric component via dimension constraint', () => {
-  beforeAll(async () => {
-    if (!getPlaneGCSSolver().ready) {
-      attachPlaneGCSWrapper(await make_gcs_wrapper(findWasm()));
-    }
-  }, 30_000);
+  beforeAll(attachTestSolver, 30_000);
 
   it('builds the radius the parameter asks for', async () => {
     expect(await builtRadius({ D: 10 })).toBeCloseTo(5, 6);

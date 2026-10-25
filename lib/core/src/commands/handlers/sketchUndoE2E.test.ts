@@ -27,6 +27,7 @@
  * core layer means it survives any future UI rewrite.
  */
 
+import { sketchBuildGeometry } from '../../sketch/derivedGeometry.ts';
 import { describe, it, expect } from 'vitest';
 import { CommandBus } from '../bus.ts';
 import { DocumentStore } from '../../store/documentStore.ts';
@@ -105,7 +106,7 @@ describe('Sketch undo — step-by-step (task #36 fix)', () => {
 
     // After 3 draws: 1 line + 1 circle + 4 rectangle edges = 6 entities.
     const after3 = sketchInputs(store, partId, sketchId);
-    expect(Object.values(after3.buildGeometry)).toHaveLength(6);
+    expect(Object.values(sketchBuildGeometry(after3))).toHaveLength(6);
     expect(after3.editorModel!.geometries).toHaveLength(6);
     // Sketch lives on; the rectangle owns the most recent undo step.
     expect(store.undoLabel()).toBe('Draw Rectangle');
@@ -113,21 +114,21 @@ describe('Sketch undo — step-by-step (task #36 fix)', () => {
     // Undo the rectangle → only the line + circle remain.
     store.undo();
     const after2 = sketchInputs(store, partId, sketchId);
-    expect(Object.values(after2.buildGeometry)).toHaveLength(2);
+    expect(Object.values(sketchBuildGeometry(after2))).toHaveLength(2);
     expect(after2.editorModel!.geometries).toHaveLength(2);
     expect(store.undoLabel()).toBe('Draw Circle');
 
     // Undo the circle → only the line remains.
     store.undo();
     const after1 = sketchInputs(store, partId, sketchId);
-    expect(Object.values(after1.buildGeometry)).toHaveLength(1);
-    expect((Object.values(after1.buildGeometry)[0]!).type).toBe('line');
+    expect(Object.values(sketchBuildGeometry(after1))).toHaveLength(1);
+    expect((Object.values(sketchBuildGeometry(after1))[0]!).type).toBe('line');
     expect(store.undoLabel()).toBe('Draw Line');
 
     // Undo the line → sketch is empty but still exists.
     store.undo();
     const after0 = sketchInputs(store, partId, sketchId);
-    expect(Object.values(after0.buildGeometry)).toHaveLength(0);
+    expect(Object.values(sketchBuildGeometry(after0))).toHaveLength(0);
     expect(after0.editorModel?.geometries ?? []).toHaveLength(0);
     expect(sketchExists(store, partId, sketchId)).toBe(true);
     expect(store.undoLabel()).toBe('Create Sketch');
@@ -143,21 +144,21 @@ describe('Sketch undo — step-by-step (task #36 fix)', () => {
     // Undo twice → empty sketch.
     store.undo();
     store.undo();
-    expect(Object.values(sketchInputs(store, partId, sketchId).buildGeometry)).toHaveLength(0);
+    expect(Object.values(sketchBuildGeometry(sketchInputs(store, partId, sketchId)))).toHaveLength(0);
     expect(store.canRedo()).toBe(true);
     expect(store.redoLabel()).toBe('Draw Line');
 
     // Redo the line.
     store.redo();
     const afterRedoLine = sketchInputs(store, partId, sketchId);
-    expect(Object.values(afterRedoLine.buildGeometry)).toHaveLength(1);
-    expect((Object.values(afterRedoLine.buildGeometry)[0]!).type).toBe('line');
+    expect(Object.values(sketchBuildGeometry(afterRedoLine))).toHaveLength(1);
+    expect((Object.values(sketchBuildGeometry(afterRedoLine))[0]!).type).toBe('line');
 
     // Redo the circle.
     store.redo();
     const afterRedoCircle = sketchInputs(store, partId, sketchId);
-    expect(Object.values(afterRedoCircle.buildGeometry)).toHaveLength(2);
-    const types = Object.values(afterRedoCircle.buildGeometry).map((e) => e.type).sort();
+    expect(Object.values(sketchBuildGeometry(afterRedoCircle))).toHaveLength(2);
+    const types = Object.values(sketchBuildGeometry(afterRedoCircle)).map((e) => e.type).sort();
     expect(types).toEqual(['circle', 'line']);
   });
 
@@ -273,7 +274,7 @@ describe('Sketch removal via undo', () => {
     store.undo();
     expect(sketchExists(store, partId, sketchId)).toBe(true);
     const inputs = sketchInputs(store, partId, sketchId);
-    expect(Object.values(inputs.buildGeometry)).toHaveLength(1);
+    expect(Object.values(sketchBuildGeometry(inputs))).toHaveLength(1);
   });
 });
 

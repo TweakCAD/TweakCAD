@@ -12,6 +12,7 @@
  * Reads directly from the document model (SketchFeatureInputs).
  */
 
+import { sketchBuildGeometry } from '@tweakcad/core/src/sketch/derivedGeometry.ts';
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import * as THREE from 'three';
 import { Line2 } from 'three/examples/jsm/lines/Line2.js';
@@ -108,7 +109,7 @@ export function SketchViewer({
   // in the selection. `resolveProfile` disambiguates via the stored
   // `interiorPoint`, picking the one region that actually contains it.
   useEffect(() => {
-    const regions = detectSketchRegions(sketchInputs.buildGeometry);
+    const regions = detectSketchRegions(sketchBuildGeometry(sketchInputs));
     regionsRef.current = regions;
 
     const initialIds = new Set<string>();
@@ -154,7 +155,7 @@ export function SketchViewer({
     });
 
     // Render entity geometry
-    renderEntities(root, sketchInputs.buildGeometry, plane, lineMaterial, constructionMaterial);
+    renderEntities(root, sketchBuildGeometry(sketchInputs), plane, lineMaterial, constructionMaterial);
 
     // Region group (for picker mode)
     const regionGroup = new THREE.Group();

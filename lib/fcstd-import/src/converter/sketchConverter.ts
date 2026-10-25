@@ -36,7 +36,6 @@ import {
   toSnapshot,
   type EditorState,
 } from '@tweakcad/core/src/sketch/operations.ts';
-import { editorModelToBuildGeometry } from '@tweakcad/core/src/sketch/serialization.ts';
 import type { FcSketchObject, FcGeometry } from '../types/fcstdTypes.ts';
 
 export type SketchConversionResult = {
@@ -65,7 +64,6 @@ export function convertSketch(
   // endpoints merge via the builders' `findOrCreatePoint`, so a closed
   // FreeCAD profile imports as a connected, editable loop.
   let state: EditorState = emptyEditorState();
-  const entityOrder: EntityId[] = [];
   const wireEntityIds: EntityId[] = [];
   const skipped: { index: number; rawType: string }[] = [];
 
@@ -79,14 +77,11 @@ export function convertSketch(
     // `editorModelToBuildGeometry` keys each entity by its geometry id, so the
     // wire / order references use that same id.
     const eid = entityId(String(drawn.geometryId));
-    entityOrder.push(eid);
     if (geom.construction !== true) wireEntityIds.push(eid);
   });
 
   const inputs: SketchFeatureInputs = {
     plane: planeFromSupport(sketch.supportName),
-    buildGeometry: editorModelToBuildGeometry(state),
-    entityOrder,
     editorModel: toSnapshot(state) as unknown as SketchEditorSnapshot,
   };
 

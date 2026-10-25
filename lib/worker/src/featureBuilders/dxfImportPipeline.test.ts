@@ -16,6 +16,7 @@
  * post-exit render/build paths without throwing.
  */
 
+import { sketchBuildGeometry } from '@tweakcad/core/src/sketch/derivedGeometry.ts';
 import { describe, expect, it } from 'vitest';
 import { CommandBus } from '@tweakcad/core/src/commands/bus.ts';
 import { DocumentStore } from '@tweakcad/core/src/store/documentStore.ts';
@@ -94,7 +95,7 @@ function isFiniteCoord(v: unknown): boolean {
 describe('DXF import pipeline (post-exit render + build)', () => {
   it('projects every supported primitive into buildGeometry', () => {
     const { inputs } = importSketch();
-    const entities = Object.values(inputs.buildGeometry) as SketchEntity[];
+    const entities = Object.values(sketchBuildGeometry(inputs)) as SketchEntity[];
     const byType = (t: string) => entities.filter((e) => e.type === t).length;
     // 4 lines (square) + 1 circle + 1 arc + 1 ellipse + 1 spline = 8
     expect(byType('line')).toBe(4);
@@ -107,7 +108,7 @@ describe('DXF import pipeline (post-exit render + build)', () => {
 
   it('every line/circle/arc entity has finite, renderable coordinates', () => {
     const { inputs } = importSketch();
-    for (const e of Object.values(inputs.buildGeometry) as SketchEntity[]) {
+    for (const e of Object.values(sketchBuildGeometry(inputs)) as SketchEntity[]) {
       if (e.type === 'line') {
         expect(isFiniteCoord(e.start[0]) && isFiniteCoord(e.start[1])).toBe(true);
         expect(isFiniteCoord(e.end[0]) && isFiniteCoord(e.end[1])).toBe(true);
@@ -122,7 +123,7 @@ describe('DXF import pipeline (post-exit render + build)', () => {
 
   it('detectSketchRegions does not throw on imported geometry and finds the closed square', () => {
     const { inputs } = importSketch();
-    const regions = detectSketchRegions(inputs.buildGeometry);
+    const regions = detectSketchRegions(sketchBuildGeometry(inputs));
     // The square is a closed loop → at least one region. (The circle is
     // also closed; arc/ellipse/spline are open and contribute none.)
     expect(regions.length).toBeGreaterThanOrEqual(1);

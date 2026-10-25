@@ -18,7 +18,6 @@ import {
 import {
   createSketchHandler,
   createSketchFromImportHandler,
-  addSketchEntityHandler,
   removeSketchEntityHandler,
   createExtrudeHandler,
   createRevolveHandler,
@@ -113,7 +112,6 @@ export function initializeApp(): AppState {
   commandBus.register('RenamePart', renamePartHandler);
   commandBus.register('CreateSketch', createSketchHandler);
   commandBus.register('CreateSketchFromImport', createSketchFromImportHandler);
-  commandBus.register('AddSketchEntity', addSketchEntityHandler);
   commandBus.register('RemoveSketchEntity', removeSketchEntityHandler);
   // Higher-level drawing commands. Both the in-app chat agent and
   // external MCP clients dispatch these to produce extrudable

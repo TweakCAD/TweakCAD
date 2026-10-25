@@ -1,3 +1,4 @@
+import { sketchBuildGeometry } from '@tweakcad/core/src/sketch/derivedGeometry.ts';
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import * as THREE from 'three';
 import { ViewportController } from '@tweakcad/viewport/src/ViewportController.ts';
@@ -16,7 +17,7 @@ import { applyActiveConfiguration } from '@tweakcad/core/src/commands/handlers/c
 import { downloadText, pickDxfForImport, pickSvgForImport } from '../storage/diskAdapter.ts';
 import { computeSketchDof } from '../sketch/sketchDof.ts';
 import type { SavedCameraState } from '@tweakcad/core/src/store/sketchStore.ts';
-import type { SketchGeometry, SketchToolId } from '@tweakcad/core/src/sketch/types.ts';
+import type { SketchToolId } from '@tweakcad/core/src/sketch/types.ts';
 import { useConsoleStore, consoleLog } from '@tweakcad/core/src/store/consoleStore.ts';
 import { detectSketchRegions } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import { useDisplayMeshes, useTopologyMaps, useRebuilding, useBodyToFeatureMap, useConstructionPlanes, useFeatureResults } from '../hooks/useViewportStore.ts';
@@ -971,47 +972,12 @@ export function Shell({
       return;
     }
 
-    // Convert document model entities to point-based sketch entities
-    // (legacy fallback for sketches that lack `editorModel`). There are
-    // no composite shape entities — only true primitive curves
-    // (line / circle / arc) reach this fallback.
-    let loadedCount = 0;
-    if (inputs.buildGeometry) {
-      for (const [, ent] of Object.entries(inputs.buildGeometry)) {
-        const skEnt = ent as SketchEntity;
-        try {
-          if (skEnt.type === 'circle') {
-            const cx = parseFloat(String(skEnt.center[0]));
-            const cy = parseFloat(String(skEnt.center[1]));
-            const diameter = parseFloat(String(skEnt.diameter));
-            if (!isNaN(cx) && !isNaN(cy) && !isNaN(diameter)) {
-              const center = editorStore.addPoint(cx, cy);
-              editorStore.addGeometry({ id: skEnt.id as unknown as SketchGeometry['id'], type: 'circle', centerId: center, radius: diameter / 2, construction: skEnt.construction === true });
-              loadedCount++;
-            }
-          } else if (skEnt.type === 'line') {
-            const sx = parseFloat(String(skEnt.start[0]));
-            const sy = parseFloat(String(skEnt.start[1]));
-            const ex = parseFloat(String(skEnt.end[0]));
-            const ey = parseFloat(String(skEnt.end[1]));
-            if (!isNaN(sx) && !isNaN(sy) && !isNaN(ex) && !isNaN(ey)) {
-              const start = editorStore.addPoint(sx, sy);
-              const end = editorStore.addPoint(ex, ey);
-              editorStore.addGeometry({ id: skEnt.id as unknown as SketchGeometry['id'], type: 'line', startId: start, endId: end, construction: skEnt.construction === true });
-              loadedCount++;
-            }
-          }
-          // `arc` falls through — the document arc entity stores radians
-          // and the editor uses point refs. Round-tripping it through
-          // the legacy fallback needs a (centerId, startPt, endPt)
-          // reconstruction that's not yet wired here; sketches authored
-          // with arcs always have `editorModel` so the fast path covers
-          // them.
-        } catch {
-          // Skip entities that can't be resolved
-        }
-      }
-    }
+    // The legacy fallback that rebuilt an editor model from document
+    // entities is gone. It existed for sketches carrying buildGeometry but
+    // no editorModel; buildGeometry is now derived FROM editorModel, so that
+    // combination cannot occur and the early return above covers every
+    // sketch that has one.
+    const loadedCount = 0;
 
     activeSketchIdRef.current = sketchFeatureId as FeatureId;
     setSketchPlaneName(viewName);
@@ -1089,7 +1055,7 @@ export function Shell({
         sketchName = feature.name;
         if (feature.type === 'sketch') {
           const sketchInputs = feature.inputs as unknown as SketchFeatureInputs;
-          const regions = detectSketchRegions(sketchInputs.buildGeometry);
+          const regions = detectSketchRegions(sketchBuildGeometry(sketchInputs));
           hasProfiles = regions.length > 0;
         }
         break;
@@ -1240,7 +1206,7 @@ export function Shell({
     }
 
     const inputs = sketchFeature.inputs as unknown as SketchFeatureInputs;
-    const entities = Object.values(inputs.buildGeometry ?? {}) as SketchEntity[];
+    const entities = Object.values(sketchBuildGeometry(inputs)) as SketchEntity[];
 
     const paramResult = resolveAllParameters(
       project.parameters,
@@ -1659,7 +1625,7 @@ export function Shell({
         sketchName = feature.name;
         if (feature.type === 'sketch') {
           const sketchInputs = feature.inputs as unknown as SketchFeatureInputs;
-          const regions = detectSketchRegions(sketchInputs.buildGeometry);
+          const regions = detectSketchRegions(sketchBuildGeometry(sketchInputs));
           hasProfiles = regions.length > 0;
         }
         break;
@@ -3414,7 +3380,7 @@ export function Shell({
         // Skip the sketch being actively edited — SketchEditor renders it
         if (sketchActive && feature.id === activeSketchId) continue;
         const inputs = feature.inputs as unknown as SketchFeatureInputs;
-        if (!inputs.buildGeometry || Object.keys(inputs.buildGeometry).length === 0) continue;
+        if (Object.keys(sketchBuildGeometry(inputs)).length === 0) continue;
         const plane = resolveSketchPlaneInput(inputs.plane, constructionPlanes);
         result.push({ id: feature.id, inputs, plane });
       }

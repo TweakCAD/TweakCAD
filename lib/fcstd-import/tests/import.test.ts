@@ -17,6 +17,7 @@
  *     they're Sketcher::SketchObject which IS supported, just unused).
  */
 
+import { sketchBuildGeometry } from '@tweakcad/core/src/sketch/derivedGeometry.ts';
 import { CURRENT_SCHEMA_VERSION } from '@tweakcad/core/src/document/version.ts';
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -95,8 +96,7 @@ describe('importFcstdFromXml — real Exercise-2D-10 model', () => {
     expect(sketch).toBeDefined();
     const inputs = sketch!.inputs as unknown as SketchFeatureInputs;
     expect(inputs.plane).toEqual({ type: 'defaultPlane', name: 'XY' });
-    expect(inputs.entityOrder).toHaveLength(15);
-    const entities = Object.values(inputs.buildGeometry);
+    const entities = Object.values(sketchBuildGeometry(inputs));
     expect(entities).toHaveLength(15);
     const lines = entities.filter((e) => e.type === 'line');
     expect(lines).toHaveLength(15); // all 15 are line segments in this sketch
@@ -109,7 +109,7 @@ describe('importFcstdFromXml — real Exercise-2D-10 model', () => {
     expect(sketch).toBeDefined();
     const inputs = sketch!.inputs as unknown as SketchFeatureInputs;
     expect(inputs.plane).toEqual({ type: 'defaultPlane', name: 'YZ' });
-    const entities = Object.values(inputs.buildGeometry);
+    const entities = Object.values(sketchBuildGeometry(inputs));
     expect(entities).toHaveLength(1);
     const circle = entities[0]!;
     expect(circle.type).toBe('circle');
@@ -124,8 +124,8 @@ describe('importFcstdFromXml — real Exercise-2D-10 model', () => {
     const s3 = part.timeline.find((f) => f.name === 'Sketch003');
     const i1 = s1!.inputs as unknown as SketchFeatureInputs;
     const i3 = s3!.inputs as unknown as SketchFeatureInputs;
-    expect(Object.values(i1.buildGeometry)).toHaveLength(8);
-    expect(Object.values(i3.buildGeometry)).toHaveLength(4);
+    expect(Object.values(sketchBuildGeometry(i1))).toHaveLength(8);
+    expect(Object.values(sketchBuildGeometry(i3))).toHaveLength(4);
   });
 
   it('emits diagnostics for Groove, Groove001, and DatumLine', () => {

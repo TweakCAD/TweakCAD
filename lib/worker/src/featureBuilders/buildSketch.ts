@@ -8,6 +8,7 @@
  * the OCCT profile face.
  */
 
+import { sketchBuildGeometry } from '@tweakcad/core/src/sketch/derivedGeometry.ts';
 import { sketchHasParametricDimensions } from '@tweakcad/core/src/sketch/derivedFields.ts';
 import { editorModelToBuildGeometry } from '@tweakcad/core/src/sketch/serialization.ts';
 import { fromSnapshot } from '@tweakcad/core/src/sketch/operations.ts';
@@ -75,7 +76,7 @@ export async function buildSketch(
   // Stored projection by default — unchanged for every sketch that does not
   // reference a parameter, which keeps the expression-valued coordinates
   // that make an imported component parametric working as they do today.
-  let sketchGeometry = inputs.buildGeometry;
+  let sketchGeometry = sketchBuildGeometry(inputs);
   if (sketchHasParametricDimensions(inputs.editorModel)) {
     await ensureSketchSolver();
     const resolved = resolveSketchDimensions(fromSnapshot(inputs.editorModel), params);

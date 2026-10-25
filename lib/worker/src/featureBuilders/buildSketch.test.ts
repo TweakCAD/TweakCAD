@@ -7,28 +7,28 @@
  * a `diameter: "D"` entity produces zero regions and breaks downstream
  * extrudes.
  */
-import { describe, expect, it } from 'vitest';
+import { attachTestSolver } from '@tweakcad/testing/src/solver.ts';
+import { sketchInputs } from '@tweakcad/testing/src/sketchFixtures.ts';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { buildSketch } from './buildSketch.ts';
 import { MockKernel } from '@tweakcad/kernel/src/mockKernel.ts';
 import { emptyBuildContext } from '@tweakcad/core/src/features/contracts.ts';
 import type { BuildContext } from '@tweakcad/core/src/features/contracts.ts';
 import type { FeatureNode, SketchFeatureInputs } from '@tweakcad/core/src/document/schema.ts';
-import { featureId, entityId } from '@tweakcad/core/src/ids.ts';
+import { featureId } from '@tweakcad/core/src/ids.ts';
 import type { ResolvedParams } from '@tweakcad/core/src/expressions.ts';
 import type { ResolvedSketchRegionData } from './buildSketch.ts';
 
 function makeCircleSketch(diameterExpr: string): FeatureNode {
-  const inputs: SketchFeatureInputs = {
-    plane: { type: 'defaultPlane', name: 'XY' },
-    buildGeometry: {
-      [entityId('circle_1')]: {
-        id: entityId('circle_1'),
-        type: 'circle',
-        center: ['0', '0'],
-        diameter: diameterExpr,
-      },
-    },
-  };
+  // Diameter is driven by a radius dimension carrying the expression —
+  // the mechanism that replaced expression-valued coordinates.
+  const inputs: SketchFeatureInputs = sketchInputs({
+    circles: [{ id: 'circle_1', center: [0, 0], diameter: 10 }],
+    constraints: [{
+      id: 'con_r', type: 'radius', geometryId: 'circle_1',
+      value: 5, expression: `(${diameterExpr}) / 2`,
+    }],
+  });
   return {
     id: featureId('sketch_1'),
     type: 'sketch',
@@ -44,43 +44,38 @@ function makeCircleSketch(diameterExpr: string): FeatureNode {
 }
 
 /**
- * Build a parametric rectangle as 4 line entities (invariant #11 — no
- * composite entities; rectangles are 4 lines + constraints). Width
- * spans `-W/2 .. +W/2`, height spans `-H/2 .. +H/2` so the rectangle
- * is centred on the origin (matches the old composite's `mode: 'center'`).
+ * A parametric rectangle: four lines sharing corner points, held square by
+ * horizontal/vertical constraints, with width and height driven by signed
+ * distance dimensions carrying parameter expressions.
+ *
+ * Starts at 2x1 on purpose. If the solve did not run, the derived geometry
+ * would still be 2x1 and the area assertion would fail — so the test cannot
+ * pass by accident with the dimensions merely recorded.
  */
 function makeRectSketch(widthExpr: string, heightExpr: string): FeatureNode {
-  const halfW = `(${widthExpr}) / 2`;
-  const halfH = `(${heightExpr}) / 2`;
-  const negHalfW = `0 - (${widthExpr}) / 2`;
-  const negHalfH = `0 - (${heightExpr}) / 2`;
-  const inputs: SketchFeatureInputs = {
+  const inputs = {
     plane: { type: 'defaultPlane', name: 'XY' },
-    buildGeometry: {
-      [entityId('rect_bottom')]: {
-        id: entityId('rect_bottom'),
-        type: 'line',
-        start: [negHalfW, negHalfH],
-        end: [halfW, negHalfH],
-      },
-      [entityId('rect_right')]: {
-        id: entityId('rect_right'),
-        type: 'line',
-        start: [halfW, negHalfH],
-        end: [halfW, halfH],
-      },
-      [entityId('rect_top')]: {
-        id: entityId('rect_top'),
-        type: 'line',
-        start: [halfW, halfH],
-        end: [negHalfW, halfH],
-      },
-      [entityId('rect_left')]: {
-        id: entityId('rect_left'),
-        type: 'line',
-        start: [negHalfW, halfH],
-        end: [negHalfW, negHalfH],
-      },
+    editorModel: {
+      points: [
+        { id: 'p_bl', x: -1, y: -0.5, fixed: true },
+        { id: 'p_br', x: 1, y: -0.5, fixed: false },
+        { id: 'p_tr', x: 1, y: 0.5, fixed: false },
+        { id: 'p_tl', x: -1, y: 0.5, fixed: false },
+      ],
+      geometries: [
+        { id: 'rect_bottom', type: 'line', startId: 'p_bl', endId: 'p_br', construction: false },
+        { id: 'rect_right', type: 'line', startId: 'p_br', endId: 'p_tr', construction: false },
+        { id: 'rect_top', type: 'line', startId: 'p_tr', endId: 'p_tl', construction: false },
+        { id: 'rect_left', type: 'line', startId: 'p_tl', endId: 'p_bl', construction: false },
+      ],
+      constraints: [
+        { id: 'c_hb', type: 'horizontal', geometryId: 'rect_bottom' },
+        { id: 'c_ht', type: 'horizontal', geometryId: 'rect_top' },
+        { id: 'c_vl', type: 'vertical', geometryId: 'rect_left' },
+        { id: 'c_vr', type: 'vertical', geometryId: 'rect_right' },
+        { id: 'c_w', type: 'distanceX', pointA: 'p_bl', pointB: 'p_br', value: 2, expression: widthExpr },
+        { id: 'c_h', type: 'distanceY', pointA: 'p_bl', pointB: 'p_tl', value: 1, expression: heightExpr },
+      ],
     },
   };
   return {
@@ -102,6 +97,8 @@ function ctx(): BuildContext {
 }
 
 describe('buildSketch region detection with parameter-driven entities', () => {
+  beforeAll(attachTestSolver, 30_000);
+
   it('detects a region for a circle whose diameter is a literal numeric string', async () => {
     const kernel = new MockKernel();
     await kernel.init();

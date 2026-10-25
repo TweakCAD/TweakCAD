@@ -3,7 +3,7 @@
  *
  * Each test asserts the handler dispatches as one undo entry through
  * the bus, mutates the editor state via the pure primitive in
- * `@tweakcad/core/src/sketch/modifyOps.ts`, and writes `inputs.buildGeometry`
+ * `@tweakcad/core/src/sketch/modifyOps.ts`, and writes `sketchBuildGeometry(inputs)`
  * via the canonical serializer (same path as the draw handlers).
  */
 

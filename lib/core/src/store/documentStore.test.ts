@@ -24,6 +24,7 @@
  *   - empty-stack behaviour at both ends
  */
 
+import { sketchBuildGeometry } from '../sketch/derivedGeometry.ts';
 import { describe, it, expect } from 'vitest';
 import { DocumentStore } from './documentStore.ts';
 import { createPart, newProjectWithPart } from '../document/factory.ts';
@@ -198,7 +199,7 @@ describe('DocumentStore — patch generation', () => {
       pt.x = 75;
       inputs.editorModel.points.push({ id: 'pt_2', x: 75, y: 25, fixed: false });
       inputs.editorModel.constraints.push({ id: 'con_2', type: 'vertical', geometryId: 'geo_1' });
-      inputs.buildGeometry[entityId('line_b')] = {
+      sketchBuildGeometry(inputs)[entityId('line_b')] = {
         id: entityId('line_b'),
         type: 'line',
         start: ['75', '0'],
@@ -456,8 +457,8 @@ describe('DocumentStore — arrays and record keys', () => {
       // Deleting a computed record key is precisely what this test exercises:
       // Immer emits a different patch op for key removal than for replacement.
       // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-      delete inputs.buildGeometry[entityId('line_a')];
-      inputs.buildGeometry[entityId('circle_a')] = {
+      delete sketchBuildGeometry(inputs)[entityId('line_a')];
+      sketchBuildGeometry(inputs)[entityId('circle_a')] = {
         id: entityId('circle_a'),
         type: 'circle',
         center: ['0', '0'],

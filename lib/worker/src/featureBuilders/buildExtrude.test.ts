@@ -18,6 +18,7 @@
  * fixtures). No layer had been verifying multi-profile orchestration
  * or operation semantics.
  */
+import { sketchInputs } from '@tweakcad/testing/src/sketchFixtures.ts';
 import { describe, expect, it, vi } from 'vitest';
 import { buildExtrude } from './buildExtrude.ts';
 import { buildSketch } from './buildSketch.ts';
@@ -43,13 +44,12 @@ const SKETCH_ID = featureId('sketch_main');
  * newBody must keep them as separate bodies.
  */
 function twoCircleSketch(): FeatureNode {
-  const inputs: SketchFeatureInputs = {
-    plane: { type: 'defaultPlane', name: 'XY' },
-    buildGeometry: {
-      [entityId('cA')]: { id: entityId('cA'), type: 'circle', center: ['-10', '0'], diameter: '4' },
-      [entityId('cB')]: { id: entityId('cB'), type: 'circle', center: ['10', '0'],  diameter: '4' },
-    },
-  };
+  const inputs: SketchFeatureInputs = sketchInputs({
+    circles: [
+      { id: 'cA', center: [-10, 0], diameter: 4 },
+      { id: 'cB', center: [10, 0], diameter: 4 },
+    ],
+  });
   return makeSketchNode(inputs);
 }
 
@@ -58,12 +58,9 @@ function twoCircleSketch(): FeatureNode {
  * inspect the kernel call arguments (offset direction, extrude vector).
  */
 function oneCircleSketch(): FeatureNode {
-  const inputs: SketchFeatureInputs = {
-    plane: { type: 'defaultPlane', name: 'XY' },
-    buildGeometry: {
-      [entityId('c1')]: { id: entityId('c1'), type: 'circle', center: ['0', '0'], diameter: '4' },
-    },
-  };
+  const inputs: SketchFeatureInputs = sketchInputs({
+    circles: [{ id: 'c1', center: [0, 0], diameter: 4 }],
+  });
   return makeSketchNode(inputs);
 }
 
