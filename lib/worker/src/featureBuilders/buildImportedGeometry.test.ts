@@ -22,13 +22,18 @@ import type { ResolvedParams } from '@tweakcad/core/src/expressions.ts';
 
 const STEP_HEADER = 'ISO-10303-21;\nHEADER;\n';
 
+/** Wrap raw base64 in the inline variant of the import payload. */
+function inlineData(base64: string): ImportedGeometryFeatureInputs['data'] {
+  return { kind: 'inline', base64, sizeBytes: Math.floor((base64.length * 3) / 4) };
+}
+
 function makeNode(overrides: Partial<ImportedGeometryFeatureInputs> = {}): FeatureNode {
   const inputs: ImportedGeometryFeatureInputs = {
     fileName: 'cube.step',
     format: 'step',
     // btoa is browser/jsdom-only; use Buffer in Node for the test
     // setup. The builder uses the global atob at runtime.
-    data: Buffer.from(STEP_HEADER).toString('base64'),
+    data: inlineData(Buffer.from(STEP_HEADER).toString('base64')),
     ...overrides,
   };
   return {
@@ -53,7 +58,7 @@ describe('buildImportedGeometry', () => {
   it('throws when data is empty', async () => {
     const kernel = new MockKernel();
     await kernel.init();
-    const node = makeNode({ data: '' });
+    const node = makeNode({ data: inlineData('') });
     await expect(buildImportedGeometry(node, {} as ResolvedParams, emptyCtx(), kernel))
       .rejects.toThrow(/empty data/);
   });

@@ -6,7 +6,7 @@
  */
 
 import type { FeatureId, BodyId } from '../ids.ts';
-import type { FeatureNode, TopologyMap } from '../document/schema.ts';
+import type { CadProject, FeatureNode, TopologyMap } from '../document/schema.ts';
 import type { ResolvedParams } from '../expressions.ts';
 
 /** Resolved feature inputs (expressions evaluated to numbers) */
@@ -25,6 +25,12 @@ export type BuildContext = {
   params: ResolvedParams;
   /** Outputs from previous features (semantic refs) */
   featureOutputs: Map<FeatureId, FeatureOutputs>;
+  /**
+   * The owning project's `references` map, for imports stored as
+   * `{ kind: 'ref' }` rather than embedded. Empty when nothing is
+   * referenced, which is every document today.
+   */
+  references: CadProject['references'];
 };
 
 /** Result of building a single feature */
@@ -62,5 +68,6 @@ export function emptyBuildContext(params: ResolvedParams): BuildContext {
     topologyMaps: new Map(),
     params,
     featureOutputs: new Map(),
+    references: {},
   };
 }

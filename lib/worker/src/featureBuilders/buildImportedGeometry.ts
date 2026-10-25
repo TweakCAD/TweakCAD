@@ -23,17 +23,18 @@ import { bodyId as bodyIdBrand } from '@tweakcad/core/src/ids.ts';
 import type { BodyId } from '@tweakcad/core/src/ids.ts';
 import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
 import type { KernelBody } from '@tweakcad/kernel/src/types.ts';
+import { resolveImportedBytes, isEmptyImportedData } from '@tweakcad/core/src/document/importedData.ts';
 import type { BuildContext, BuildResult } from '@tweakcad/core/src/features/contracts.ts';
 
 export async function buildImportedGeometry(
   node: FeatureNode,
   _params: ResolvedParams,
-  _context: BuildContext,
+  context: BuildContext,
   kernel: CadKernel,
 ): Promise<BuildResult> {
   const inputs = node.inputs as unknown as ImportedGeometryFeatureInputs;
 
-  if (!inputs.data || inputs.data.length === 0) {
+  if (isEmptyImportedData(inputs.data)) {
     throw new Error(`Imported geometry "${inputs.fileName}" has empty data`);
   }
   if (inputs.format !== 'step' && inputs.format !== 'stl' && inputs.format !== 'brep') {
@@ -44,7 +45,11 @@ export async function buildImportedGeometry(
   // very large files (>50MB) we'd switch to a streaming decoder, but
   // STEP/STL files in the typical hobby/professional CAD range are
   // 100KB-20MB.
-  const buf = base64ToArrayBuffer(inputs.data);
+  // Inline or referenced — resolveImportedBytes decides, and names the
+  // reference when one cannot be resolved rather than yielding empty bytes.
+  const bytes = resolveImportedBytes(inputs.data, context.references);
+  if (!bytes.ok) throw new Error(bytes.error.message);
+  const buf = base64ToArrayBuffer(bytes.value);
 
   // Feature.id makes the topology-tracker origin deterministic across
   // rebuilds — same import re-running produces the same stable face

@@ -2,6 +2,7 @@
  * Command handlers for Feature operations (sketch, extrude, hole, etc.).
  */
 
+import { isEmptyImportedData } from '../../document/importedData.ts';
 import type { Result } from '../../result.ts';
 import { ok, err } from '../../result.ts';
 import type { CadProject, FeatureNode, SketchFeatureInputs } from '../../document/schema.ts';
@@ -886,7 +887,7 @@ export const createImportedGeometryHandler: CommandHandler = {
     if (command.inputs.format !== 'step' && command.inputs.format !== 'stl' && command.inputs.format !== 'brep') {
       return err({ code: 'INVALID_INPUT', message: `Unsupported format: ${command.inputs.format}` });
     }
-    if (!command.inputs.data || command.inputs.data.length === 0) {
+    if (isEmptyImportedData(command.inputs.data)) {
       return err({ code: 'INVALID_INPUT', message: 'Imported geometry has empty data' });
     }
     return findPart(state, command.partId);
