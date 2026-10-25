@@ -220,6 +220,7 @@ export async function incrementalRebuild(
       }
     } else {
       context = emptyBuildContext(params);
+      context.references = project.references;
       featureResults = [];
       failedIds = new Set();
       suppressedIds = new Set();
@@ -227,6 +228,7 @@ export async function incrementalRebuild(
     }
   } else {
     context = emptyBuildContext(params);
+    context.references = project.references;
     featureResults = [];
     failedIds = new Set();
     suppressedIds = new Set();

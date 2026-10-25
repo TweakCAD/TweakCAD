@@ -653,19 +653,54 @@ export type ShellFeatureInputs = {
  *
  * One feature per file maps to a multi-body result.
  */
+/**
+ * Payload of an imported file: embedded, or referenced out of the document.
+ *
+ * Both carry `sizeBytes` so a reader can report or budget without decoding
+ * base64 or fetching a blob — a project tree showing "bracket.step · 18 MB"
+ * should not have to materialise 18 MB to draw that label.
+ */
+export type ImportedGeometryData =
+  | { kind: 'inline'; base64: string; sizeBytes: number }
+  | { kind: 'ref'; referenceId: ReferenceId; sizeBytes: number };
+
+/**
+ * Above this, an import should become a `ref` rather than being embedded.
+ *
+ * 256 KB covers the overwhelming majority of real parts — a bracket, a
+ * fastener, a printed enclosure — so the common case stays self-contained and
+ * portable. What it excludes is the scanned assembly or vendor STEP that
+ * would otherwise make the document unopenable in a text editor and slow to
+ * autosave.
+ *
+ * Not enforced yet: nothing produces `ref`, so this is the threshold the
+ * resolver will use, recorded next to the type it governs.
+ */
+export const IMPORT_INLINE_MAX_BYTES = 256 * 1024;
+
 export type ImportedGeometryFeatureInputs = {
   /** Original filename — shown as the timeline label and tooltip. */
   fileName: string;
   /** File format. `step` covers both .step and .stp; `stl` is its own format; `brep` covers .brep / .brp. */
   format: 'step' | 'stl' | 'brep';
   /**
-   * Raw file bytes, base64-encoded. The builder decodes back to
-   * ArrayBuffer before handing to the kernel. Inline storage keeps
-   * .cadjson self-contained; future variants can swap to an
-   * external `ReferenceAsset` for very large files (no schema
-   * migration needed — `format` discriminator can grow).
+   * Where the file bytes live.
+   *
+   * `inline` keeps the document self-contained — ship one file and it opens
+   * anywhere. `ref` points at an entry in `CadProject.references`, which the
+   * SaaS layer can store as its own blob instead of inside the document.
+   *
+   * The discriminator exists from the start because adding one to a bare
+   * string later is the breaking part; the threshold that decides between
+   * them, and the resolver behind `ref`, are both additive. Imports are the
+   * only unbounded thing a `.cadjson` carries: base64 inflates bytes by a
+   * third, and until autosave stopped minting a revision per keystroke
+   * burst, a 20 MB STEP was re-uploaded whole every two seconds.
+   *
+   * `ref` is defined but not yet produced — every import still writes
+   * `inline`. See `IMPORT_INLINE_MAX_BYTES`.
    */
-  data: string;
+  data: ImportedGeometryData;
   /**
    * Optional rigid placement applied to ALL imported bodies as a group
    * (the whole import moves together). Absent/identity = "as imported".
@@ -1113,11 +1148,30 @@ export type SuggestedFix = {
 
 // --- Stubs for future features ---
 
+/**
+ * A file the document refers to rather than embeds.
+ *
+ * `CadProject.references` has been declared and empty since the schema was
+ * written. It is the destination for an `ImportedGeometryData` of kind
+ * `'ref'`: the document keeps the metadata and the bytes live elsewhere —
+ * inside the archive for a future `.cadpack`, or as a separate blob for a
+ * cloud project.
+ *
+ * `bytes` is optional precisely because the point is to not carry them. A
+ * loader that has the archive populates it; one that only has the `.cadjson`
+ * leaves it absent, and a builder that needs the geometry reports a missing
+ * reference rather than silently producing an empty body.
+ */
 export type ReferenceAsset = {
   id: ReferenceId;
+  /** Original filename, for display and for re-linking from disk. */
   name: string;
-  type: 'step' | 'stl';
-  data: string;
+  type: 'step' | 'stl' | 'brep';
+  sizeBytes: number;
+  /** SHA-256 (hex) of the bytes — pins which version this document built against. */
+  hash: string;
+  /** Base64 bytes, when this reader has them. Absent means "resolve elsewhere". */
+  bytes?: string;
 };
 
 /**

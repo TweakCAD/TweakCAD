@@ -10,6 +10,8 @@
  * These types live in @tweakcad/core so both the web app sketch editor
  * and the worker buildSketch can import them.
  */
+import type { Expression } from '../expressions.ts';
+
 
 // ---- Identifiers ----
 
@@ -284,6 +286,24 @@ export type FixedConstraint = {
  */
 type DrivenFlag = { driven?: boolean };
 
+/**
+ * An optional parameter expression driving a dimension's value.
+ *
+ * This is where a parameter belongs. `buildGeometry` could carry an
+ * `Expression` in a raw point coordinate, but that is the wrong place twice
+ * over: no UI path can write one, and the solver is free to move a coordinate
+ * afterwards, so a "parametric" position holds only until the next solve.
+ * A dimension constraint is enforced — set the expression on the distance and
+ * the solver puts the geometry where the parameter says.
+ *
+ * `value` stays, and stays authoritative for the editor. It is the last
+ * solved number, so opening a sketch does not require resolving parameters
+ * before anything can be drawn. When `expression` is present the build path
+ * re-evaluates it against the project's parameters and solves, so `value`
+ * is a cache that the next build refreshes.
+ */
+type ParametricValue = { expression?: Expression };
+
 /** Distance between two points */
 export type DistanceConstraint = {
   id: SketchConstraintId;
@@ -291,7 +311,7 @@ export type DistanceConstraint = {
   pointA: SketchPointId;
   pointB: SketchPointId;
   value: number;
-} & DrivenFlag;
+} & DrivenFlag & ParametricValue;
 
 /** Circle or arc radius must equal a value */
 export type RadiusConstraint = {
@@ -299,7 +319,7 @@ export type RadiusConstraint = {
   type: 'radius';
   geometryId: SketchGeometryId;
   value: number;
-} & DrivenFlag;
+} & DrivenFlag & ParametricValue;
 
 /** Line segment length must equal a value */
 export type LengthConstraint = {
@@ -307,7 +327,7 @@ export type LengthConstraint = {
   type: 'length';
   geometryId: SketchGeometryId;
   value: number;
-} & DrivenFlag;
+} & DrivenFlag & ParametricValue;
 
 /** Two line segments must be parallel */
 export type ParallelConstraint = {
@@ -338,7 +358,7 @@ export type AngleConstraint = {
   geometryB: SketchGeometryId;
   /** Target angle in radians (CCW positive from A to B). */
   value: number;
-} & DrivenFlag;
+} & DrivenFlag & ParametricValue;
 
 /**
  * Two curves must touch at exactly one point.
@@ -400,7 +420,7 @@ export type DistanceXConstraint = {
   pointB: SketchPointId;
   /** Signed (pB.x − pA.x) target in mm. */
   value: number;
-} & DrivenFlag;
+} & DrivenFlag & ParametricValue;
 
 /** Signed vertical distance — see {@link DistanceXConstraint}. */
 export type DistanceYConstraint = {
@@ -410,7 +430,7 @@ export type DistanceYConstraint = {
   pointB: SketchPointId;
   /** Signed (pB.y − pA.y) target in mm. */
   value: number;
-} & DrivenFlag;
+} & DrivenFlag & ParametricValue;
 
 /**
  * A point must lie on a line segment's infinite extension.

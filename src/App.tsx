@@ -260,7 +260,14 @@ export function App() {
         inputs: {
           fileName: pick.fileName,
           format: pick.format,
-          data: pick.dataBase64,
+          // Always inline today: nothing produces a `ref` yet, and a local
+          // document has nowhere better to put the bytes. The discriminator
+          // is what lets that change without a format break.
+          data: {
+            kind: 'inline' as const,
+            base64: pick.dataBase64,
+            sizeBytes: Math.floor((pick.dataBase64.length * 3) / 4),
+          },
         },
       });
       if (!result.ok) {

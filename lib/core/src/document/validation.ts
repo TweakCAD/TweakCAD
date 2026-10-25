@@ -186,7 +186,12 @@ const EditorGeometrySchema = z.discriminatedUnion('type', [
 ]);
 
 /** Dimensional constraints carry `driven`: false drives geometry, true just reports. */
-const driven = { driven: z.boolean().optional() };
+/** Dimensional constraints carry `driven` and an optional parameter
+ *  `expression` that drives the value at build time. */
+const driven = {
+  driven: z.boolean().optional(),
+  expression: z.string().optional(),
+};
 const cid = { id: z.string() };
 
 const EditorConstraintSchema = z.discriminatedUnion('type', [
@@ -321,10 +326,30 @@ const Transform3DSchemaRef = z.object({
   rotation: QuaternionSchema,
 });
 
+/**
+ * Imported bytes: embedded, or referenced out of the document.
+ *
+ * A discriminated union from the start — adding the discriminator to a bare
+ * string later is the breaking part, while the size threshold and the `ref`
+ * resolver are both additive.
+ */
+const ImportedGeometryDataSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('inline'),
+    base64: z.string().min(1),
+    sizeBytes: z.number().int().nonnegative(),
+  }),
+  z.object({
+    kind: z.literal('ref'),
+    referenceId: z.string().min(1),
+    sizeBytes: z.number().int().nonnegative(),
+  }),
+]);
+
 const ImportedGeometryFeatureInputsSchema = z.object({
   fileName: z.string().min(1),
   format: z.union([z.literal('step'), z.literal('stl'), z.literal('brep')]),
-  data: z.string().min(1),
+  data: ImportedGeometryDataSchema,
   /** Group placement for the whole import. */
   transform: Transform3DSchemaRef.optional(),
   /** Per-body placement, keyed by the body's index in the imported set. */
@@ -638,6 +663,24 @@ const CadAssemblySchema = z.object({
   instances: z.array(AssemblyInstanceSchema),
 });
 
+// --- References ---
+//
+// Validated for real rather than left as `z.unknown()`. Nothing populates
+// this map today, so any document that does carry entries is hand-authored
+// or from a future build — exactly the ones worth checking at the door,
+// since a malformed asset otherwise surfaces as an import that silently
+// produces no geometry.
+
+const ReferenceAssetSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  type: z.union([z.literal('step'), z.literal('stl'), z.literal('brep')]),
+  sizeBytes: z.number().int().nonnegative(),
+  hash: z.string().min(1),
+  /** Absent when the bytes live outside whatever produced this document. */
+  bytes: z.string().optional(),
+});
+
 // --- Project Metadata ---
 
 const ProjectMetadataSchema = z.object({
@@ -655,7 +698,7 @@ export const CadProjectSchema = z.object({
   metadata: ProjectMetadataSchema,
   parameters: ParameterTableSchema,
   parts: z.record(z.string(), CadPartSchema),
-  references: z.record(z.string(), z.unknown()),
+  references: z.record(z.string(), ReferenceAssetSchema),
   assemblies: z.record(z.string(), CadAssemblySchema),
   embeddedComponents: z.record(z.string(), z.unknown()).optional(),
 });
