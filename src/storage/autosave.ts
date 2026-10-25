@@ -9,11 +9,14 @@
 import type { DocumentStore } from '@tweakcad/core/src/store/documentStore.ts';
 import type { CadProject } from '@tweakcad/core/src/document/schema.ts';
 import { localStore, type LocalProjectRecord, type StorageSnapshot } from './localStore.ts';
-import { saveCloudProject } from './cloudAdapter.ts';
+import { saveCloudProject, CloudConflictError } from './cloudAdapter.ts';
 import type { ProjectContext } from './context.ts';
 import type { DocumentStorage } from './documentStorage.ts';
 
 export type SaveStatus =
+  /** The server rejected the write: another tab or device moved the document.
+   *  Terminal until the user reloads — deliberately not retried. */
+  | { kind: 'conflict'; message: string }
   | { kind: 'idle' }
   | { kind: 'saving' }
   | { kind: 'saved'; at: number }
@@ -106,8 +109,16 @@ export class AutosaveScheduler {
     } catch (err) {
       const e = err as Error;
       console.warn('[autosave] save failed', e);
-      // If cloud-bound and likely a transient/offline failure, retry later.
-      if (this.context.kind === 'cloud') {
+      // A conflict is NOT retryable. It means another tab or device moved the
+      // document since we loaded it, and retrying would overwrite their work
+      // with ours — the precise outcome `If-Match` exists to prevent. Stop,
+      // surface it, and let the user decide; retrying here would turn a
+      // detected collision back into a silent one.
+      if (err instanceof CloudConflictError) {
+        this.setStatus({ kind: 'conflict', message: e.message });
+      } else if (this.context.kind === 'cloud') {
+        // Transient or offline — the local mirror already has the work, so
+        // retrying is safe and the right thing.
         this.setStatus({ kind: 'offline', queued: 1 });
         this.scheduleRetry(doc);
       } else {

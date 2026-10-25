@@ -103,6 +103,10 @@ function describe(status: Status, storage: DocumentStorage): string {
       return 'saved';
     case 'offline':
       return `offline (${status.queued} queued)`;
+    case 'conflict':
+      // Not "error": the work is safe in the local mirror and nothing was
+      // lost. What is required is a decision, not a retry.
+      return 'changed elsewhere — reload before saving';
     case 'error':
       return `error: ${status.message}`;
   }
@@ -112,6 +116,7 @@ function dotColor(status: Status, storage: DocumentStorage): string {
   if (status.kind === 'saving') return '#f59e0b'; // amber
   if (status.kind === 'offline') return '#f59e0b';
   if (status.kind === 'error') return '#dc2626'; // red
+  if (status.kind === 'conflict') return '#dc2626'; // red — needs a decision
   if (status.kind === 'saved') {
     return storage.kind === 'cloud' ? '#10b981' /* emerald */ : '#0ea5e9' /* sky */;
   }
