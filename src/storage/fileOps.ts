@@ -25,7 +25,7 @@ import {
   writeToHandle,
   type OpenResult,
 } from './diskAdapter.ts';
-import { saveCloudProject } from './cloudAdapter.ts';
+import { saveCloudProject, createCloudVersion } from './cloudAdapter.ts';
 
 export type ConfirmFn = (opts: {
   title: string;
@@ -143,9 +143,23 @@ export async function save(h: FileOpsHandles): Promise<void> {
       }
       return;
     case 'cloud':
-      // Cloud saves go through the autosave scheduler in the existing
-      // pipeline (it knows to PUT /document). Trigger an immediate flush.
+      // Flush the live document first, then mint a version from it. These
+      // are two calls on purpose: the flush is the autosave path (overwrite,
+      // no history) and must land before the version is cut, or the snapshot
+      // would be of the previous bytes.
+      //
+      // Explicit Save is the main thing that creates a version. Autosave
+      // deliberately does not — it used to, which is how a 2-second debounce
+      // produced hundreds of permanent revisions per session.
       await h.scheduler.flushNow();
+      try {
+        await createCloudVersion(storage.projectId);
+      } catch (err) {
+        // The document IS saved — only the snapshot failed. Losing a version
+        // marker is an inconvenience; failing the Save the user just asked
+        // for, when their work is already safely stored, is not.
+        console.warn('[fileOps] version snapshot failed (document is saved)', err);
+      }
       return;
   }
 }
@@ -199,6 +213,14 @@ export async function saveAsNewCloudProject(
       h.documentStore.replaceDocument(renamedDoc);
     }
     await saveCloudProject(created.id, renamedDoc);
+    // Save As is a deliberate save point, so it gets a version — and this one
+    // matters more than most: it is the only snapshot of the document as it
+    // was when it first became a cloud project.
+    try {
+      await createCloudVersion(created.id, 'Created');
+    } catch (err) {
+      console.warn('[fileOps] initial version snapshot failed', err);
+    }
     h.setStorage({ kind: 'cloud', projectId: created.id, slug: created.slug });
     h.setContext({
       kind: 'cloud',

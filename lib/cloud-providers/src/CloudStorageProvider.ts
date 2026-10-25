@@ -27,12 +27,27 @@ const GetResponse = z.object({
 });
 type GetResponse = z.infer<typeof GetResponse>;
 
+/** `PUT .../document` — autosave. Overwrites the live document; no version. */
 const SaveResponse = z.object({
-  versionId: z.string(),
   savedAt: z.string(),
   etag: z.string(),
 });
 type SaveResponse = z.infer<typeof SaveResponse>;
+
+/** `POST .../versions` — mints an immutable snapshot of the live document. */
+const VersionResponse = z.object({
+  versionId: z.string(),
+  createdAt: z.string(),
+});
+type VersionResponse = z.infer<typeof VersionResponse>;
+
+/** Thrown when `If-Match` fails: the project moved under us. */
+export class CloudConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CloudConflictError';
+  }
+}
 
 const DeleteResponse = z.object({ ok: z.literal(true) });
 
@@ -80,19 +95,57 @@ export class CloudStorageProvider {
     return res.value;
   }
 
+  /**
+   * Autosave: overwrite the live document. Creates **no** version — call
+   * {@link createVersion} for that. The two were one call until the
+   * autosave/versioning split; collapsing them meant a 2-second debounce
+   * minted a permanent R2 object, a row and a thumbnail per keystroke burst.
+   *
+   * @param ifMatch The etag from the last load or save. When supplied, the
+   *   server rejects the write if the project moved in the meantime, which
+   *   is the only thing stopping two tabs from silently overwriting each
+   *   other. Omit it only when there is genuinely nothing to compare against.
+   */
   async save(
     projectId: string,
     cadjson: Blob | File,
-    meta: { message?: string; thumbnail?: Blob | null } = {},
+    meta: { ifMatch?: string | null } = {},
   ): Promise<SaveResponse> {
     const form = new FormData();
     form.append('cadjson', cadjson, 'document.cadjson');
-    if (meta.message) form.append('message', meta.message);
-    if (meta.thumbnail) form.append('thumbnail', meta.thumbnail, 'thumb.webp');
     const res = await this.api.request(
       'PUT',
       `/api/v1/projects/${encodeURIComponent(projectId)}/document`,
       SaveResponse,
+      form,
+      meta.ifMatch ? { headers: { 'If-Match': meta.ifMatch } } : undefined,
+    );
+    if (!res.ok) {
+      if (res.error.code === 'conflict') throw new CloudConflictError(res.error.message);
+      throw apiError(res.error);
+    }
+    return res.value;
+  }
+
+  /**
+   * Mint an immutable version from whatever the server currently holds as the
+   * live document. Explicit Save, Publish, and session boundaries — not
+   * autosave.
+   *
+   * Sends no document: the server copies its own bytes, so a version cannot
+   * disagree with the live document it snapshots.
+   */
+  async createVersion(
+    projectId: string,
+    meta: { message?: string; thumbnail?: Blob | null } = {},
+  ): Promise<VersionResponse> {
+    const form = new FormData();
+    if (meta.message) form.append('message', meta.message);
+    if (meta.thumbnail) form.append('thumbnail', meta.thumbnail, 'thumb.webp');
+    const res = await this.api.request(
+      'POST',
+      `/api/v1/projects/${encodeURIComponent(projectId)}/versions`,
+      VersionResponse,
       form,
     );
     if (!res.ok) throw apiError(res.error);

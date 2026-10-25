@@ -12,6 +12,7 @@ import { CloudStorageProvider } from '@tweakcad/cloud-providers';
 import type { CadProject } from '@tweakcad/core/src/document/schema.ts';
 import { captureThumbnail } from './thumbnailCapture.ts';
 import { loadCadDocumentOrThrow } from '@tweakcad/core/src/document/loader.ts';
+export { CloudConflictError } from '@tweakcad/cloud-providers';
 
 let cached: CloudStorageProvider | null = null;
 
@@ -20,6 +21,20 @@ function client(): CloudStorageProvider {
   cached = new CloudStorageProvider({ baseUrl: '' }); // same-origin
   return cached;
 }
+
+/**
+ * The etag of the live cloud document, per project.
+ *
+ * Seeded by `loadCloudProject` and advanced by every successful autosave, so
+ * each write states which version it is replacing. Without it the server
+ * cannot tell a normal save from one made against a document another tab
+ * already moved, and last-write-wins silently discards the other tab's work.
+ *
+ * Module-level rather than threaded through `AutosaveScheduler`: the etag is
+ * a property of the server's copy, not of any one editing session, and the
+ * scheduler has no business knowing about HTTP preconditions.
+ */
+const liveEtags = new Map<string, string>();
 
 export type CloudLoadResult = {
   name: string;
@@ -43,16 +58,55 @@ export async function loadCloudProject(projectId: string): Promise<CloudLoadResu
   for (const d of loaded.diagnostics) {
     console.warn(`[cloud load] ${d.message}`);
   }
+  // Seed the precondition for subsequent saves. Everything loaded here is
+  // what the server currently holds, so this etag is what our first write
+  // claims to be replacing.
+  if (result.etag) liveEtags.set(projectId, result.etag);
   return { name: result.project.name, doc: loaded.project, etag: result.etag };
 }
 
+
+/** Forget a project's etag — after a conflict, so the next save is unconditional. */
+export function clearCloudEtag(projectId: string): void {
+  liveEtags.delete(projectId);
+}
+
+/**
+ * Autosave the document. Overwrites the live copy and creates **no** version;
+ * see {@link createCloudVersion}.
+ *
+ * Throws `CloudConflictError` when the project moved under us. The caller
+ * decides what that means — the scheduler surfaces it rather than retrying,
+ * because retrying is precisely how the other tab's work would be lost.
+ */
 export async function saveCloudProject(
   projectId: string,
   doc: CadProject,
-): Promise<{ versionId: string; etag: string; savedAt: string }> {
+): Promise<{ etag: string; savedAt: string }> {
   const blob = new Blob([JSON.stringify(doc)], { type: 'application/json' });
-  // Capture in parallel with the JSON serialization — they're independent
-  // and the snapshot is best-effort (null is fine).
+  const result = await client().save(projectId, blob, {
+    ifMatch: liveEtags.get(projectId) ?? null,
+  });
+  liveEtags.set(projectId, result.etag);
+  return result;
+}
+
+/**
+ * Mint a version from the server's current live document, with a thumbnail.
+ *
+ * Deliberate save points only — explicit Save, Publish, session end. The
+ * thumbnail is captured here and not on autosave: it is a canvas readback,
+ * and doing it every two seconds costs frame time for a picture nobody sees
+ * until the project is listed.
+ */
+export async function createCloudVersion(
+  projectId: string,
+  message?: string,
+): Promise<{ versionId: string; createdAt: string }> {
+  // Best-effort — a headless context returns null and the version still lands.
   const thumbnail = await captureThumbnail();
-  return client().save(projectId, blob, { thumbnail });
+  return client().createVersion(projectId, {
+    ...(message ? { message } : {}),
+    thumbnail,
+  });
 }
