@@ -243,48 +243,112 @@ describe('UndoManager — depth cap', () => {
     expect(labels.at(-1)).toBe(`e${10}`); // e0..e9 were trimmed
   });
 
-  it.fails(
-    `GAP: endTransaction should honour MAX_UNDO_DEPTH the way record does`,
-    () => {
-      // `record` trims; `endTransaction` pushes straight onto `past` with no
-      // trim. Any flow that goes through transactions — every multi-point
-      // sketch drag does — therefore grows the undo stack without bound, and
-      // each entry retains its patches. Pure leak: the cap exists precisely
-      // so a long session cannot accumulate unbounded patch arrays.
-      const m = new UndoManager();
-      for (let i = 0; i < MAX_UNDO_DEPTH + 50; i++) {
-        m.beginTransaction(`t${i}`);
-        m.record(entry(`e${i}`));
-        m.endTransaction();
-      }
+  it('endTransaction honours MAX_UNDO_DEPTH the way record does', () => {
+    // `record` always trimmed; `endTransaction` pushed straight onto `past`
+    // with no trim, so any flow that batched — every multi-point sketch drag
+    // — grew the stack without bound, each entry holding its patch arrays.
+    const m = new UndoManager();
+    for (let i = 0; i < MAX_UNDO_DEPTH + 50; i++) {
+      m.beginTransaction(`t${i}`);
+      m.record(entry(`e${i}`));
+      m.endTransaction();
+    }
 
-      let depth = 0;
-      while (m.canUndo()) {
-        m.undo(() => {});
-        depth++;
-      }
-      expect(depth).toBe(MAX_UNDO_DEPTH);
-    },
-  );
+    let depth = 0;
+    while (m.canUndo()) {
+      m.undo(() => {});
+      depth++;
+    }
+    expect(depth).toBe(MAX_UNDO_DEPTH);
+  });
 });
 
-describe('UndoManager — hazards (current shipped behaviour)', () => {
-  it.fails('GAP: beginTransaction while one is open should not lose the in-flight patches', () => {
-    // Nesting is unsupported, and the current handling is the worst of the
-    // three options: `beginTransaction` overwrites `activeTransaction`, so
-    // everything recorded into the first one vanishes with no diagnostic.
-    // Either nest properly or throw — silently dropping undo entries leaves
-    // the user with history that cannot explain the document in front of them.
+describe('UndoManager — nesting', () => {
+  it('keeps the outer transaction open until its own end', () => {
+    // A nested begin used to overwrite `activeTransaction` outright, so
+    // everything recorded into the outer one vanished. Now the inner end
+    // only decrements — the group stays open, and nothing commits early.
+    const m = new UndoManager();
+    m.beginTransaction('outer');
+    m.record(entry('a'));
+    m.beginTransaction('inner');
+    m.record(entry('b'));
+    m.endTransaction(); // closes `inner` only
+
+    expect(m.canUndo()).toBe(false);
+
+    m.endTransaction(); // closes `outer` — now it commits
+    expect(m.canUndo()).toBe(true);
+  });
+
+  it('collapses the whole nest into ONE entry holding every patch', () => {
     const m = new UndoManager();
     m.beginTransaction('outer');
     m.record(entry('a'));
     m.beginTransaction('inner');
     m.record(entry('b'));
     m.endTransaction();
+    m.endTransaction();
 
     const r = recorder();
     m.undo(r.apply);
+    expect(r.seen).toHaveLength(1);
+    // Both survive — the regression was `a` disappearing.
     expect(r.seen[0]).toContain('a.inv0');
+    expect(r.seen[0]).toContain('b.inv0');
+    expect(m.canUndo()).toBe(false);
+  });
+
+  it('labels the entry with the OUTER transaction', () => {
+    // The user asked for the outer operation; the inner ones are how it was
+    // implemented, not what they did.
+    const m = new UndoManager();
+    m.beginTransaction('Paste template');
+    m.beginTransaction('Draw line');
+    m.record(entry('a'));
+    m.endTransaction();
+    m.endTransaction();
+    expect(m.undoLabel()).toBe('Paste template');
+  });
+
+  it('nests arbitrarily deep', () => {
+    const m = new UndoManager();
+    for (let i = 0; i < 5; i++) m.beginTransaction(`level${i}`);
+    m.record(entry('a'));
+    for (let i = 0; i < 4; i++) {
+      m.endTransaction();
+      expect(m.canUndo()).toBe(false);
+    }
+    m.endTransaction();
+    expect(m.canUndo()).toBe(true);
+    expect(m.undoLabel()).toBe('level0');
+  });
+
+  it('warns on an unbalanced end rather than committing something', () => {
+    // Nesting deliberately swallows a stray `begin`, so a stray `end` is the
+    // remaining way to notice an unbalanced caller — worth surfacing.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const m = new UndoManager();
+    m.endTransaction();
+    expect(warn).toHaveBeenCalledOnce();
+    expect(m.canUndo()).toBe(false);
+    warn.mockRestore();
+  });
+
+  it('clear resets the depth so a later transaction still commits', () => {
+    // Clearing mid-transaction used to leave the count non-zero, and every
+    // later end decremented toward a close that never came.
+    const m = new UndoManager();
+    m.beginTransaction('abandoned');
+    m.beginTransaction('also abandoned');
+    m.record(entry('a'));
+    m.clear();
+
+    m.beginTransaction('fresh');
+    m.record(entry('b'));
+    m.endTransaction();
+    expect(m.canUndo()).toBe(true);
+    expect(m.undoLabel()).toBe('fresh');
   });
 
   it('an unclosed transaction swallows every record until it is closed', () => {

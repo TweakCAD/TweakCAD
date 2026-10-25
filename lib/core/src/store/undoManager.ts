@@ -24,6 +24,25 @@ export class UndoManager {
     patches: Patch[];
     inversePatches: Patch[];
   } | null = null;
+  /**
+   * How many `beginTransaction` calls are open. Only the outermost `end`
+   * commits.
+   *
+   * Transactions nest because the handlers nest: a high-level operation
+   * composed of per-primitive commands opens a transaction, and those
+   * commands open their own. Before this counter, the inner `begin`
+   * overwrote `activeTransaction` outright and every patch recorded into the
+   * outer one vanished — the undo entry for the whole operation silently
+   * became the undo entry for its last fragment.
+   *
+   * Nesting rather than throwing: the damage from the bug is a confusing
+   * undo stack, since the document itself is safe in the timeline. Throwing
+   * would trade that for an exception mid-gesture, and a thrown error that
+   * left a transaction open would wedge every later one. `endTransaction`
+   * warns instead if it is called with no transaction open, which is the
+   * unbalanced-caller case worth surfacing.
+   */
+  private depth = 0;
 
   /**
    * Record an undo entry.
@@ -78,11 +97,30 @@ export class UndoManager {
    * @param label - Label for the transaction
    */
   beginTransaction(label: string): void {
-    this.activeTransaction = { label, patches: [], inversePatches: [] };
+    this.depth++;
+    // Only the outermost begin establishes the transaction, so its label is
+    // the one the user sees. That matches intent: they asked for "Paste
+    // template", not the fourteen line draws it decomposed into.
+    if (this.depth === 1) {
+      this.activeTransaction = { label, patches: [], inversePatches: [] };
+    }
   }
 
-  /** End the current transaction and record it as a single undo entry. */
+  /**
+   * Close one level of transaction. Only the outermost close records an
+   * entry — an inner close just decrements, leaving the group open.
+   */
   endTransaction(): void {
+    if (this.depth === 0) {
+      // Unbalanced: more ends than begins. Nothing to commit, but the caller
+      // is wrong and this is the one case worth surfacing, since nesting
+      // deliberately swallows the mirror-image mistake.
+      console.warn('[undo] endTransaction called with no transaction open');
+      return;
+    }
+    this.depth--;
+    if (this.depth > 0) return; // inner close — the group stays open
+
     if (!this.activeTransaction) return;
     const { label, patches, inversePatches } = this.activeTransaction;
     this.activeTransaction = null;
@@ -94,6 +132,10 @@ export class UndoManager {
         timestamp: Date.now(),
       });
       this.future = [];
+      // Trim here too. `record` has always capped the stack; this path did
+      // not, so anything that batched — every multi-point sketch drag — grew
+      // `past` without bound, each entry holding its patch arrays.
+      if (this.past.length > MAX_UNDO_DEPTH) this.past.shift();
     }
   }
 
@@ -107,10 +149,14 @@ export class UndoManager {
     return this.future.at(-1)?.label;
   }
 
-  /** Clear all undo/redo history */
+  /** Clear all undo/redo history, including any open transaction. */
   clear(): void {
     this.past = [];
     this.future = [];
     this.activeTransaction = null;
+    // Reset the depth as well. Without this, clearing mid-transaction leaves
+    // a non-zero count with no transaction behind it, and every later
+    // `endTransaction` decrements toward a close that never commits.
+    this.depth = 0;
   }
 }
