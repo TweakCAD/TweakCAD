@@ -12,7 +12,12 @@ import type { ParameterUnit } from '../units.ts';
 // --- Top-Level Project ---
 
 export type CadProject = {
-  schemaVersion: '0.1' | '0.2';
+  /**
+   * Format version — a monotonically increasing integer, not semver. See
+   * `CURRENT_SCHEMA_VERSION` in `./version.ts` for the compatibility
+   * contract: older migrates forward, newer is refused outright.
+   */
+  schemaVersion: number;
   // No `units` field. Every length in this document is millimetres and every
   // angle is degrees — see the units invariant in `../units.ts`. The field
   // used to be `units: 'mm' | 'inch'`, but nothing read it and nothing
@@ -221,9 +226,15 @@ export type SketchEditorSnapshot = {
 // every shape is curves + constraints — never a composite document entity.
 // The in-editor drawRectangle / drawSlot primitives emit 4 lines / 2 lines +
 // 2 arcs decompositions directly, and the editorModelToBuildGeometry serializer
-// no longer collapses them back. Older .cadjson files written before this
-// retirement would still parse (they'd land in `entities` as foreign types
-// and be ignored by the region detector), but no new code path emits them.
+// no longer collapses them back.
+//
+// This used to claim that older files "would still parse (they'd land in
+// `entities` as foreign types and be ignored by the region detector)". That
+// was never true: `buildSketch` reads `inputs.buildGeometry`, which such a
+// file does not have, so it threw on `undefined`. The claim survived because
+// `inputs` was validated as `z.record(z.unknown())` — the loader said yes and
+// the worker then failed. Per-type validation now rejects that shape at load,
+// which is what surfaced the six unloadable fixtures in `components/`.
 //
 // The three remaining primitive curves — ellipse, spline, point — are
 // part of the document-entities projection. The

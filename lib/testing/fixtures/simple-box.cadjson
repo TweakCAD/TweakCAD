@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "0.2",
+  "schemaVersion": 1,
   "metadata": {
     "name": "Simple Box",
     "description": "A simple box for testing",

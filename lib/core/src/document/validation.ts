@@ -4,6 +4,7 @@
  */
 
 import { z } from 'zod';
+import type { FeatureType as FeatureTypeName } from './schema.ts';
 
 // --- Primitives ---
 
@@ -158,26 +159,87 @@ const SketchEntitySchema = z.discriminatedUnion('type', [
 
 // --- Feature Inputs ---
 
+// --- Sketch editor model ---
+//
+// `editorModel` is the sketch's source of truth — the point-based form the
+// editor manipulates and the solver reads, with `buildGeometry` derived from
+// it. It was `z.array(z.unknown())` three times over, which meant the most
+// intricate structure in the document was the one part validation could not
+// see. A malformed constraint reached planegcs instead of being rejected at
+// the door.
+
+const EditorPointSchema = z.object({
+  id: z.string(),
+  x: z.number().finite(),
+  y: z.number().finite(),
+  fixed: z.boolean(),
+});
+
+const EditorGeometrySchema = z.discriminatedUnion('type', [
+  z.object({ id: z.string(), type: z.literal('line'), startId: z.string(), endId: z.string(), construction: z.boolean() }),
+  z.object({ id: z.string(), type: z.literal('circle'), centerId: z.string(), radius: z.number().finite(), construction: z.boolean() }),
+  z.object({ id: z.string(), type: z.literal('arc'), centerId: z.string(), startId: z.string(), endId: z.string(), radius: z.number().finite(), construction: z.boolean() }),
+  z.object({ id: z.string(), type: z.literal('ellipse'), centerId: z.string(), majorId: z.string(), minorRadius: z.number().finite(), construction: z.boolean() }),
+  z.object({ id: z.string(), type: z.literal('spline'), pointIds: z.array(z.string()), construction: z.boolean() }),
+  z.object({ id: z.string(), type: z.literal('bezier'), startId: z.string(), cp1Id: z.string(), cp2Id: z.string(), endId: z.string(), construction: z.boolean() }),
+  z.object({ id: z.string(), type: z.literal('point'), pointId: z.string(), construction: z.boolean() }),
+]);
+
+/** Dimensional constraints carry `driven`: false drives geometry, true just reports. */
+const driven = { driven: z.boolean().optional() };
+const cid = { id: z.string() };
+
+const EditorConstraintSchema = z.discriminatedUnion('type', [
+  z.object({ ...cid, type: z.literal('coincident'), pointA: z.string(), pointB: z.string() }),
+  z.object({ ...cid, type: z.literal('horizontal'), geometryId: z.string() }),
+  z.object({ ...cid, type: z.literal('vertical'), geometryId: z.string() }),
+  z.object({ ...cid, type: z.literal('fixed'), pointId: z.string(), x: z.number().finite(), y: z.number().finite() }),
+  z.object({ ...cid, type: z.literal('distance'), pointA: z.string(), pointB: z.string(), value: z.number().finite(), ...driven }),
+  z.object({ ...cid, type: z.literal('distanceX'), pointA: z.string(), pointB: z.string(), value: z.number().finite(), ...driven }),
+  z.object({ ...cid, type: z.literal('distanceY'), pointA: z.string(), pointB: z.string(), value: z.number().finite(), ...driven }),
+  z.object({ ...cid, type: z.literal('radius'), geometryId: z.string(), value: z.number().finite(), ...driven }),
+  z.object({ ...cid, type: z.literal('length'), geometryId: z.string(), value: z.number().finite(), ...driven }),
+  z.object({ ...cid, type: z.literal('parallel'), geometryA: z.string(), geometryB: z.string() }),
+  z.object({ ...cid, type: z.literal('perpendicular'), geometryA: z.string(), geometryB: z.string() }),
+  z.object({ ...cid, type: z.literal('angle'), geometryA: z.string(), geometryB: z.string(), value: z.number().finite(), ...driven }),
+  z.object({ ...cid, type: z.literal('tangent'), lineId: z.string().optional(), circleId: z.string(), secondCircleId: z.string().optional(), internal: z.boolean().optional() }),
+  z.object({ ...cid, type: z.literal('pointOnLine'), pointId: z.string(), geometryId: z.string() }),
+  z.object({ ...cid, type: z.literal('pointOnCircle'), pointId: z.string(), geometryId: z.string() }),
+  z.object({ ...cid, type: z.literal('symmetric'), pointA: z.string(), pointB: z.string(), geometryId: z.string() }),
+  z.object({ ...cid, type: z.literal('equal'), geometryA: z.string(), geometryB: z.string() }),
+  z.object({ ...cid, type: z.literal('concentric'), geometryA: z.string(), geometryB: z.string() }),
+  z.object({ ...cid, type: z.literal('midpoint'), pointId: z.string(), geometryId: z.string() }),
+]);
+
+const SketchEditorSnapshotSchema = z.object({
+  points: z.array(EditorPointSchema),
+  geometries: z.array(EditorGeometrySchema),
+  constraints: z.array(EditorConstraintSchema),
+});
+
 const SketchFeatureInputsSchema = z.object({
   plane: PlaneRefSchema,
   buildGeometry: z.record(z.string(), SketchEntitySchema),
   entityOrder: z.array(z.string()).optional(),
-  // The editing source of truth — opaque to validation since the editor
-  // owns its shape. Its `constraints` array is the LIVE constraint store
-  // the solver uses. Required: every sketch carries its editor model.
-  editorModel: z.object({
-    points: z.array(z.unknown()),
-    geometries: z.array(z.unknown()),
-    constraints: z.array(z.unknown()),
-  }),
+  /** The editing source of truth; `buildGeometry` above is derived from it. */
+  editorModel: SketchEditorSnapshotSchema,
 });
+
+const BodyRefSchema = z.object({ partId: z.string(), bodyId: z.string() });
+
+const BooleanOperationSchema = z.union([
+  z.literal('newBody'),
+  z.literal('join'),
+  z.literal('cut'),
+]);
 
 const ExtrudeFeatureInputsSchema = z.object({
   profiles: z.array(ProfileRefSchema),
-  operation: z.union([z.literal('newBody'), z.literal('join'), z.literal('cut')]),
+  operation: BooleanOperationSchema,
   direction: DirectionSpecSchema,
   extent: ExtentSpecSchema,
-  targetBodies: z.array(z.object({ partId: z.string(), bodyId: z.string() })).optional(),
+  startOffset: ExpressionSchema.optional(),
+  targetBodies: z.array(BodyRefSchema).optional(),
 });
 
 const FaceRefSchema: z.ZodType = z.discriminatedUnion('type', [
@@ -234,12 +296,12 @@ const EdgeRefSchema: z.ZodType = z.discriminatedUnion('type', [
 const ChamferFeatureInputsSchema = z.object({
   edges: z.array(EdgeRefSchema).min(1),
   distance: ExpressionSchema,
-  targetBody: z.object({ partId: z.string(), bodyId: z.string() }).optional(),
+  targetBody: BodyRefSchema.optional(),
 });
 
 /**
- * AxisSpec schema. Used by pattern features for direction (linear) or
- * rotation axis (circular). Mirrors `AxisSpec` in schema.ts.
+ * AxisSpec schema. Used by pattern and revolve features for direction
+ * (linear) or rotation axis (circular). Mirrors `AxisSpec` in schema.ts.
  */
 const AxisSpecSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('x') }),
@@ -254,10 +316,19 @@ const AxisSpecSchema = z.discriminatedUnion('type', [
  * can be arbitrarily large STEP/STL/BREP content). `format` is the
  * discriminator the builder uses to pick the right kernel call.
  */
+const Transform3DSchemaRef = z.object({
+  position: Vec3Schema,
+  rotation: QuaternionSchema,
+});
+
 const ImportedGeometryFeatureInputsSchema = z.object({
   fileName: z.string().min(1),
   format: z.union([z.literal('step'), z.literal('stl'), z.literal('brep')]),
   data: z.string().min(1),
+  /** Group placement for the whole import. */
+  transform: Transform3DSchemaRef.optional(),
+  /** Per-body placement, keyed by the body's index in the imported set. */
+  bodyTransforms: z.record(z.string(), Transform3DSchemaRef).optional(),
 });
 
 /**
@@ -375,6 +446,57 @@ const HoleFeatureInputsSchema = z.object({
   targetBodies: z.array(z.object({ partId: z.string(), bodyId: z.string() })).optional(),
 });
 
+
+/** Mirrors ChamferFeatureInputsSchema field-for-field; `radius` not `distance`. */
+const FilletFeatureInputsSchema = z.object({
+  edges: z.array(EdgeRefSchema).min(1),
+  radius: ExpressionSchema,
+  targetBody: BodyRefSchema.optional(),
+});
+
+const RevolveFeatureInputsSchema = z.object({
+  profile: ProfileRefSchema,
+  axis: AxisSpecSchema,
+  angle: ExpressionSchema,
+  operation: BooleanOperationSchema,
+  startOffset: ExpressionSchema.optional(),
+  targetBodies: z.array(BodyRefSchema).optional(),
+});
+
+/**
+ * Loft takes 2..16 ordered sections. The bound is the builder's, restated
+ * here so a malformed file is rejected at the door rather than reaching the
+ * kernel — one profile cannot describe a loft, and the upper limit keeps a
+ * corrupt or hostile file from handing OCCT an unbounded section list.
+ */
+const LoftFeatureInputsSchema = z.object({
+  profiles: z.array(ProfileRefSchema).min(2).max(16),
+  operation: BooleanOperationSchema,
+  ruled: z.boolean().optional(),
+  closed: z.boolean().optional(),
+  targetBodies: z.array(BodyRefSchema).optional(),
+});
+
+/**
+ * A component linked from the SaaS catalog, as opposed to `importedComponent`
+ * which embeds its source. `parameters` stays `unknown` per value: the
+ * component's own manifest defines them, and this document cannot see it.
+ */
+const ComponentInstanceFeatureInputsSchema = z.object({
+  componentProjectId: z.string().min(1),
+  componentSlug: z.string().min(1),
+  componentName: z.string(),
+  manifestVersion: z.number(),
+  parameters: z.record(z.string(), z.unknown()),
+  boolean: BooleanOperationSchema.optional(),
+  placement: z
+    .object({
+      plane: PlaneRefSchema.optional(),
+      offset: Vec3Schema.optional(),
+    })
+    .optional(),
+});
+
 // --- Feature Node ---
 
 const FeatureTypeSchema = z.union([
@@ -396,7 +518,36 @@ const FeatureTypeSchema = z.union([
   z.literal('importedGeometry'),
 ]);
 
-const FeatureNodeSchema = z.object({
+/**
+ * Which schema validates a given feature's `inputs`.
+ *
+ * `inputs` used to be `z.record(z.unknown())`, so a feature could carry
+ * anything at all and still pass. That is why six component fixtures using a
+ * retired sketch shape validated cleanly while being unbuildable — the
+ * loader said yes and the worker then threw. Keyed by `type` so adding a
+ * FeatureType without a schema is a compile error, not a silent hole.
+ */
+const FEATURE_INPUT_SCHEMAS: Record<FeatureTypeName, z.ZodTypeAny> = {
+  sketch: SketchFeatureInputsSchema,
+  extrude: ExtrudeFeatureInputsSchema,
+  revolve: RevolveFeatureInputsSchema,
+  loft: LoftFeatureInputsSchema,
+  hole: HoleFeatureInputsSchema,
+  shell: ShellFeatureInputsSchema,
+  sweep: SweepFeatureInputsSchema,
+  linearPattern: LinearPatternInputsSchema,
+  circularPattern: CircularPatternInputsSchema,
+  fillet: FilletFeatureInputsSchema,
+  chamfer: ChamferFeatureInputsSchema,
+  mirror: MirrorFeatureInputsSchema,
+  componentInstance: ComponentInstanceFeatureInputsSchema,
+  importedComponent: ImportedComponentFeatureInputsSchema,
+  constructionPlane: ConstructionPlaneFeatureInputsSchema,
+  importedGeometry: ImportedGeometryFeatureInputsSchema,
+};
+
+/** The envelope every feature shares, regardless of type. */
+const FeatureNodeEnvelopeSchema = z.object({
   id: z.string(),
   type: FeatureTypeSchema,
   name: z.string(),
@@ -407,6 +558,33 @@ const FeatureNodeSchema = z.object({
   dependsOn: z.array(z.string()),
   createdAt: z.string(),
   updatedAt: z.string(),
+});
+
+/**
+ * A feature validated envelope-first, then `inputs` against the schema its
+ * `type` selects.
+ *
+ * Split in two deliberately. A document can legitimately contain a feature
+ * this build does not know — written by a newer client, or by a plugin — and
+ * the right response is to keep it and mark it unsupported, not to reject the
+ * whole file. `loadCadDocument` needs to tell "the envelope is broken" (fatal)
+ * apart from "the inputs are wrong for this type" (degrade this one feature),
+ * and a single schema cannot express that difference.
+ *
+ * So this schema is strict, and the loader is what decides how to react.
+ */
+const FeatureNodeSchema = FeatureNodeEnvelopeSchema.superRefine((node, ctx) => {
+  const schema = FEATURE_INPUT_SCHEMAS[node.type as FeatureTypeName];
+  if (!schema) return; // unknown type — the loader handles it, not Zod
+  const result = schema.safeParse(node.inputs);
+  if (result.success) return;
+  for (const issue of result.error.issues) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['inputs', ...issue.path],
+      message: issue.message,
+    });
+  }
 });
 
 // --- Part ---
@@ -473,13 +651,31 @@ const ProjectMetadataSchema = z.object({
 // --- Top-Level Project ---
 
 export const CadProjectSchema = z.object({
-  schemaVersion: z.union([z.literal('0.1'), z.literal('0.2')]),
+  schemaVersion: z.number().int().positive(),
   metadata: ProjectMetadataSchema,
   parameters: ParameterTableSchema,
   parts: z.record(z.string(), CadPartSchema),
   references: z.record(z.string(), z.unknown()),
   assemblies: z.record(z.string(), CadAssemblySchema),
   embeddedComponents: z.record(z.string(), z.unknown()).optional(),
+});
+
+/**
+ * The project without its timeline contents — same shape, but each feature is
+ * `unknown`.
+ *
+ * `loadCadDocument` validates in two passes so one bad feature cannot cost the
+ * user the rest of the document. This pass answers "is this a CAD file at
+ * all?"; the loader then validates features one at a time and degrades the
+ * ones that fail. Using `CadProjectSchema` for both would collapse that
+ * distinction into a single yes/no.
+ */
+const CadPartEnvelopeSchema = CadPartSchema.extend({
+  timeline: z.array(z.unknown()),
+});
+
+export const CadProjectEnvelopeSchema = CadProjectSchema.extend({
+  parts: z.record(z.string(), CadPartEnvelopeSchema),
 });
 
 // --- Export all schemas ---

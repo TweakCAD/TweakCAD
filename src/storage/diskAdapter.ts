@@ -22,6 +22,7 @@
  * on every Save in that case (handled by the fileOps layer).
  */
 import type { CadProject } from '@tweakcad/core/src/document/schema.ts';
+import { loadCadDocumentOrThrow } from '@tweakcad/core/src/document/loader.ts';
 
 const FILE_TYPES: FilePickerAcceptType[] = [
   {
@@ -675,23 +676,26 @@ function serialize(doc: CadProject): string {
   return JSON.stringify(doc, null, 2);
 }
 
+/**
+ * Validate a `.cadjson` read from disk.
+ *
+ * This used to be a three-magic-key check followed by a cast, with a comment
+ * saying full validation "belongs in a future loader hook". That hook now
+ * exists and this delegates to it. The name is kept local because both call
+ * sites above expect a throw rather than a Result.
+ *
+ * Note it shadowed `parseCadJson` in `@tweakcad/core/src/document/serialization.ts`
+ * — the real validating parser — which is why nobody noticed disk loads were
+ * unvalidated for so long. That core function is now gone; `loadCadDocument`
+ * replaces it.
+ */
 function parseCadJson(text: string): CadProject {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch (err) {
-    throw new Error(`File is not valid JSON: ${(err as Error).message}`);
+  const loaded = loadCadDocumentOrThrow(text);
+  // Diagnostics mean the document opened with features this build cannot
+  // rebuild. They are logged rather than thrown: the rest of the document is
+  // still the user's work. Surfacing them in the UI is the follow-up.
+  for (const d of loaded.diagnostics) {
+    console.warn(`[open] ${d.message}`);
   }
-  if (!parsed || typeof parsed !== 'object') {
-    throw new Error('File is not a CAD document.');
-  }
-  // Light shape check — CadProject's full validation would require pulling
-  // in the schema; that's a heavier import and shape validation belongs in
-  // a future loader hook. For now: confirm the magic keys are present and
-  // hand off to the rest of the pipeline.
-  const obj = parsed as Record<string, unknown>;
-  if (!obj.metadata || !obj.parts || !obj.parameters) {
-    throw new Error('File doesn\'t look like a .cadjson document.');
-  }
-  return parsed as CadProject;
+  return loaded.project;
 }
