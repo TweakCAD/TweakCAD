@@ -152,3 +152,56 @@ export function expandBoundingBox(box: BoundingBox3D, point: Vec3): BoundingBox3
     ],
   };
 }
+
+// --- Euler ↔ quaternion ---------------------------------------------------
+
+/**
+ * Rotations are stored as quaternions (no gimbal lock, composes cleanly) but
+ * people type degrees about X, Y and Z. These two convert between the forms.
+ *
+ * Order is intrinsic **XYZ** — rotate about X, then the new Y, then the new Z
+ * — matching three.js's default Euler order, so a transform gizmo built on
+ * three reads the same angles this produces. Any order would do as long as
+ * both directions agree and it is written down; this one is chosen so the two
+ * consumers cannot disagree.
+ */
+const DEG = Math.PI / 180;
+
+export function quaternionFromEulerDegrees(x: number, y: number, z: number): Quaternion {
+  const hx = x * DEG / 2, hy = y * DEG / 2, hz = z * DEG / 2;
+  const cx = Math.cos(hx), sx = Math.sin(hx);
+  const cy = Math.cos(hy), sy = Math.sin(hy);
+  const cz = Math.cos(hz), sz = Math.sin(hz);
+  return [
+    sx * cy * cz + cx * sy * sz,
+    cx * sy * cz - sx * cy * sz,
+    cx * cy * sz + sx * sy * cz,
+    cx * cy * cz - sx * sy * sz,
+  ];
+}
+
+/**
+ * Inverse of {@link quaternionFromEulerDegrees}.
+ *
+ * At the poles (pitch ±90°) X and Z rotations become indistinguishable, so
+ * the decomposition there is one of infinitely many that produce the same
+ * orientation: Z is pinned to 0 and X carries the whole rotation. The
+ * orientation round-trips exactly; the individual numbers may not.
+ */
+export function eulerDegreesFromQuaternion(q: Quaternion): Vec3 {
+  const [x, y, z, w] = q;
+  // Clamp guards against a denormalised quaternion pushing |sinY| past 1,
+  // which would make asin return NaN and silently blank the whole panel.
+  const sinY = Math.min(1, Math.max(-1, 2 * (x * z + w * y)));
+  const atPole = Math.abs(sinY) > 0.99999;
+  // Off the poles these are atan2(-m23, m33) and atan2(-m12, m11) of the
+  // rotation matrix, written directly in quaternion terms. At a pole m23/m33
+  // and m12/m11 both collapse, so X is read from atan2(m32, m22) instead and
+  // takes the whole rotation.
+  const rx = atPole
+    ? Math.atan2(2 * (y * z + w * x), 1 - 2 * (x * x + z * z))
+    : Math.atan2(-2 * (y * z - w * x), w * w - x * x - y * y + z * z);
+  const ry = Math.asin(sinY);
+  const rz = atPole ? 0 : Math.atan2(-2 * (x * y - w * z), w * w + x * x - y * y - z * z);
+  return [rx / DEG, ry / DEG, rz / DEG];
+}
