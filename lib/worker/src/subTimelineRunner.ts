@@ -45,6 +45,7 @@ import { buildSweep } from './featureBuilders/buildSweep.ts';
 import { buildImportedGeometry } from './featureBuilders/buildImportedGeometry.ts';
 import { buildComponentInstance } from './featureBuilders/buildComponentInstance.ts';
 import { buildConstructionPlane } from './featureBuilders/buildConstructionPlane.ts';
+import { buildPrimitive } from './featureBuilders/buildPrimitive.ts';
 import { buildImportedComponent } from './featureBuilders/buildImportedComponent.ts';
 
 export type SubTimelineResult = {
@@ -140,6 +141,7 @@ export async function dispatchFeatureBuilder(
     case 'componentInstance': return buildComponentInstance(feature, params, context, kernel);
     case 'importedComponent': return buildImportedComponent(feature, params, context, kernel, project, visited);
     case 'constructionPlane': return buildConstructionPlane(feature, params, context, kernel);
+    case 'primitive':         return buildPrimitive(feature, params, context, kernel);
     default:                  throw new Error(`No builder for feature type: ${feature.type}`);
   }
 }

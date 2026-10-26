@@ -5,7 +5,7 @@ import { ViewportController } from '@tweakcad/viewport/src/ViewportController.ts
 import { useDocumentState, useUndoRedo, useCommandBus } from '../hooks/useDocumentStore.ts';
 import { getAppState } from '../appInit.ts';
 import type { PartId, FeatureId, BodyId } from '@tweakcad/core/src/ids.ts';
-import type { ProfileRef, SketchFeatureInputs, SketchEntity, ExtrudeFeatureInputs, PlaneRef, ConstructionPlaneDisplay } from '@tweakcad/core/src/document/schema.ts';
+import type { ProfileRef, SketchFeatureInputs, SketchEntity, ExtrudeFeatureInputs, PlaneRef, ConstructionPlaneDisplay, PrimitiveFeatureInputs, PrimitiveKind } from '@tweakcad/core/src/document/schema.ts';
 import { regionToProfileRef } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import { sketchToDxf } from '@tweakcad/core/src/sketch/io/dxf.ts';
 import { dxfToEditorState } from '@tweakcad/core/src/sketch/io/dxfImport.ts';
@@ -63,6 +63,8 @@ import type {
   ConstructionPlanePickedPlane,
 } from '../components/ConstructionPlaneDialog.tsx';
 import { HoleDialog } from '../components/HoleDialog.tsx';
+import { PrimitiveDialog } from '../components/PrimitiveDialog.tsx';
+import type { PrimitiveDialogResult } from '../components/PrimitiveDialog.tsx';
 import { MirrorDialog } from '../components/MirrorDialog.tsx';
 import type {
   MirrorDialogPickedBody,
@@ -101,6 +103,7 @@ import { runAgentTurn } from '../ai/agentLoop.ts';
 import { setActiveViewport, getActiveViewport } from '../ai/viewportRegistry.ts';
 import { useImportedComponentEditor } from '../components/ImportedComponentDialog.tsx';
 import { registerThumbnailCapture } from '../storage/thumbnailCapture.ts';
+import { featureIconType } from '../icons/cadIcons.tsx';
 
 // Sketch ↔ document plumbing notes:
 //   - There is no composite `SketchRectangleEntity`/`SketchSlotEntity`;
@@ -425,6 +428,14 @@ export function Shell({
     pickedFace: HoleDialogPickedFace | null;
     initialValues?: Partial<HoleDialogResult>;
   }>({ visible: false, pickedFace: null });
+
+  // Primitive-dialog state. Nothing is picked in the viewport — a primitive
+  // is numbers only — so `kind` is the whole of it: which shape the clicked
+  // ribbon entry stands for, which the dialog opens on and can then change.
+  const [primitiveState, setPrimitiveState] = useState<{
+    visible: boolean;
+    kind: PrimitiveKind;
+  }>({ visible: false, kind: 'box' });
 
   // Mirror-dialog state. While `visible`, the Shell forces viewport pick
   // mode to 'body' so a click on a body's surface fills `pickedBody`
@@ -2769,6 +2780,52 @@ export function Shell({
     return () => { unsubscribe(); };
   }, [holeState.visible]);
 
+  const handleToolbarPrimitiveClick = useCallback((kind: PrimitiveKind) => {
+    // A primitive needs no sketch and no body, so unlike Hole there is
+    // nothing to check — just leave the sketch if one is open.
+    if (sketchActive) {
+      activeSketchIdRef.current = null;
+      sketchActions.exitSketch();
+      useSketchEditorStore.getState().clearAll();
+    }
+    setPrimitiveState({ visible: true, kind });
+  }, [sketchActive, sketchActions]);
+
+  const handlePrimitiveConfirm = useCallback((result: PrimitiveDialogResult) => {
+    const partsList = Object.values(project.parts);
+    if (partsList.length === 0) return;
+    const partId = partsList[0]!.id as PartId;
+
+    // The dialog edits numbers; the feature stores expressions, so that a
+    // primitive can later be driven by the parameter table.
+    const dims = Object.fromEntries(
+      Object.entries(result.dimensions).map(([key, value]) => [key, String(value)]),
+    );
+    const inputs: PrimitiveFeatureInputs = {
+      shape: { kind: result.kind, ...dims } as PrimitiveFeatureInputs['shape'],
+      transform: { position: result.position, rotation: [0, 0, 0, 1] },
+      operation: result.operation,
+      ...(result.targetBodyId
+        ? { targetBodies: [{ partId, bodyId: result.targetBodyId as BodyId }] }
+        : {}),
+    };
+
+    const r = commandBus.dispatch({ type: 'CreatePrimitive', partId, inputs });
+    if (r.ok) {
+      const dimDesc = Object.entries(result.dimensions)
+        .map(([key, value]) => `${key} ${value}`)
+        .join(', ');
+      consoleLog('success', `Created ${result.kind}: ${dimDesc}`, 'primitive');
+    } else {
+      consoleLog('error', `${result.kind} creation failed: ${r.error.message}`, 'primitive');
+    }
+    setPrimitiveState({ visible: false, kind: result.kind });
+  }, [project.parts, commandBus]);
+
+  const handlePrimitiveCancel = useCallback(() => {
+    setPrimitiveState(prev => ({ ...prev, visible: false }));
+  }, []);
+
   const handleHoleConfirm = useCallback((result: HoleDialogResult) => {
     const partsList = Object.values(project.parts);
     if (partsList.length === 0) return;
@@ -3335,6 +3392,9 @@ export function Shell({
         id: String(feature.id),
         name: feature.name,
         type: feature.type,
+        // Primitives share one feature type but five shapes; `featureIconType`
+        // resolves which glyph and colour the row should use.
+        iconKey: featureIconType(feature),
         enabled: feature.enabled,
         visible: feature.visible,
         status: feature.status,
@@ -3537,6 +3597,7 @@ export function Shell({
             onSweepClick={handleToolbarSweepClick}
             onLoftClick={handleToolbarLoftClick}
             onHoleClick={handleToolbarHoleClick}
+            onPrimitiveClick={handleToolbarPrimitiveClick}
             onOffsetPlaneClick={handleToolbarOffsetPlaneClick}
             onPlaneFromFaceClick={handleToolbarPlaneFromFaceClick}
             onSectionClick={handleToolbarSectionClick}
@@ -3850,6 +3911,32 @@ export function Shell({
               onCancel={handleHoleCancel}
             />
           )}
+
+          {/* Primitive: numbers only — no viewport picking, so the dialog
+              stands alone. The target-body picker is built the same way as
+              Extrude's. */}
+          {primitiveState.visible && (() => {
+            const partFor = Object.values(project.parts)[0];
+            const availableBodies = partFor
+              ? Object.entries(bodyToFeatureMap)
+                  .filter(([bid]) => partFor.timeline.some(f => f.id === bodyToFeatureMap[bid as never]))
+                  .map(([bid, featureId], i) => {
+                    const feature = partFor.timeline.find(f => f.id === featureId);
+                    return {
+                      id: String(bid),
+                      label: feature ? `Body ${i + 1} (${feature.name})` : `Body ${i + 1}`,
+                    };
+                  })
+              : [];
+            return (
+              <PrimitiveDialog
+                kind={primitiveState.kind}
+                availableBodies={availableBodies}
+                onConfirm={handlePrimitiveConfirm}
+                onCancel={handlePrimitiveCancel}
+              />
+            );
+          })()}
 
           {/* Mirror: pickMode='body' override above feeds the body-pick
               subscription. Plane choice + operation toggle live in the

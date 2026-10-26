@@ -445,6 +445,48 @@ const MirrorFeatureInputsSchema = z.object({
   targetBodies: z.array(z.object({ partId: z.string(), bodyId: z.string() })).optional(),
 });
 
+/**
+ * Primitive dimensions, discriminated on `shape.kind`. Positivity is not
+ * checked here — the fields are `Expression`s, so `"wallThickness * 2"` is a
+ * legal value and its sign is only known once parameters resolve. The builder
+ * rejects non-positive results, where the number actually exists.
+ */
+const PrimitiveShapeSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('box'),
+    width: ExpressionSchema,
+    height: ExpressionSchema,
+    depth: ExpressionSchema,
+  }),
+  z.object({
+    kind: z.literal('cylinder'),
+    radius: ExpressionSchema,
+    height: ExpressionSchema,
+  }),
+  z.object({
+    kind: z.literal('sphere'),
+    radius: ExpressionSchema,
+  }),
+  z.object({
+    kind: z.literal('cone'),
+    bottomRadius: ExpressionSchema,
+    topRadius: ExpressionSchema,
+    height: ExpressionSchema,
+  }),
+  z.object({
+    kind: z.literal('torus'),
+    majorRadius: ExpressionSchema,
+    minorRadius: ExpressionSchema,
+  }),
+]);
+
+const PrimitiveFeatureInputsSchema = z.object({
+  shape: PrimitiveShapeSchema,
+  transform: Transform3DSchema,
+  operation: BooleanOperationSchema,
+  targetBodies: z.array(BodyRefSchema).optional(),
+});
+
 const HoleFeatureInputsSchema = z.object({
   // The hole is anchored to a face, not a plane — the FaceRef's
   // stableTopology variant carries the bodyId so the builder knows what
@@ -542,6 +584,7 @@ const FeatureTypeSchema = z.union([
   z.literal('importedComponent'),
   z.literal('constructionPlane'),
   z.literal('importedGeometry'),
+  z.literal('primitive'),
 ]);
 
 /**
@@ -570,6 +613,7 @@ const FEATURE_INPUT_SCHEMAS: Record<FeatureTypeName, z.ZodTypeAny> = {
   importedComponent: ImportedComponentFeatureInputsSchema,
   constructionPlane: ConstructionPlaneFeatureInputsSchema,
   importedGeometry: ImportedGeometryFeatureInputsSchema,
+  primitive: PrimitiveFeatureInputsSchema,
 };
 
 /** The envelope every feature shares, regardless of type. */

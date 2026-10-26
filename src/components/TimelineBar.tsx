@@ -32,6 +32,12 @@ interface TimelineFeature {
   id: string;
   name: string;
   type: string;
+  /**
+   * Which glyph and colour the chip uses. Usually the type; for a
+   * `primitive` it is the shape, so a box and a torus don't look alike.
+   * Falls back to `type` when absent.
+   */
+  iconKey?: string;
   enabled: boolean;
   /**
    * Per-feature build status from the rebuild artifact. Drives the
@@ -159,7 +165,8 @@ export function TimelineBar({
         {features.map((feature, index) => {
           const isSelected = feature.id === selectedFeatureId;
           const isPastRollback = index >= currentIndex;
-          const typeColor = featureTypeColors[feature.type] ?? '#888';
+          const iconKey = feature.iconKey ?? feature.type;
+          const typeColor = featureTypeColors[iconKey] ?? '#888';
           const status = feature.status ?? 'success';
 
           // Status-driven border + corner dot. failed / blocked override
@@ -230,7 +237,7 @@ export function TimelineBar({
                   }}
                 >
                   <span style={{ color: isSelected ? '#1a6fd1' : typeColor }}>
-                    {getFeatureIcon(feature.type, 14)}
+                    {getFeatureIcon(iconKey, 14)}
                   </span>
                 </button>
                 {statusBorderColor !== null && (

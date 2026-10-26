@@ -68,6 +68,12 @@ interface TreeFeature {
   id: string;
   name: string;
   type: string;
+  /**
+   * Which glyph and colour the row uses. Usually the type; for a
+   * `primitive` it is the shape, so a box and a torus don't look alike.
+   * Falls back to `type` when absent.
+   */
+  iconKey?: string;
   enabled: boolean;
   visible: boolean;
   /** Build status from the last rebuild. */
@@ -634,7 +640,8 @@ interface FeatureRowProps {
 }
 
 function FeatureRow({ feature, isSelected, onClick, onContextMenu, onVisibilityToggle, depth }: FeatureRowProps) {
-  const typeColor = featureTypeColors[feature.type] ?? '#888';
+  const iconKey = feature.iconKey ?? feature.type;
+  const typeColor = featureTypeColors[iconKey] ?? '#888';
   const paddingLeft = 8 + depth * 14;
 
   // Compute build-status visuals. `failed` paints a red left border + red
@@ -683,7 +690,7 @@ function FeatureRow({ feature, isSelected, onClick, onContextMenu, onVisibilityT
           color: typeColor,
         }}
       >
-        {getFeatureIcon(feature.type, 12)}
+        {getFeatureIcon(iconKey, 12)}
       </span>
       <span style={{
         ...styles.featureName,

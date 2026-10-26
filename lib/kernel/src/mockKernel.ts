@@ -21,6 +21,8 @@ import type {
   CylinderSpec,
   ConeSpec,
   BoxSpec,
+  SphereSpec,
+  TorusSpec,
   TessellationOptions,
   StlExportOptions,
   KernelError,
@@ -127,6 +129,14 @@ export class MockKernel implements CadKernel {
   }
 
   async makeBox(_spec: BoxSpec, _origin?: string): Promise<Result<KernelBody, KernelError>> {
+    return ok({ handle: this.nextHandle(), source: 'mock' });
+  }
+
+  async makeSphere(_spec: SphereSpec, _origin?: string): Promise<Result<KernelBody, KernelError>> {
+    return ok({ handle: this.nextHandle(), source: 'mock' });
+  }
+
+  async makeTorus(_spec: TorusSpec, _origin?: string): Promise<Result<KernelBody, KernelError>> {
     return ok({ handle: this.nextHandle(), source: 'mock' });
   }
 

@@ -742,6 +742,57 @@ export const createHoleHandler: CommandHandler = {
   },
 };
 
+/**
+ * Primitives are named for their shape ("Box 1", "Cylinder 2") rather than
+ * the feature type, counted per shape. "Primitive 4" in the tree would say
+ * nothing about which of the five it is.
+ */
+export const createPrimitiveHandler: CommandHandler = {
+  validate(command: CadCommand, state: Readonly<CadProject>): Result<void, ValidationError> {
+    if (command.type !== 'CreatePrimitive') {
+      return err({ code: 'WRONG_TYPE', message: 'Expected CreatePrimitive command' });
+    }
+    if (!command.inputs.shape?.kind) {
+      return err({ code: 'INVALID_INPUT', message: 'Primitive requires a shape' });
+    }
+    if (!command.inputs.transform) {
+      return err({ code: 'INVALID_INPUT', message: 'Primitive requires a transform' });
+    }
+    return findPart(state, command.partId);
+  },
+
+  execute(draft: CadProject, command: CadCommand): void {
+    if (command.type !== 'CreatePrimitive') return;
+    const part = draft.parts[command.partId];
+    if (!part) return;
+
+    const kind = command.inputs.shape.kind;
+    const id = featureId(generateId(kind));
+    const now = new Date().toISOString();
+
+    const sameKind = part.timeline.filter(
+      f => f.type === 'primitive'
+        && (f.inputs as { shape?: { kind?: string } }).shape?.kind === kind,
+    ).length;
+
+    const feature: FeatureNode = {
+      id,
+      type: 'primitive',
+      name: `${kind.charAt(0).toUpperCase()}${kind.slice(1)} ${sameKind + 1}`,
+      version: 1,
+      enabled: true,
+      visible: true,
+      inputs: command.inputs as unknown as Record<string, unknown>,
+      dependsOn: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    part.timeline.push(feature);
+    draft.metadata.updatedAt = now;
+  },
+};
+
 export const createMirrorHandler: CommandHandler = {
   validate(command: CadCommand, state: Readonly<CadProject>): Result<void, ValidationError> {
     if (command.type !== 'CreateMirror') {

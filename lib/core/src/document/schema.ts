@@ -120,7 +120,8 @@ export type FeatureType =
   | 'componentInstance'
   | 'importedComponent'
   | 'constructionPlane'
-  | 'importedGeometry';
+  | 'importedGeometry'
+  | 'primitive';
 
 // --- Feature Status (in build artifacts, not in document) ---
 
@@ -827,6 +828,78 @@ export type HoleFeatureInputs = {
   countersinkAngle?: Expression;
   targetBodies?: BodyRef[];
 };
+
+// --- Primitive ---
+
+/**
+ * A solid created from numbers alone — no sketch, no profile, no face pick.
+ *
+ * Every other solid-producing feature starts from a sketch, which makes the
+ * cheapest possible body (a 10 mm cube to test a boolean, a cylinder to cut a
+ * shaft clearance) cost a plane choice, a rectangle and an extrude. The kernel
+ * has had `makeBox`/`makeCylinder`/`makeCone` all along; `makeSphere` and
+ * `makeTorus` were added alongside this feature so all five are reachable.
+ *
+ * **Placement is one `Transform3D`, not a per-shape axis field.** Each shape
+ * is built in its own canonical local frame — centred on the local origin,
+ * axis of revolution along +Y to match the app's Y-up convention and the
+ * default XZ sketch plane — and the transform places it. So orientation works
+ * the same way for all five, a box can be rotated off-axis (an `axis` field
+ * could not express that), and the UI can grow a full placement gizmo without
+ * a schema change. `transform` matches `ImportedComponentFeatureInputs`, which
+ * already places geometry this way.
+ *
+ * Centred rather than corner- or base-anchored, uniformly: one rule instead of
+ * five, a primitive dropped at the origin is symmetric about it (so mirrors and
+ * symmetric cuts line up), and it matches how `symmetric` extrude straddles its
+ * sketch plane.
+ */
+export type PrimitiveFeatureInputs = {
+  shape: PrimitiveShape;
+  /**
+   * Placement in part space. The primitive is built centred on its local
+   * origin, so `position` is where its centre lands and `rotation` orients
+   * its local +Y (the axis of revolution, for the shapes that have one).
+   */
+  transform: Transform3D;
+  operation: 'newBody' | 'join' | 'cut';
+  /**
+   * Bodies `join`/`cut` act against. Empty/absent means every body in the
+   * part, matching Extrude.
+   */
+  targetBodies?: BodyRef[];
+};
+
+/**
+ * Dimensions, discriminated by shape. A union rather than Hole's flat
+ * top-level fields: switching Hole kind keeps most values meaningful
+ * (diameter, depth, position), switching primitive shape shares nothing but
+ * the placement, so there is nothing for a flat shape to preserve.
+ *
+ * Box dimensions are named for the axes they span in the primitive's local
+ * frame (`width` = X, `height` = Y, `depth` = Z), matching `BoxSpec`.
+ */
+export type PrimitiveShape =
+  | { kind: 'box'; width: Expression; height: Expression; depth: Expression }
+  | { kind: 'cylinder'; radius: Expression; height: Expression }
+  | { kind: 'sphere'; radius: Expression }
+  /**
+   * Truncated cone. `topRadius: 0` is a pointed cone; `topRadius` equal to
+   * `bottomRadius` is a cylinder (allowed — the kernel copes, and rejecting
+   * it would fight a user dragging a slider).
+   */
+  | { kind: 'cone'; bottomRadius: Expression; topRadius: Expression; height: Expression }
+  /**
+   * `majorRadius` is centre-to-tube-centre, `minorRadius` the tube itself.
+   * The builder rejects `minorRadius >= majorRadius`, which would be a
+   * self-intersecting solid that only fails later inside a boolean.
+   */
+  | { kind: 'torus'; majorRadius: Expression; minorRadius: Expression };
+
+/** Every shape a `primitive` feature can take. */
+export const PRIMITIVE_KINDS = ['box', 'cylinder', 'sphere', 'cone', 'torus'] as const;
+
+export type PrimitiveKind = typeof PRIMITIVE_KINDS[number];
 
 // --- Pattern ---
 

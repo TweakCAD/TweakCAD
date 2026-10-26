@@ -19,6 +19,7 @@ import type {
   FilletFeatureInputs,
   ChamferFeatureInputs,
   HoleFeatureInputs,
+  PrimitiveFeatureInputs,
   MirrorFeatureInputs,
   PatternFeatureInputs,
   ShellFeatureInputs,
@@ -74,6 +75,7 @@ export type CadCommand =
   | CreateFilletCommand
   | CreateChamferCommand
   | CreateHoleCommand
+  | CreatePrimitiveCommand
   | CreateMirrorCommand
   | CreateShellCommand
   | CreateSweepCommand
@@ -590,6 +592,12 @@ export type CreateHoleCommand = {
   inputs: HoleFeatureInputs;
 };
 
+export type CreatePrimitiveCommand = {
+  type: 'CreatePrimitive';
+  partId: PartId;
+  inputs: PrimitiveFeatureInputs;
+};
+
 export type CreatePatternCommand = {
   type: 'CreatePattern';
   partId: PartId;
@@ -823,6 +831,8 @@ export function commandLabel(command: CadCommand): string {
       return `Create Chamfer (${command.inputs.edges.length} edges, d=${command.inputs.distance})`;
     case 'CreateHole':
       return `Create Hole (${command.inputs.kind})`;
+    case 'CreatePrimitive':
+      return `Create ${command.inputs.shape.kind} (${command.inputs.operation})`;
     case 'CreatePattern':
       return 'Create Pattern';
     case 'CreateMirror':

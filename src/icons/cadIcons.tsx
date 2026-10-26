@@ -647,7 +647,73 @@ export function RollbackIcon({ size = defaults.size, color = defaults.color, str
   );
 }
 
+// ---- Primitives ----
+// One glyph per solid, all drawn in the same isometric view so the five read
+// as a set in the CREATE dropdown.
+
+/** Isometric cube */
+export function BoxIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+      <path d="M8 1.5L14 5V11L8 14.5L2 11V5Z" stroke={color} strokeWidth={strokeWidth} strokeLinejoin="round" />
+      <path d="M2 5L8 8.5L14 5M8 8.5V14.5" stroke={color} strokeWidth={strokeWidth} strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** Upright cylinder — ellipse cap over two sides */
+export function CylinderIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+      <ellipse cx="8" cy="4" rx="5" ry="2.2" stroke={color} strokeWidth={strokeWidth} />
+      <path d="M3 4V12M13 4V12" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      <path d="M3 12A5 2.2 0 0 0 13 12" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** Sphere — outline with an equator ellipse for volume */
+export function SphereIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+      <circle cx="8" cy="8" r="6" stroke={color} strokeWidth={strokeWidth} />
+      <ellipse cx="8" cy="8" rx="6" ry="2.4" stroke={color} strokeWidth={strokeWidth} />
+    </svg>
+  );
+}
+
+/** Pointed cone on an elliptical base */
+export function ConeIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+      <path d="M8 2L13 12M8 2L3 12" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+      <ellipse cx="8" cy="12" rx="5" ry="2.2" stroke={color} strokeWidth={strokeWidth} />
+    </svg>
+  );
+}
+
+/** Torus — outer ring with the inner hole */
+export function TorusIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+      <ellipse cx="8" cy="8" rx="6.2" ry="4" stroke={color} strokeWidth={strokeWidth} />
+      <ellipse cx="8" cy="8" rx="2.4" ry="1.3" stroke={color} strokeWidth={strokeWidth} />
+    </svg>
+  );
+}
+
 // ---- Feature Type to Icon Mapping ----
+
+/**
+ * Icon/colour key for a feature. Every type keys on itself except
+ * `primitive`, which keys on its shape — five different solids under one
+ * feature type would otherwise all show the same glyph in the tree and
+ * timeline, which is the one place you look to tell them apart.
+ */
+export function featureIconType(feature: { type: string; inputs: Record<string, unknown> }): string {
+  if (feature.type !== 'primitive') return feature.type;
+  return (feature.inputs as { shape?: { kind?: string } }).shape?.kind ?? 'primitive';
+}
 
 /** Returns the appropriate icon component for a given feature type */
 export function getFeatureIcon(featureType: string, size = 14): ReactElement {
@@ -678,6 +744,17 @@ export function getFeatureIcon(featureType: string, size = 14): ReactElement {
       return <RevolveIcon size={size} />;
     case 'constructionPlane':
       return <PlaneIcon size={size} />;
+    case 'box':
+    case 'primitive':
+      return <BoxIcon size={size} />;
+    case 'cylinder':
+      return <CylinderIcon size={size} />;
+    case 'sphere':
+      return <SphereIcon size={size} />;
+    case 'cone':
+      return <ConeIcon size={size} />;
+    case 'torus':
+      return <TorusIcon size={size} />;
     case 'importedGeometry':
       return <ExtrudeIcon size={size} />;
     case 'componentInstance':
@@ -709,4 +786,12 @@ export const featureTypeColors: Record<string, string> = {
   componentInstance: '#6366f1',  // indigo
   importedComponent: '#6366f1',  // indigo — same family as componentInstance
   importedGeometry: '#64748b',   // slate
+  // Primitives key on their shape (see `featureIconType`) and share one
+  // teal, because they are one feature type doing one job.
+  primitive: '#14b8a6',
+  box: '#14b8a6',
+  cylinder: '#14b8a6',
+  sphere: '#14b8a6',
+  cone: '#14b8a6',
+  torus: '#14b8a6',
 };

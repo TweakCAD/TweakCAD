@@ -145,12 +145,46 @@ export type ConeSpec = {
   height: number;
 };
 
-/** Box specification for kernel */
+/**
+ * Box. `origin` is the minimum corner, not the centre — the box grows in
+ * +X/+Y/+Z from there. `width` is the X extent, `height` the Y extent and
+ * `depth` the Z extent (pinned by a test in `primitives.test.ts`; every
+ * other box in the suite is a cube, so a transposed mapping would not have
+ * shown up until someone typed three different numbers).
+ */
 export type BoxSpec = {
   origin: Vec3;
   width: number;
   height: number;
   depth: number;
+};
+
+/**
+ * Sphere. `center` is its centre, not a corner — unlike `BoxSpec.origin`,
+ * because that is how a user thinks about a sphere and how OCCT's
+ * `BRepPrimAPI_MakeSphere` is positioned.
+ */
+export type SphereSpec = {
+  center: Vec3;
+  radius: number;
+};
+
+/**
+ * Torus. `majorRadius` is centre-to-tube-centre, `minorRadius` is the tube
+ * itself, matching OCCT and every CAD convention.
+ *
+ * `axis` is the revolution axis — the normal of the ring's plane. A torus
+ * with no axis would always lie flat in XY, which is rarely what you want.
+ *
+ * `minorRadius >= majorRadius` produces a self-intersecting solid that OCCT
+ * will happily build and later booleans will choke on, so the builder rejects
+ * it rather than letting it reach the kernel.
+ */
+export type TorusSpec = {
+  center: Vec3;
+  axis: Vec3;
+  majorRadius: number;
+  minorRadius: number;
 };
 
 /** Tessellation quality options */
