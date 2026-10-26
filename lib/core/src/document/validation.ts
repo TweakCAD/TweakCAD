@@ -358,12 +358,12 @@ const ImportedGeometryFeatureInputsSchema = z.object({
 });
 
 /**
- * ImportedComponent feature inputs schema. `componentRef` is the
+ * Component feature inputs schema. `componentRef` is the
  * hash key into `project.embeddedComponents`; the builder fails the
  * feature if that key is missing at rebuild time (no schema-level
  * cross-validation since Zod can't see the project root from here).
  */
-const ImportedComponentFeatureInputsSchema = z.object({
+const ComponentFeatureInputsSchema = z.object({
   componentRef: z.string().min(1),
   transform: Transform3DSchema,
   parameterOverrides: z.record(z.string(), ExpressionSchema),
@@ -545,26 +545,6 @@ const LoftFeatureInputsSchema = z.object({
   targetBodies: z.array(BodyRefSchema).optional(),
 });
 
-/**
- * A component linked from the SaaS catalog, as opposed to `importedComponent`
- * which embeds its source. `parameters` stays `unknown` per value: the
- * component's own manifest defines them, and this document cannot see it.
- */
-const ComponentInstanceFeatureInputsSchema = z.object({
-  componentProjectId: z.string().min(1),
-  componentSlug: z.string().min(1),
-  componentName: z.string(),
-  manifestVersion: z.number(),
-  parameters: z.record(z.string(), z.unknown()),
-  boolean: BooleanOperationSchema.optional(),
-  placement: z
-    .object({
-      plane: PlaneRefSchema.optional(),
-      offset: Vec3Schema.optional(),
-    })
-    .optional(),
-});
-
 // --- Feature Node ---
 
 const FeatureTypeSchema = z.union([
@@ -580,8 +560,7 @@ const FeatureTypeSchema = z.union([
   z.literal('fillet'),
   z.literal('chamfer'),
   z.literal('mirror'),
-  z.literal('componentInstance'),
-  z.literal('importedComponent'),
+  z.literal('component'),
   z.literal('constructionPlane'),
   z.literal('importedGeometry'),
   z.literal('primitive'),
@@ -609,8 +588,7 @@ const FEATURE_INPUT_SCHEMAS: Record<FeatureTypeName, z.ZodTypeAny> = {
   fillet: FilletFeatureInputsSchema,
   chamfer: ChamferFeatureInputsSchema,
   mirror: MirrorFeatureInputsSchema,
-  componentInstance: ComponentInstanceFeatureInputsSchema,
-  importedComponent: ImportedComponentFeatureInputsSchema,
+  component: ComponentFeatureInputsSchema,
   constructionPlane: ConstructionPlaneFeatureInputsSchema,
   importedGeometry: ImportedGeometryFeatureInputsSchema,
   primitive: PrimitiveFeatureInputsSchema,
@@ -789,7 +767,7 @@ export {
   ShellFeatureInputsSchema,
   SweepFeatureInputsSchema,
   ImportedGeometryFeatureInputsSchema,
-  ImportedComponentFeatureInputsSchema,
+  ComponentFeatureInputsSchema,
   PatternFeatureInputsSchema,
   LinearPatternInputsSchema,
   CircularPatternInputsSchema,

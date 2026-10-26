@@ -31,8 +31,7 @@ import {
   createSweepHandler,
   createImportedGeometryHandler,
   createPatternHandler,
-  createComponentInstanceHandler,
-  createImportedComponentHandler,
+  createComponentHandler,
   createConstructionPlaneHandler,
   suppressFeatureHandler,
   setFeatureVisibilityHandler,
@@ -150,8 +149,7 @@ export function initializeApp(): AppState {
   commandBus.register('CreateSweep', createSweepHandler);
   commandBus.register('CreateImportedGeometry', createImportedGeometryHandler);
   commandBus.register('CreatePattern', createPatternHandler);
-  commandBus.register('CreateComponentInstance', createComponentInstanceHandler);
-  commandBus.register('CreateImportedComponent', createImportedComponentHandler);
+  commandBus.register('CreateComponent', createComponentHandler);
   commandBus.register('CreateConstructionPlane', createConstructionPlaneHandler);
   commandBus.register('SuppressFeature', suppressFeatureHandler);
   commandBus.register('SetFeatureVisibility', setFeatureVisibilityHandler);

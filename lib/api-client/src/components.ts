@@ -7,6 +7,7 @@
  * rest of the client.
  */
 
+import { z } from 'zod';
 import {
   ComponentDetail,
   ListComponentsResponse,
@@ -51,5 +52,24 @@ export function getComponentBySlug(
     'GET',
     `/api/v1/components/${encodeURIComponent(slug)}`,
     ComponentDetail,
+  );
+}
+
+/**
+ * Fetch a published component's `.cadcomponent` document.
+ *
+ * Returned as `unknown` on purpose. The real validator is `loadCadDocument`
+ * in core, which knows every feature type and can degrade a single bad
+ * feature instead of rejecting the file — a Zod schema here would be a
+ * second, weaker definition of the same thing, and the two would drift.
+ */
+export function getComponentDocument(
+  client: ApiClient,
+  slug: string,
+): Promise<ApiResult<unknown>> {
+  return client.request(
+    'GET',
+    `/api/v1/components/${encodeURIComponent(slug)}/document`,
+    z.unknown(),
   );
 }

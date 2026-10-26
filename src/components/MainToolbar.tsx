@@ -155,7 +155,7 @@ interface AppBarProps {
   onImportFcstd?: (() => void) | undefined;
   /**
    * Import a parametric component (.cadcomponent / .cadjson) and embed
-   * it as an `importedComponent` feature.
+   * it as an `component` feature.
    */
   onImportComponent?: (() => void) | undefined;
   /** Import a DXF drawing as a new 2D sketch on a chosen plane. */

@@ -149,10 +149,8 @@ const SKETCH_TYPES = new Set(['sketch']);
 const CONSTRUCTION_TYPES = new Set(['constructionPlane']);
 // Component-flavored timeline entries — surfaced in their own "Components"
 // subsection so the user can find them and right-click → Edit Component…
-// without scanning the timeline. `componentInstance` is the legacy
-// in-worker catalog instance; `importedComponent` is the
-// embedded-source variant.
-const COMPONENT_TYPES = new Set(['importedComponent', 'componentInstance']);
+// without scanning the timeline.
+const COMPONENT_TYPES = new Set(['component']);
 const BODY_TYPES = new Set([
   'extrude', 'hole', 'linearPattern', 'circularPattern',
   'fillet', 'chamfer', 'mirror',
@@ -838,9 +836,9 @@ interface ContextMenuProps {
 const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
   function ContextMenu({ x, y, featureType, featureEnabled, target, onAction }, ref) {
     const isSketch = featureType === 'sketch';
-    const isImportedComponent = featureType === 'importedComponent';
+    const isComponent = featureType === 'component';
     const isImportedGeometry = featureType === 'importedGeometry';
-    const isBody = !isSketch && !isImportedComponent; // extrude, hole, etc.
+    const isBody = !isSketch && !isComponent; // extrude, hole, etc.
 
     const items: Array<{
       action: ContextMenuAction;
@@ -878,7 +876,7 @@ const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
       });
     }
 
-    if (isImportedComponent) {
+    if (isComponent) {
       // Imported component: open the per-instance properties editor
       // (overrides + active config + boolean mode).
       items.push({
@@ -941,7 +939,7 @@ const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
         action: featureEnabled ? 'suppress' : 'enable',
         label: featureEnabled ? 'Suppress' : 'Enable',
         icon: featureEnabled ? <EyeOff size={14} /> : <Eye size={14} />,
-        dividerBefore: isSketch || isBody || isImportedComponent,
+        dividerBefore: isSketch || isBody || isComponent,
       });
     }
 

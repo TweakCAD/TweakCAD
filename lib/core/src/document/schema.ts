@@ -117,8 +117,7 @@ export type FeatureType =
   | 'fillet'
   | 'chamfer'
   | 'mirror'
-  | 'componentInstance'
-  | 'importedComponent'
+  | 'component'
   | 'constructionPlane'
   | 'importedGeometry'
   | 'primitive';
@@ -846,7 +845,7 @@ export type HoleFeatureInputs = {
  * default XZ sketch plane — and the transform places it. So orientation works
  * the same way for all five, a box can be rotated off-axis (an `axis` field
  * could not express that), and the UI can grow a full placement gizmo without
- * a schema change. `transform` matches `ImportedComponentFeatureInputs`, which
+ * a schema change. `transform` matches `ComponentFeatureInputs`, which
  * already places geometry this way.
  *
  * Centred rather than corner- or base-anchored, uniformly: one rule instead of
@@ -969,7 +968,7 @@ export type CircularPatternInputs = {
 // --- Imported Component (parametric components) ---
 
 /**
- * Inputs for the `importedComponent` feature type — a single instance of
+ * Inputs for the `component` feature type — a single instance of
  * an embedded parametric component placed into the host part's timeline.
  *
  * v1 = feature-mode: the component's sub-timeline is
@@ -990,7 +989,7 @@ export type CircularPatternInputs = {
  *    fuses a mounting boss into a chassis, `newBody` keeps them
  *    separate (most common; default).
  */
-export type ImportedComponentFeatureInputs = {
+export type ComponentFeatureInputs = {
   /** Lookup key into `CadProject.embeddedComponents`. The component's content hash. */
   componentRef: string;
   /**
@@ -1023,45 +1022,6 @@ export type ImportedComponentFeatureInputs = {
    * Mirrors `ExtrudeFeatureInputs.operation`.
    */
   boolean: 'newBody' | 'cut' | 'join';
-};
-
-// --- Component Instance ---
-
-/**
- * A reference to a published parametric component from the SaaS catalog,
- * placed into the host part with concrete parameter values.
- *
- * Geometry is produced by the in-worker component library
- * (`packages/worker/src/componentLibrary/`) — each known slug maps to a
- * TypeScript build script that calls `CadKernel` primitives. Unknown
- * slugs fall back to a placeholder cylinder so the timeline still has a
- * visible node while a new standard is being implemented.
- */
-export type ComponentInstanceFeatureInputs = {
-  /** Project ID of the source component in the SaaS catalog. */
-  componentProjectId: string;
-  /** Stable slug of the source component (used for re-fetching the manifest). */
-  componentSlug: string;
-  /** Human-readable name pulled from the catalog at insert time. */
-  componentName: string;
-  /** ComponentManifest.schemaVersion captured at insert time. */
-  manifestVersion: number;
-  /** Concrete values keyed by ComponentParameter.name. */
-  parameters: Record<string, unknown>;
-  /**
-   * Boolean mode against existing bodies in the host part.
-   *   - `newBody` (default): keep the component as a separate body.
-   *   - `cut`:    subtract the component geometry from the host bodies
-   *               (lets a screw / dowel-pin component punch its own hole).
-   *   - `join`:   fuse with the host bodies.
-   * Mirrors the `operation` field used by `ExtrudeFeatureInputs`.
-   */
-  boolean?: 'newBody' | 'cut' | 'join';
-  /** Optional placement. v1 inserts at origin so this stays undefined. */
-  placement?: {
-    plane?: PlaneRef;
-    offset?: Vec3;
-  };
 };
 
 // --- References ---
@@ -1313,7 +1273,7 @@ export type AssemblyInstance = {
  * sub-document `source` is embedded so .cadjson is self-contained
  * (ship one file → consumer can open it offline, no broken links).
  *
- * Multiple `importedComponent` features that reference the same hash
+ * Multiple `component` features that reference the same hash
  * share this one entry — 20 screws of the same size cost one copy of
  * the source, not 20.
  */

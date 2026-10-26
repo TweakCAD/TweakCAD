@@ -1,12 +1,12 @@
 /**
- * Tests for createImportedComponentHandler.
+ * Tests for createComponentHandler.
  *
  * Covers:
  *   - happy path embeds + appends feature with derived componentRef
  *   - idempotent upsert on hash (re-importing same content reuses entry)
  *   - validation rejects empty hash / name / source / sourceless project
  *   - validation rejects invalid boolean mode
- *   - dispatch creates a stable importedComponent FeatureNode
+ *   - dispatch creates a stable component FeatureNode
  *   - undo rolls back BOTH the embed and the feature append
  */
 import { describe, expect, it } from 'vitest';
@@ -17,7 +17,7 @@ import type { PartId } from '../../ids.ts';
 import { partId } from '../../ids.ts';
 import { DocumentStore } from '../../store/documentStore.ts';
 import { CommandBus } from '../bus.ts';
-import { createImportedComponentHandler } from './featureCommands.ts';
+import { createComponentHandler } from './featureCommands.ts';
 
 function firstPartId(project: CadProject): PartId {
   const ids = Object.keys(project.parts);
@@ -50,12 +50,12 @@ function makeComponentDef(hash: string, name: string): ComponentDefinition {
   };
 }
 
-describe('createImportedComponentHandler.validate', () => {
+describe('createComponentHandler.validate', () => {
   it('accepts a well-formed command', () => {
     const p = newProjectWithPart('Host');
-    const r = createImportedComponentHandler.validate(
+    const r = createComponentHandler.validate(
       {
-        type: 'CreateImportedComponent',
+        type: 'CreateComponent',
         partId: firstPartId(p),
         component: makeComponentDef('abc123', 'Dowel Pin'),
         inputs: {
@@ -71,9 +71,9 @@ describe('createImportedComponentHandler.validate', () => {
 
   it('rejects empty hash', () => {
     const p = newProjectWithPart('Host');
-    const r = createImportedComponentHandler.validate(
+    const r = createComponentHandler.validate(
       {
-        type: 'CreateImportedComponent',
+        type: 'CreateComponent',
         partId: firstPartId(p),
         component: { ...makeComponentDef('abc', 'X'), hash: '' },
         inputs: { transform: identityTransform(), parameterOverrides: {}, boolean: 'newBody' },
@@ -86,9 +86,9 @@ describe('createImportedComponentHandler.validate', () => {
 
   it('rejects empty name', () => {
     const p = newProjectWithPart('Host');
-    const r = createImportedComponentHandler.validate(
+    const r = createComponentHandler.validate(
       {
-        type: 'CreateImportedComponent',
+        type: 'CreateComponent',
         partId: firstPartId(p),
         component: { ...makeComponentDef('abc', 'X'), name: '' },
         inputs: { transform: identityTransform(), parameterOverrides: {}, boolean: 'newBody' },
@@ -102,9 +102,9 @@ describe('createImportedComponentHandler.validate', () => {
     const p = newProjectWithPart('Host');
     const def = makeComponentDef('abc', 'X');
     def.source.parts = {};
-    const r = createImportedComponentHandler.validate(
+    const r = createComponentHandler.validate(
       {
-        type: 'CreateImportedComponent',
+        type: 'CreateComponent',
         partId: firstPartId(p),
         component: def,
         inputs: { transform: identityTransform(), parameterOverrides: {}, boolean: 'newBody' },
@@ -117,9 +117,9 @@ describe('createImportedComponentHandler.validate', () => {
 
   it('rejects invalid boolean mode', () => {
     const p = newProjectWithPart('Host');
-    const r = createImportedComponentHandler.validate(
+    const r = createComponentHandler.validate(
       {
-        type: 'CreateImportedComponent',
+        type: 'CreateComponent',
         partId: firstPartId(p),
         component: makeComponentDef('abc', 'X'),
         inputs: {
@@ -135,9 +135,9 @@ describe('createImportedComponentHandler.validate', () => {
 
   it('rejects unknown part', () => {
     const p = newProjectWithPart('Host');
-    const r = createImportedComponentHandler.validate(
+    const r = createComponentHandler.validate(
       {
-        type: 'CreateImportedComponent',
+        type: 'CreateComponent',
         partId: partId('missing'),
         component: makeComponentDef('abc', 'X'),
         inputs: { transform: identityTransform(), parameterOverrides: {}, boolean: 'newBody' },
@@ -149,11 +149,11 @@ describe('createImportedComponentHandler.validate', () => {
   });
 });
 
-describe('createImportedComponentHandler.execute', () => {
+describe('createComponentHandler.execute', () => {
   function makeBus(p: CadProject) {
     const store = new DocumentStore(p);
     const bus = new CommandBus(store);
-    bus.register('CreateImportedComponent', createImportedComponentHandler);
+    bus.register('CreateComponent', createComponentHandler);
     return { store, bus };
   }
 
@@ -165,7 +165,7 @@ describe('createImportedComponentHandler.execute', () => {
     expect(before.parts[firstPartId(before)]!.timeline.length).toBe(0);
 
     const r = bus.dispatch({
-      type: 'CreateImportedComponent',
+      type: 'CreateComponent',
       partId: firstPartId(p),
       component: makeComponentDef('hash-xyz', 'Dowel Pin'),
       inputs: { transform: identityTransform(), parameterOverrides: {}, boolean: 'newBody' },
@@ -179,7 +179,7 @@ describe('createImportedComponentHandler.execute', () => {
     const timeline = after.parts[firstPartId(after)]!.timeline;
     expect(timeline.length).toBe(1);
     const feat = timeline[0]!;
-    expect(feat.type).toBe('importedComponent');
+    expect(feat.type).toBe('component');
     expect(feat.name).toBe('Dowel Pin');
     const inputs = feat.inputs as { componentRef: string; boolean: string };
     expect(inputs.componentRef).toBe('hash-xyz');
@@ -192,7 +192,7 @@ describe('createImportedComponentHandler.execute', () => {
     const def = makeComponentDef('h1', 'Bolt');
     for (let i = 0; i < 3; i++) {
       bus.dispatch({
-        type: 'CreateImportedComponent',
+        type: 'CreateComponent',
         partId: firstPartId(p),
         component: def,
         inputs: { transform: identityTransform(), parameterOverrides: {}, boolean: 'newBody' },
@@ -206,13 +206,13 @@ describe('createImportedComponentHandler.execute', () => {
     const p = newProjectWithPart('Host');
     const { store, bus } = makeBus(p);
     bus.dispatch({
-      type: 'CreateImportedComponent',
+      type: 'CreateComponent',
       partId: firstPartId(p),
       component: makeComponentDef('shared', 'A'),
       inputs: { transform: identityTransform(), parameterOverrides: {}, boolean: 'newBody' },
     });
     bus.dispatch({
-      type: 'CreateImportedComponent',
+      type: 'CreateComponent',
       partId: firstPartId(p),
       component: makeComponentDef('shared', 'A'),
       inputs: { transform: identityTransform(), parameterOverrides: {}, boolean: 'cut' },
@@ -226,7 +226,7 @@ describe('createImportedComponentHandler.execute', () => {
     const p = newProjectWithPart('Host');
     const { store, bus } = makeBus(p);
     bus.dispatch({
-      type: 'CreateImportedComponent',
+      type: 'CreateComponent',
       partId: firstPartId(p),
       component: makeComponentDef('h1', 'Bolt'),
       inputs: { transform: identityTransform(), parameterOverrides: {}, boolean: 'newBody' },

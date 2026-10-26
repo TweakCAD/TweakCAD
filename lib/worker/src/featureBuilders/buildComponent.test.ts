@@ -1,5 +1,5 @@
 /**
- * buildImportedComponent tests — unit-level, MockKernel-backed.
+ * buildComponent tests — unit-level, MockKernel-backed.
  *
  * Three properties pinned down here:
  *   1. Happy path — a tiny embedded component with one sketch + one
@@ -10,13 +10,13 @@
  *   3. Cycle defense — when the visited set already contains the ref,
  *      throw COMPONENT_CYCLE without recursing.
  *
- * Per-instance parameter overrides and configurationId merge logic are
- * covered indirectly by these tests + the handler-level tests; full
- * end-to-end is verified separately in the browser.
+ * Per-instance parameter overrides and configuration selection are covered
+ * directly below, against the dimensions that actually reach the kernel —
+ * "covered indirectly" is what let a dropped configurationId ship.
  */
 import { attachTestSolver } from '@tweakcad/testing/src/solver.ts';
-import { beforeAll, describe, expect, it } from 'vitest';
-import { buildImportedComponent } from './buildImportedComponent.ts';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { buildComponent } from './buildComponent.ts';
 import { MockKernel } from '@tweakcad/kernel/src/mockKernel.ts';
 import { emptyBuildContext } from '@tweakcad/core/src/features/contracts.ts';
 import { emptyProject, createPart } from '@tweakcad/core/src/document/factory.ts';
@@ -25,7 +25,7 @@ import type {
   CadPart,
   ComponentDefinition,
   FeatureNode,
-  ImportedComponentFeatureInputs,
+  ComponentFeatureInputs,
 } from '@tweakcad/core/src/document/schema.ts';
 import { featureId } from '@tweakcad/core/src/ids.ts';
 import type { ResolvedParams } from '@tweakcad/core/src/expressions.ts';
@@ -85,7 +85,7 @@ function makeDef(hash: string, source: CadProject, name = 'Test'): ComponentDefi
 }
 
 function makeFeature(componentRef: string, mode: 'newBody' | 'cut' | 'join' = 'newBody'): FeatureNode {
-  const inputs: ImportedComponentFeatureInputs = {
+  const inputs: ComponentFeatureInputs = {
     componentRef,
     transform: { position: [0, 0, 0], rotation: [0, 0, 0, 1] },
     parameterOverrides: {},
@@ -93,7 +93,7 @@ function makeFeature(componentRef: string, mode: 'newBody' | 'cut' | 'join' = 'n
   };
   return {
     id: featureId('imp_1'),
-    type: 'importedComponent',
+    type: 'component',
     name: 'Test instance',
     version: 1,
     enabled: true,
@@ -111,7 +111,7 @@ async function freshKernel(): Promise<MockKernel> {
   return kernel;
 }
 
-describe('buildImportedComponent', () => {
+describe('buildComponent', () => {
   beforeAll(attachTestSolver, 30_000);
 
   it('rebuilds an embedded component and surfaces its body under the host featureId', async () => {
@@ -124,7 +124,7 @@ describe('buildImportedComponent', () => {
     project.embeddedComponents = { 'hash-dowel': def };
 
     const feature = makeFeature('hash-dowel', 'newBody');
-    const result = await buildImportedComponent(
+    const result = await buildComponent(
       feature,
       {} as ResolvedParams,
       ctx,
@@ -145,7 +145,7 @@ describe('buildImportedComponent', () => {
 
     const feature = makeFeature('hash-missing', 'newBody');
     await expect(
-      buildImportedComponent(feature, {} as ResolvedParams, ctx, kernel, project, new Set()),
+      buildComponent(feature, {} as ResolvedParams, ctx, kernel, project, new Set()),
     ).rejects.toThrow(/hash-missing.*not found/);
   });
 
@@ -161,7 +161,7 @@ describe('buildImportedComponent', () => {
     const feature = makeFeature('hash-self', 'newBody');
     const visited = new Set(['hash-self']);
     await expect(
-      buildImportedComponent(feature, {} as ResolvedParams, ctx, kernel, project, visited),
+      buildComponent(feature, {} as ResolvedParams, ctx, kernel, project, visited),
     ).rejects.toThrow(/COMPONENT_CYCLE/);
   });
 
@@ -177,7 +177,7 @@ describe('buildImportedComponent', () => {
 
     const feature = makeFeature('hash-empty', 'newBody');
     await expect(
-      buildImportedComponent(feature, {} as ResolvedParams, ctx, kernel, project, new Set()),
+      buildComponent(feature, {} as ResolvedParams, ctx, kernel, project, new Set()),
     ).rejects.toThrow(/no parts/);
   });
 
@@ -233,15 +233,15 @@ describe('buildImportedComponent', () => {
     // Without override → broken expression at project scope fails build.
     const featureNoOverride = makeFeature('hash-pdowel', 'newBody');
     await expect(
-      buildImportedComponent(featureNoOverride, {} as ResolvedParams, ctx, kernel, project, new Set()),
+      buildComponent(featureNoOverride, {} as ResolvedParams, ctx, kernel, project, new Set()),
     ).rejects.toThrow();
 
     // With override for D (project-scope param) → succeeds. Builder
     // must route the override into source.parameters because that's
     // where D lives; before this fix the override silently no-op'd.
     const featureOverridden = makeFeature('hash-pdowel', 'newBody');
-    (featureOverridden.inputs as unknown as ImportedComponentFeatureInputs).parameterOverrides = { D: '8' };
-    const result = await buildImportedComponent(
+    (featureOverridden.inputs as unknown as ComponentFeatureInputs).parameterOverrides = { D: '8' };
+    const result = await buildComponent(
       featureOverridden,
       {} as ResolvedParams,
       ctx,
@@ -306,13 +306,13 @@ describe('buildImportedComponent', () => {
     // Without the override → fails.
     const featureNoOverride = makeFeature('hash-cyl', 'newBody');
     await expect(
-      buildImportedComponent(featureNoOverride, {} as ResolvedParams, ctx, kernel, project, new Set()),
+      buildComponent(featureNoOverride, {} as ResolvedParams, ctx, kernel, project, new Set()),
     ).rejects.toThrow();
 
     // With the override that replaces D's expression → succeeds.
     const featureOverridden = makeFeature('hash-cyl', 'newBody');
-    (featureOverridden.inputs as unknown as ImportedComponentFeatureInputs).parameterOverrides = { D: '10' };
-    const result = await buildImportedComponent(
+    (featureOverridden.inputs as unknown as ComponentFeatureInputs).parameterOverrides = { D: '10' };
+    const result = await buildComponent(
       featureOverridden,
       {} as ResolvedParams,
       ctx,
@@ -321,5 +321,110 @@ describe('buildImportedComponent', () => {
       new Set(),
     );
     expect(result.bodies).toHaveLength(1);
+  });
+});
+
+/**
+ * A component whose geometry is driven entirely by two public parameters,
+ * with two named sizes. A primitive is used rather than sketch+extrude so the
+ * dimensions reach the kernel as plain numbers the spy can read directly.
+ */
+function makeParametricSource(): CadProject {
+  const proj = emptyProject('Spacer');
+  const part = createPart('Spacer');
+  const now = new Date('2026-01-01T00:00:00.000Z').toISOString();
+  part.parameters = {
+    values: {
+      width: { name: 'width', expression: '20', unit: 'mm', public: true },
+      height: { name: 'height', expression: '10', unit: 'mm', public: true },
+    },
+  };
+  part.configurations = {
+    active: 'small',
+    rows: [
+      { id: 'small', name: 'Small', overrides: { width: '20', height: '10' } },
+      { id: 'large', name: 'Large', overrides: { width: '60', height: '30' } },
+    ],
+  };
+  part.timeline.push({
+    id: 'block' as never,
+    type: 'primitive',
+    name: 'Box 1',
+    version: 1,
+    enabled: true,
+    visible: true,
+    dependsOn: [],
+    inputs: {
+      shape: { kind: 'box', width: 'width', height: 'height', depth: 'width' },
+      transform: { position: [0, 0, 0], rotation: [0, 0, 0, 1] },
+      operation: 'newBody',
+    },
+    createdAt: now,
+    updatedAt: now,
+  });
+  proj.parts[part.id] = part;
+  return proj;
+}
+
+/** Build one instance and report the box dimensions that reached the kernel. */
+async function dimensionsFor(
+  overrides: Partial<ComponentFeatureInputs>,
+): Promise<{ width: number; height: number; depth: number }> {
+  const kernel = await freshKernel();
+  const spy = vi.spyOn(kernel, 'makeBox');
+  const source = makeParametricSource();
+  const project: CadProject = emptyProject('Host');
+  project.embeddedComponents = { spacer: makeDef('spacer', source, 'Spacer') };
+
+  const feature = makeFeature('spacer');
+  Object.assign(feature.inputs, overrides);
+  await buildComponent(
+    feature,
+    {} as ResolvedParams,
+    emptyBuildContext({} as ResolvedParams),
+    kernel,
+    project,
+    new Set(),
+  );
+  const spec = spy.mock.calls[0]?.[0];
+  if (!spec) throw new Error('component did not reach makeBox');
+  return { width: spec.width, height: spec.height, depth: spec.depth };
+}
+
+describe('buildComponent — per-instance configuration', () => {
+  it("uses the component's own active row when the instance picks nothing", async () => {
+    expect(await dimensionsFor({ configurationId: undefined }))
+      .toEqual({ width: 20, height: 10, depth: 20 });
+  });
+
+  it('honours the configuration the instance picked', async () => {
+    // Regression: the sub-timeline runner re-applied the component's own
+    // active row over the merged parameters, so a user picking "Large" got
+    // "Small" geometry — the instance's choice was stored, round-tripped in
+    // the dialog, and then silently discarded at build time.
+    expect(await dimensionsFor({ configurationId: 'large' }))
+      .toEqual({ width: 60, height: 30, depth: 60 });
+  });
+
+  it('lets an explicit null mean "ignore the component\'s active row"', async () => {
+    expect(await dimensionsFor({ configurationId: null }))
+      .toEqual({ width: 20, height: 10, depth: 20 });
+  });
+
+  it('applies per-instance overrides on top of the chosen configuration', async () => {
+    expect(await dimensionsFor({
+      configurationId: 'large',
+      parameterOverrides: { height: '7' },
+    })).toEqual({ width: 60, height: 7, depth: 60 });
+  });
+
+  it('two instances of one component can use different configurations', async () => {
+    // The point of configurations: one M3 and one M5 from the same Bolt.
+    const [small, large] = await Promise.all([
+      dimensionsFor({ configurationId: 'small' }),
+      dimensionsFor({ configurationId: 'large' }),
+    ]);
+    expect(small.width).toBe(20);
+    expect(large.width).toBe(60);
   });
 });

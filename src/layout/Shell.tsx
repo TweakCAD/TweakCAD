@@ -101,7 +101,7 @@ import { listAvailableModels } from '../ai/chatClient.ts';
 import { createBrowserToolHost } from '../ai/browserToolHost.ts';
 import { runAgentTurn } from '../ai/agentLoop.ts';
 import { setActiveViewport, getActiveViewport } from '../ai/viewportRegistry.ts';
-import { useImportedComponentEditor } from '../components/ImportedComponentDialog.tsx';
+import { useComponentEditor } from '../components/ComponentDialog.tsx';
 import { registerThumbnailCapture } from '../storage/thumbnailCapture.ts';
 import { featureIconType } from '../icons/cadIcons.tsx';
 
@@ -195,7 +195,7 @@ export type ShellProps = {
   onImportFcstd?: () => void;
   /**
    * Import a parametric component (.cadcomponent / .cadjson) and embed it
-   * as an `importedComponent` feature in the active part's timeline.
+   * as an `component` feature in the active part's timeline.
    */
   onComponentImport?: () => void;
   onFileSave?: () => void;
@@ -233,7 +233,7 @@ export function Shell({
   const ctrlRef = useRef<ViewportController | null>(null);
   const [viewportCtrl, setViewportCtrl] = useState<ViewportController | null>(null);
   const project = useDocumentState();
-  const { openImportedComponentEditor, importedComponentDialogElement } = useImportedComponentEditor();
+  const { openComponentEditor, componentDialogElement } = useComponentEditor();
   const { canUndo, canRedo, undoLabel, redoLabel, undo, redo } = useUndoRedo();
   const displayMeshes = useDisplayMeshes();
   const topologyMaps = useTopologyMaps();
@@ -1529,28 +1529,28 @@ export function Shell({
         break;
       }
       case 'editComponent': {
-        // Find the part that owns the importedComponent feature and open
+        // Find the part that owns the component feature and open
         // the per-instance editor. Multi-part projects: first hit wins —
         // imported components are always inside exactly one part's
         // timeline so there's no ambiguity in practice.
         for (const part of Object.values(project.parts)) {
           const feature = part.timeline.find(f => f.id === featureId);
-          if (feature && feature.type === 'importedComponent') {
-            openImportedComponentEditor(part.id, featureId as FeatureId);
+          if (feature && feature.type === 'component') {
+            openComponentEditor(part.id, featureId as FeatureId);
             break;
           }
         }
         break;
       }
       case 'duplicateComponent': {
-        // "Give me another one of these" — re-dispatch CreateImportedComponent
+        // "Give me another one of these" — re-dispatch CreateComponent
         // with the same component definition (reused by hash; handler is
         // idempotent) and the same per-instance inputs. The new feature
         // lands at the end of the timeline with the auto-incremented name
         // ("Bolt", "Bolt (2)", "Bolt (3)", …) the handler already produces.
         for (const part of Object.values(project.parts)) {
           const feature = part.timeline.find(f => f.id === featureId);
-          if (!feature || feature.type !== 'importedComponent') continue;
+          if (!feature || feature.type !== 'component') continue;
           const inputs = feature.inputs as unknown as {
             componentRef: string;
             transform: { position: [number, number, number]; rotation: [number, number, number, number] };
@@ -1564,7 +1564,7 @@ export function Shell({
             break;
           }
           const result = commandBus.dispatch({
-            type: 'CreateImportedComponent',
+            type: 'CreateComponent',
             partId: part.id,
             component: def,
             inputs: {
@@ -1587,7 +1587,7 @@ export function Shell({
         // Not implemented yet
         break;
     }
-  }, [project.parts, commandBus, handleStartExtrude, handleEditSketch, handleExportSketch, openImportedComponentEditor, selectedBodyId, sketchActive, sketchActions, bodyToFeatureMap]);
+  }, [project.parts, commandBus, handleStartExtrude, handleEditSketch, handleExportSketch, openComponentEditor, selectedBodyId, sketchActive, sketchActions, bodyToFeatureMap]);
 
   // ---- Toolbar extrude click: use selected sketch ----
 
@@ -4085,11 +4085,11 @@ export function Shell({
         onClear={consoleClear}
       />
 
-      {/* Per-instance properties editor for importedComponent features.
+      {/* Per-instance properties editor for component features.
           Opens from the right-click → "Edit Component…" entry on a
           timeline or project-tree chip. Native <dialog> so it doesn't
           interfere with the viewport. */}
-      {importedComponentDialogElement}
+      {componentDialogElement}
 
     </div>
   );

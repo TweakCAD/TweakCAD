@@ -757,8 +757,7 @@ export function getFeatureIcon(featureType: string, size = 14): ReactElement {
       return <TorusIcon size={size} />;
     case 'importedGeometry':
       return <ExtrudeIcon size={size} />;
-    case 'componentInstance':
-    case 'importedComponent':
+    case 'component':
       // Reuse ExtrudeIcon as a placeholder until a component-specific
       // glyph lands; pairs with the indigo color below for distinctness.
       return <ExtrudeIcon size={size} />;
@@ -783,8 +782,7 @@ export const featureTypeColors: Record<string, string> = {
   shell: '#64748b',      // slate
   revolve: '#ec4899',    // pink
   constructionPlane: '#3b82f6', // blue — same family as Sketch (both are reference-geometry inputs)
-  componentInstance: '#6366f1',  // indigo
-  importedComponent: '#6366f1',  // indigo — same family as componentInstance
+  component: '#6366f1',          // indigo
   importedGeometry: '#64748b',   // slate
   // Primitives key on their shape (see `featureIconType`) and share one
   // teal, because they are one feature type doing one job.

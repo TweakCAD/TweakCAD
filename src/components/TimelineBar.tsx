@@ -305,13 +305,13 @@ export function TimelineBar({
           {contextMenu.featureType === 'extrude' && (
             <button style={menuItemStyle} onClick={() => handleMenuAction('editFeature')}>Edit Feature</button>
           )}
-          {/* importedComponent: per-instance parameter overrides + active config
+          {/* component: per-instance parameter overrides + active config
               + boolean mode. Transform is preserved untouched (a dedicated UX
               for it is not yet wired).
               Duplicate is intentionally NOT here — the timeline is a build-
               order view; duplicating lives in the ProjectTree's Components
               subsection where the inventory mental model fits. */}
-          {contextMenu.featureType === 'importedComponent' && (
+          {contextMenu.featureType === 'component' && (
             <button style={menuItemStyle} onClick={() => handleMenuAction('editComponent')}>Edit Component...</button>
           )}
           {contextMenu.featureEnabled
