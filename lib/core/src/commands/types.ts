@@ -19,6 +19,7 @@ import type {
   FilletFeatureInputs,
   ChamferFeatureInputs,
   HoleFeatureInputs,
+  MoveFeatureInputs,
   PrimitiveFeatureInputs,
   MirrorFeatureInputs,
   PatternFeatureInputs,
@@ -75,6 +76,7 @@ export type CadCommand =
   | CreateChamferCommand
   | CreateHoleCommand
   | CreatePrimitiveCommand
+  | CreateMoveCommand
   | CreateMirrorCommand
   | CreateShellCommand
   | CreateSweepCommand
@@ -590,6 +592,16 @@ export type CreateHoleCommand = {
   inputs: HoleFeatureInputs;
 };
 
+/**
+ * Append a `move` feature. Used for bodies with nowhere else to store a
+ * placement — an import or a component edits its own `transform` instead.
+ */
+export type CreateMoveCommand = {
+  type: 'CreateMove';
+  partId: PartId;
+  inputs: MoveFeatureInputs;
+};
+
 export type CreatePrimitiveCommand = {
   type: 'CreatePrimitive';
   partId: PartId;
@@ -825,6 +837,8 @@ export function commandLabel(command: CadCommand): string {
       return `Create Hole (${command.inputs.kind})`;
     case 'CreatePrimitive':
       return `Create ${command.inputs.shape.kind} (${command.inputs.operation})`;
+    case 'CreateMove':
+      return `Move ${command.inputs.targetBodies.length} body${command.inputs.targetBodies.length === 1 ? '' : 'ies'}`;
     case 'CreatePattern':
       return 'Create Pattern';
     case 'CreateMirror':

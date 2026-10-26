@@ -647,6 +647,17 @@ export function RollbackIcon({ size = defaults.size, color = defaults.color, str
   );
 }
 
+// ---- Move ----
+/** Four-way arrows — the body is repositioned, not reshaped */
+export function MoveIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+      <path d="M8 2V14M2 8H14" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      <path d="M6 4L8 2L10 4M6 12L8 14L10 12M4 6L2 8L4 10M12 6L14 8L12 10" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 // ---- Primitives ----
 // One glyph per solid, all drawn in the same isometric view so the five read
 // as a set in the CREATE dropdown.
@@ -755,6 +766,8 @@ export function getFeatureIcon(featureType: string, size = 14): ReactElement {
       return <ConeIcon size={size} />;
     case 'torus':
       return <TorusIcon size={size} />;
+    case 'move':
+      return <MoveIcon size={size} />;
     case 'importedGeometry':
       return <ExtrudeIcon size={size} />;
     case 'component':
@@ -783,6 +796,7 @@ export const featureTypeColors: Record<string, string> = {
   revolve: '#ec4899',    // pink
   constructionPlane: '#3b82f6', // blue — same family as Sketch (both are reference-geometry inputs)
   component: '#6366f1',          // indigo
+  move: '#0ea5e9',               // sky — a placement, not new material
   importedGeometry: '#64748b',   // slate
   // Primitives key on their shape (see `featureIconType`) and share one
   // teal, because they are one feature type doing one job.

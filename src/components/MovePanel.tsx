@@ -18,7 +18,12 @@ export interface MoveTransform {
 }
 
 interface MovePanelProps {
-  scope: 'body' | 'all';
+  /**
+   * 'all' = the whole import; 'body' = one body of it; 'feature' = a
+   * derived body, whose placement lives in a trailing `move` feature.
+   * Only the title distinguishes them here — the numeric fields are the same.
+   */
+  scope: 'body' | 'all' | 'feature';
   mode: 'translate' | 'rotate';
   /** The target's current stored transform (drives the numeric fields). */
   transform: MoveTransform;

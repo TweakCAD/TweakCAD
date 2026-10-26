@@ -480,6 +480,16 @@ const PrimitiveShapeSchema = z.discriminatedUnion('kind', [
   }),
 ]);
 
+/**
+ * Move feature inputs. No positivity or non-identity checks: an identity
+ * move is legal (a Move session the user cancelled back to zero), and the
+ * refs are validated by resolution at build time, not here.
+ */
+const MoveFeatureInputsSchema = z.object({
+  targetBodies: z.array(BodyRefSchema),
+  transform: Transform3DSchema,
+});
+
 const PrimitiveFeatureInputsSchema = z.object({
   shape: PrimitiveShapeSchema,
   transform: Transform3DSchema,
@@ -564,6 +574,7 @@ const FeatureTypeSchema = z.union([
   z.literal('constructionPlane'),
   z.literal('importedGeometry'),
   z.literal('primitive'),
+  z.literal('move'),
 ]);
 
 /**
@@ -592,6 +603,7 @@ const FEATURE_INPUT_SCHEMAS: Record<FeatureTypeName, z.ZodTypeAny> = {
   constructionPlane: ConstructionPlaneFeatureInputsSchema,
   importedGeometry: ImportedGeometryFeatureInputsSchema,
   primitive: PrimitiveFeatureInputsSchema,
+  move: MoveFeatureInputsSchema,
 };
 
 /** The envelope every feature shares, regardless of type. */

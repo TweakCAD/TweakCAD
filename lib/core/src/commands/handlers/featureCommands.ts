@@ -705,6 +705,57 @@ export const createHoleHandler: CommandHandler = {
  * the feature type, counted per shape. "Primitive 4" in the tree would say
  * nothing about which of the five it is.
  */
+/**
+ * `CreateMove` handler.
+ *
+ * Appended at the end of the timeline, which is the only place a move can go:
+ * it repositions whatever the timeline has already produced, so running it
+ * earlier would move a body that does not exist yet.
+ *
+ * `dependsOn` stays empty and timeline order does the work, matching Fillet /
+ * Chamfer / Mirror — the rebuilder runs strictly in order, and a move always
+ * follows the feature that made its target.
+ */
+export const createMoveHandler: CommandHandler = {
+  validate(command: CadCommand, state: Readonly<CadProject>): Result<void, ValidationError> {
+    if (command.type !== 'CreateMove') {
+      return err({ code: 'WRONG_TYPE', message: 'Expected CreateMove command' });
+    }
+    if (!command.inputs.targetBodies?.length) {
+      return err({ code: 'INVALID_INPUT', message: 'Move requires at least one target body', field: 'inputs.targetBodies' });
+    }
+    if (!command.inputs.transform) {
+      return err({ code: 'INVALID_INPUT', message: 'Move requires a transform', field: 'inputs.transform' });
+    }
+    return findPart(state, command.partId);
+  },
+
+  execute(draft: CadProject, command: CadCommand): void {
+    if (command.type !== 'CreateMove') return;
+    const part = draft.parts[command.partId];
+    if (!part) return;
+
+    const id = featureId(generateId('move'));
+    const now = new Date().toISOString();
+
+    const feature: FeatureNode = {
+      id,
+      type: 'move',
+      name: `Move ${part.timeline.filter(f => f.type === 'move').length + 1}`,
+      version: 1,
+      enabled: true,
+      visible: true,
+      inputs: command.inputs as unknown as Record<string, unknown>,
+      dependsOn: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    part.timeline.push(feature);
+    draft.metadata.updatedAt = now;
+  },
+};
+
 export const createPrimitiveHandler: CommandHandler = {
   validate(command: CadCommand, state: Readonly<CadProject>): Result<void, ValidationError> {
     if (command.type !== 'CreatePrimitive') {
