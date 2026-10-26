@@ -16,6 +16,11 @@ import { useCommandBus, useDocumentState } from '../hooks/useDocumentStore.ts';
 import { resolveAllParameters } from '@tweakcad/core/src/parameters/evaluator.ts';
 import { evaluateExpression } from '@tweakcad/core/src/expressions.ts';
 import { formatWithUnit } from '@tweakcad/core/src/units.ts';
+import {
+  eulerDegreesFromQuaternion,
+  identityTransform,
+  quaternionFromEulerDegrees,
+} from '@tweakcad/core/src/math.ts';
 import type {
   CadPart,
   ComponentDefinition,
@@ -45,6 +50,16 @@ type DraftState = {
   /** `'__defaults__'` = no active config. Any other value = row id. */
   configRowId: string;
   boolean: BooleanMode;
+  /**
+   * Placement, as typed. Text buffers rather than numbers so a half-entered
+   * "-" or "" survives a keystroke; parsed on Apply.
+   *
+   * Rotation is Euler degrees even though the document stores a quaternion —
+   * nobody types quaternions. The conversion pair lives in `core/math.ts` so
+   * the eventual gizmo reads back the same angles this panel shows.
+   */
+  position: [string, string, string];
+  rotation: [string, string, string];
 };
 
 const DEFAULTS_ROW_ID = '__defaults__';
@@ -70,11 +85,31 @@ function makeDraftFrom(
   const effectiveId = perInstance !== undefined && perInstance !== null
     ? perInstance
     : embeddedActive;
+  const transform = inputs.transform ?? identityTransform();
   return {
     overrides,
     configRowId: effectiveId ?? DEFAULTS_ROW_ID,
     boolean: inputs.boolean ?? 'newBody',
+    position: transform.position.map(formatPlacement) as [string, string, string],
+    rotation: eulerDegreesFromQuaternion(transform.rotation)
+      .map(formatPlacement) as [string, string, string],
   };
+}
+
+/**
+ * Trim the float noise a quaternion round-trip leaves behind. A placement
+ * entered as 90° should read back as "90", not "89.99999999999999" — which
+ * looks broken and makes Revert light up on a field nobody touched.
+ */
+function formatPlacement(value: number): string {
+  return String(Math.round(value * 1e6) / 1e6);
+}
+
+/** Parse a placement field, or `null` if it isn't a number. */
+function parsePlacement(values: [string, string, string]): [number, number, number] | null {
+  const parsed = values.map(v => parseFloat(v));
+  if (parsed.some(n => !Number.isFinite(n))) return null;
+  return parsed as [number, number, number];
 }
 
 // ---- Component ----
@@ -229,6 +264,8 @@ export function ComponentDialog({ open, partId, featureId, onClose }: DialogProp
     const baseline = makeDraftFrom(resolved.inputs, resolved.compPart);
     if (draft.boolean !== baseline.boolean) return true;
     if (draft.configRowId !== baseline.configRowId) return true;
+    if (draft.position.join() !== baseline.position.join()) return true;
+    if (draft.rotation.join() !== baseline.rotation.join()) return true;
     // overrides parity — same key set + same non-empty values
     const norm = (d: Record<string, string>) =>
       Object.fromEntries(Object.entries(d).filter(([, v]) => v.trim() !== ''));
@@ -247,9 +284,17 @@ export function ComponentDialog({ open, partId, featureId, onClose }: DialogProp
     for (const [n, expr] of Object.entries(draft.overrides)) {
       if (expr.trim() !== '') overrides[n] = expr;
     }
+    // A field that doesn't parse keeps the placement it had rather than
+    // snapping the component to the origin mid-edit.
+    const position = parsePlacement(draft.position) ?? resolved.inputs.transform.position;
+    const euler = parsePlacement(draft.rotation);
+    const rotation = euler
+      ? quaternionFromEulerDegrees(euler[0], euler[1], euler[2])
+      : resolved.inputs.transform.rotation;
+
     const nextInputs: ComponentFeatureInputs = {
       componentRef: resolved.inputs.componentRef,
-      transform: resolved.inputs.transform,
+      transform: { position, rotation },
       parameterOverrides: overrides,
       configurationId: draft.configRowId === DEFAULTS_ROW_ID ? null : draft.configRowId,
       boolean: draft.boolean,
@@ -314,6 +359,44 @@ export function ComponentDialog({ open, partId, featureId, onClose }: DialogProp
                 {draft.boolean === 'newBody' && 'Component bodies are kept separate from host bodies.'}
                 {draft.boolean === 'cut' && 'Component bodies are subtracted from every host body.'}
                 {draft.boolean === 'join' && 'Component bodies are fused with every host body.'}
+              </div>
+            </div>
+
+            {/* ---- Placement ---- */}
+            <div style={styles.section}>
+              <div style={styles.sectionLabel}>Placement</div>
+              <PlacementRow
+                label="Translation"
+                unit="mm"
+                values={draft.position}
+                onChange={(i, v) => {
+                  const next = [...draft.position] as [string, string, string];
+                  next[i] = v;
+                  setDraft({ ...draft, position: next });
+                }}
+              />
+              <PlacementRow
+                label="Rotation"
+                unit="°"
+                values={draft.rotation}
+                onChange={(i, v) => {
+                  const next = [...draft.rotation] as [string, string, string];
+                  next[i] = v;
+                  setDraft({ ...draft, rotation: next });
+                }}
+              />
+              <div style={styles.placementActions}>
+                <button
+                  type="button"
+                  style={styles.resetBtn}
+                  onClick={() => setDraft({
+                    ...draft,
+                    position: ['0', '0', '0'],
+                    rotation: ['0', '0', '0'],
+                  })}
+                >
+                  Reset to origin
+                </button>
               </div>
             </div>
 
@@ -489,6 +572,45 @@ export function useComponentEditor() {
 
 // ---- Sub-components ----
 
+/** One X/Y/Z triple of the placement panel. */
+function PlacementRow({
+  label,
+  unit,
+  values,
+  onChange,
+}: {
+  label: string;
+  unit: string;
+  values: [string, string, string];
+  onChange: (axis: number, value: string) => void;
+}) {
+  return (
+    <div style={styles.placementRow}>
+      <span style={styles.placementLabel}>{label}</span>
+      {(['X', 'Y', 'Z'] as const).map((axis, i) => {
+        const invalid = !Number.isFinite(parseFloat(values[i]!));
+        return (
+          <label key={axis} style={styles.placementField}>
+            <span style={styles.placementAxis}>{axis}</span>
+            <input
+              type="text"
+              value={values[i]}
+              onChange={e => onChange(i, e.target.value)}
+              style={{
+                ...styles.placementInput,
+                borderColor: invalid ? '#dc2626' : '#d0d0d0',
+              }}
+              spellCheck={false}
+              aria-label={`${label} ${axis}`}
+            />
+            <span style={styles.placementUnit}>{unit}</span>
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
 function ConfigChip(props: { label: string; active: boolean; onClick: () => void }) {
   return (
     <button
@@ -612,6 +734,59 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     gap: 6,
     flexWrap: 'wrap',
+  },
+  placementRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 6,
+  },
+  placementLabel: {
+    fontSize: 11,
+    color: '#888',
+    width: 72,
+    flexShrink: 0,
+  },
+  placementField: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+  },
+  placementAxis: {
+    fontSize: 10,
+    fontWeight: 600,
+    color: '#999',
+    width: 10,
+  },
+  placementInput: {
+    width: 68,
+    height: 26,
+    padding: '0 6px',
+    border: '1px solid #d0d0d0',
+    borderRadius: 4,
+    fontSize: 12,
+    fontFamily: 'monospace',
+    textAlign: 'right',
+    outline: 'none',
+  },
+  placementUnit: {
+    fontSize: 10,
+    color: '#aaa',
+    width: 18,
+  },
+  placementActions: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+  },
+  resetBtn: {
+    height: 24,
+    padding: '0 10px',
+    border: '1px solid #e0e0e0',
+    borderRadius: 4,
+    background: '#f7f7f7',
+    color: '#666',
+    fontSize: 11,
+    cursor: 'pointer',
   },
   configChip: {
     padding: '4px 10px',

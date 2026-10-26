@@ -27,7 +27,8 @@ import type {
   FeatureNode,
   ComponentFeatureInputs,
 } from '@tweakcad/core/src/document/schema.ts';
-import { featureId } from '@tweakcad/core/src/ids.ts';
+import { featureId, bodyId as bodyIdBrand } from '@tweakcad/core/src/ids.ts';
+import { err } from '@tweakcad/core/src/result.ts';
 import type { ResolvedParams } from '@tweakcad/core/src/expressions.ts';
 
 /** Build an embedded source with one sketch + extrude producing one body. */
@@ -426,5 +427,90 @@ describe('buildComponent — per-instance configuration', () => {
     ]);
     expect(small.width).toBe(20);
     expect(large.width).toBe(60);
+  });
+});
+
+describe('buildComponent — placement', () => {
+  it('leaves bodies untouched at the origin', async () => {
+    // `kernel.transform` derives a new body; an identity placement has
+    // nothing to derive, and the common case should not pay for one.
+    const kernel = await freshKernel();
+    const spy = vi.spyOn(kernel, 'transform');
+    const project: CadProject = emptyProject('Host');
+    project.embeddedComponents = { d: makeDef('d', makeSourceWithBody('Dowel'), 'Dowel') };
+
+    await buildComponent(
+      makeFeature('d'), {} as ResolvedParams,
+      emptyBuildContext({} as ResolvedParams), kernel, project, new Set(),
+    );
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('applies a non-identity placement to every body', async () => {
+    // Regression: the transform was stored, shown in the dialog and then
+    // only logged, so every component landed on top of every other one.
+    const kernel = await freshKernel();
+    const spy = vi.spyOn(kernel, 'transform');
+    const project: CadProject = emptyProject('Host');
+    project.embeddedComponents = { d: makeDef('d', makeSourceWithBody('Dowel'), 'Dowel') };
+
+    const placement = {
+      position: [30, 0, 12.5] as [number, number, number],
+      rotation: [0, 0.7071068, 0, 0.7071068] as [number, number, number, number],
+    };
+    const feature = makeFeature('d');
+    Object.assign(feature.inputs, { transform: placement });
+    await buildComponent(
+      feature, {} as ResolvedParams,
+      emptyBuildContext({} as ResolvedParams), kernel, project, new Set(),
+    );
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0]?.[1]).toEqual(placement);
+  });
+
+  it('places before cutting, so the hole lands where the component is', async () => {
+    // Transforming after the boolean would move the *result* — the host body
+    // with its hole — rather than positioning the tool that makes it.
+    const kernel = await freshKernel();
+    const order: string[] = [];
+    vi.spyOn(kernel, 'transform').mockImplementation(async (body) => {
+      order.push('transform');
+      return { ok: true as const, value: body };
+    });
+    vi.spyOn(kernel, 'booleanCut').mockImplementation(async (target) => {
+      order.push('cut');
+      return { ok: true as const, value: target };
+    });
+
+    const project: CadProject = emptyProject('Host');
+    project.embeddedComponents = { d: makeDef('d', makeSourceWithBody('Dowel'), 'Dowel') };
+    const ctx = emptyBuildContext({} as ResolvedParams);
+    ctx.bodies.set(bodyIdBrand('body_host'), { handle: 'host', source: 'mock' });
+
+    const feature = makeFeature('d', 'cut');
+    Object.assign(feature.inputs, {
+      transform: { position: [10, 0, 0], rotation: [0, 0, 0, 1] },
+    });
+    await buildComponent(
+      feature, {} as ResolvedParams, ctx, kernel, project, new Set(),
+    );
+    expect(order).toEqual(['transform', 'cut']);
+  });
+
+  it('fails the feature with a clear message when placement fails', async () => {
+    const kernel = await freshKernel();
+    vi.spyOn(kernel, 'transform').mockResolvedValue(
+      err({ category: 'kernel', code: 'TRANSFORM_FAILED', message: 'bad matrix' }),
+    );
+    const project: CadProject = emptyProject('Host');
+    project.embeddedComponents = { d: makeDef('d', makeSourceWithBody('Dowel'), 'Dowel') };
+    const feature = makeFeature('d');
+    Object.assign(feature.inputs, {
+      transform: { position: [1, 2, 3], rotation: [0, 0, 0, 1] },
+    });
+    await expect(buildComponent(
+      feature, {} as ResolvedParams,
+      emptyBuildContext({} as ResolvedParams), kernel, project, new Set(),
+    )).rejects.toThrow(/Failed to place component: bad matrix/);
   });
 });

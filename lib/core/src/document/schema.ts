@@ -977,10 +977,9 @@ export type CircularPatternInputs = {
  * `project.embeddedComponents[componentRef]` — same .cadjson shape as a
  * full project, but with exactly one part inside.
  *
- * v1 scope:
- *  - `transform` is stored but the builder treats it as identity (the
- *    Transform UX is a follow-up). The field is in the
- *    schema today so that follow-up doesn't need a schema migration.
+ * Behaviour:
+ *  - `transform` places every body the component produces, applied before
+ *    any boolean so a `cut` instance subtracts where the user put it.
  *  - `parameterOverrides` + `configurationId` are applied at rebuild
  *    time on top of the component's own parameter table (merge
  *    order: defaults → config row → per-instance overrides).
@@ -993,10 +992,9 @@ export type ComponentFeatureInputs = {
   /** Lookup key into `CadProject.embeddedComponents`. The component's content hash. */
   componentRef: string;
   /**
-   * Position + orientation in host-part local space. v1 stores it but
-   * the builder treats non-identity as identity (the transform UX is a
-   * follow-up). Defaults written by the handler are origin +
-   * identity quaternion.
+   * Position + orientation in host-part local space. Defaults written by
+   * the handler are origin + identity quaternion; the placement panel in
+   * the component dialog edits it as millimetres and Euler degrees.
    */
   transform: Transform3D;
   /**

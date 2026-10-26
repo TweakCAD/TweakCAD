@@ -24,9 +24,9 @@
  *      becomes a body of THIS feature with a deterministic id
  *      (`body_imported_<featureId>_<i>`) so user-captured face/edge
  *      refs survive subsequent rebuilds.
- *   7. Apply `inputs.transform`. v1 ships identity-only; the transform
- *      UX is not yet wired. Non-identity transforms are logged as a
- *      build warning but not applied (no UX to produce them yet).
+ *   7. Apply `inputs.transform` to each body, before any boolean — a
+ *      `cut` instance has to be where the user put it for the subtraction
+ *      to land in the right place.
  *   8. Apply `inputs.boolean` against existing host bodies — same
  *      cut/join/newBody semantics as `ExtrudeFeatureInputs.operation`.
  */
@@ -40,6 +40,7 @@ import type {
   ParameterValue,
 } from '@tweakcad/core/src/document/schema.ts';
 import type { ResolvedParams } from '@tweakcad/core/src/expressions.ts';
+import type { Transform3D } from '@tweakcad/core/src/math.ts';
 import { bodyId as bodyIdBrand } from '@tweakcad/core/src/ids.ts';
 import type { BodyId, FeatureId } from '@tweakcad/core/src/ids.ts';
 import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
@@ -134,24 +135,19 @@ export async function buildComponent(
     );
   }
 
-  // v1 transform: log only. Applying the actual gp_Trsf will need a
-  // new kernel call. For now any non-identity transform sits at
-  // origin like identity does.
-  if (!isIdentityTransform(inputs.transform)) {
-    console.warn(
-      `[buildComponent] Non-identity transform on "${def.name}" — ` +
-      `Phase 6 will apply it; component currently lands at origin`,
-    );
-  }
+  // Place the component before any boolean runs. A `cut` instance has to be
+  // where the user put it for the subtraction to land in the right place —
+  // transforming afterwards would move the hole instead of making it.
+  const placedBodies = await placeBodies(componentBodies, inputs.transform, kernel);
 
   const mode = inputs.boolean ?? 'newBody';
   if (mode === 'newBody' || context.bodies.size === 0) {
-    return wrapBodies(componentBodies, node.id);
+    return wrapBodies(placedBodies, node.id);
   }
   if (mode === 'cut') {
-    return cutFromHosts(componentBodies, context, kernel, node.id);
+    return cutFromHosts(placedBodies, context, kernel, node.id);
   }
-  return joinWithHosts(componentBodies, context, kernel, node.id);
+  return joinWithHosts(placedBodies, context, kernel, node.id);
 }
 
 /**
@@ -265,11 +261,41 @@ function applyOverrides(
   return { values: next };
 }
 
-function isIdentityTransform(t: { position: [number, number, number]; rotation: [number, number, number, number] }): boolean {
+function isIdentityTransform(t: Transform3D | undefined): boolean {
   if (!t) return true;
   const [px, py, pz] = t.position;
   const [rx, ry, rz, rw] = t.rotation;
   return px === 0 && py === 0 && pz === 0 && rx === 0 && ry === 0 && rz === 0 && rw === 1;
+}
+
+/**
+ * Move every body of the component into its placement.
+ *
+ * Applied per body rather than to a fused compound: the component may emit
+ * several bodies and fusing them to place them would destroy that separation,
+ * which the user can see in the tree.
+ *
+ * The identity case returns the handles untouched — `kernel.transform`
+ * produces a *derived* body, and a component sitting at the origin (the
+ * common case) has nothing to derive. The transform is rigid, so stable
+ * face/edge ids carry across it by hash-match and user-captured refs on a
+ * component body survive being moved.
+ */
+async function placeBodies(
+  bodies: KernelBody[],
+  transform: Transform3D | undefined,
+  kernel: CadKernel,
+): Promise<KernelBody[]> {
+  if (isIdentityTransform(transform) || !transform) return bodies;
+  const placed: KernelBody[] = [];
+  for (const body of bodies) {
+    const result = await kernel.transform(body, transform);
+    if (!result.ok) {
+      throw new Error(`Failed to place component: ${result.error.message}`);
+    }
+    placed.push(result.value);
+  }
+  return placed;
 }
 
 function wrapBodies(bodies: KernelBody[], featureIdValue: FeatureId): BuildResult {
