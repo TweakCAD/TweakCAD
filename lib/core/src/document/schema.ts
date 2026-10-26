@@ -120,7 +120,8 @@ export type FeatureType =
   | 'component'
   | 'constructionPlane'
   | 'importedGeometry'
-  | 'primitive';
+  | 'primitive'
+  | 'move';
 
 // --- Feature Status (in build artifacts, not in document) ---
 
@@ -826,6 +827,37 @@ export type HoleFeatureInputs = {
   /** Countersink full included angle in degrees (90° is the ISO 7046 default; 82° matches Imperial flatheads). */
   countersinkAngle?: Expression;
   targetBodies?: BodyRef[];
+};
+
+// --- Move ---
+
+/**
+ * Reposition bodies that have nowhere else to store a placement.
+ *
+ * Imported geometry and components carry a `transform` on their own inputs,
+ * because the thing being placed arrived whole and the feature that produced
+ * it *is* the placement. A body that came out of an extrude, revolve or
+ * boolean has no such home: its position is a consequence of a sketch on a
+ * plane and a distance, so there is no field to put a translation in without
+ * inventing one on every builder.
+ *
+ * A timeline feature is the parametric answer. "Move" cannot be a free drag
+ * of the mesh — the mesh is regenerated on every rebuild, so the gesture has
+ * to become a **stored, replayable value**. This is that value.
+ *
+ * It is a **modifier**: the moved bodies keep their ids (see `bodyIdentity.ts`)
+ * so a `BodyRef` or a captured `FaceRef` taken before the move still resolves
+ * after it. Bodies not listed in `targetBodies` pass through untouched.
+ */
+export type MoveFeatureInputs = {
+  /**
+   * Bodies to reposition. Refs that no longer resolve are skipped rather than
+   * failing the feature — deleting the extrude upstream of a move should not
+   * also break the move, it should leave it with nothing to do.
+   */
+  targetBodies: BodyRef[];
+  /** Rigid placement applied in world space, on top of where the body already is. */
+  transform: Transform3D;
 };
 
 // --- Primitive ---

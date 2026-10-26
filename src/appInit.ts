@@ -25,6 +25,7 @@ import {
   createFilletHandler,
   createChamferHandler,
   createHoleHandler,
+  createMoveHandler,
   createPrimitiveHandler,
   createMirrorHandler,
   createShellHandler,
@@ -144,6 +145,7 @@ export function initializeApp(): AppState {
   commandBus.register('CreateChamfer', createChamferHandler);
   commandBus.register('CreateHole', createHoleHandler);
   commandBus.register('CreatePrimitive', createPrimitiveHandler);
+  commandBus.register('CreateMove', createMoveHandler);
   commandBus.register('CreateMirror', createMirrorHandler);
   commandBus.register('CreateShell', createShellHandler);
   commandBus.register('CreateSweep', createSweepHandler);

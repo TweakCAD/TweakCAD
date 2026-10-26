@@ -927,6 +927,17 @@ const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
           icon: <Pencil size={14} />,
           accent: true,
         });
+        // Derived bodies (extrude output, a boolean result) have no
+        // `transform` of their own, so Move appends a `move` feature instead
+        // of editing this one. Offered on body rows only: the handler needs a
+        // selected body, and a feature row may produce several.
+        if (target === 'body') {
+          items.push({
+            action: 'move',
+            label: 'Move',
+            icon: <Move size={14} />,
+          });
+        }
       }
     }
 

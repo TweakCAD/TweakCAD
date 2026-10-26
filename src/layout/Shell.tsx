@@ -5,7 +5,7 @@ import { ViewportController } from '@tweakcad/viewport/src/ViewportController.ts
 import { useDocumentState, useUndoRedo, useCommandBus } from '../hooks/useDocumentStore.ts';
 import { getAppState } from '../appInit.ts';
 import type { PartId, FeatureId, BodyId } from '@tweakcad/core/src/ids.ts';
-import type { ProfileRef, SketchFeatureInputs, SketchEntity, ExtrudeFeatureInputs, PlaneRef, ConstructionPlaneDisplay, PrimitiveFeatureInputs, PrimitiveKind } from '@tweakcad/core/src/document/schema.ts';
+import type { ProfileRef, SketchFeatureInputs, SketchEntity, ExtrudeFeatureInputs, PlaneRef, ConstructionPlaneDisplay, PrimitiveFeatureInputs, PrimitiveKind, MoveFeatureInputs } from '@tweakcad/core/src/document/schema.ts';
 import { regionToProfileRef } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import { sketchToDxf } from '@tweakcad/core/src/sketch/io/dxf.ts';
 import { dxfToEditorState } from '@tweakcad/core/src/sketch/io/dxfImport.ts';
@@ -104,6 +104,7 @@ import { setActiveViewport, getActiveViewport } from '../ai/viewportRegistry.ts'
 import { useComponentEditor } from '../components/ComponentDialog.tsx';
 import { registerThumbnailCapture } from '../storage/thumbnailCapture.ts';
 import { featureIconType } from '../icons/cadIcons.tsx';
+import { targetsExactly } from '@tweakcad/worker/src/featureBuilders/buildMove.ts';
 
 // Sketch ↔ document plumbing notes:
 //   - There is no composite `SketchRectangleEntity`/`SketchSlotEntity`;
@@ -546,19 +547,44 @@ export function Shell({
   const [sectionActive, setSectionActive] = useState(false);
   const [sectionOrientation, setSectionOrientation] = useState<SectionOrientation>('XZ');
 
-  // Body Move (right-click body → Move). Holds the body being moved + its
-  // source feature (where the placement transform is stored). Null when not
-  // moving. v1 = translate-only on imported geometry.
+  // Body Move (right-click body → Move). Null when not moving.
+  //
+  // Where the placement lands depends on what produced the body, and the two
+  // cases are genuinely different rather than a flag on one path:
+  //
+  //  - `scope: 'body' | 'all'` — imported geometry, which carries its own
+  //    `transform` / `bodyTransforms`. The drag edits the source feature.
+  //  - `scope: 'feature'` — anything derived (extrude output, a boolean
+  //    result). Those have no transform field, so the drag maintains a
+  //    trailing `move` feature instead; `moveFeatureId` is the one being
+  //    maintained, resolved or created on the first drag.
   const [moveState, setMoveState] = useState<{
     bodyId: string;
     sourceFeatureId: string;
     mode: 'translate' | 'rotate';
-    /** 'body' = move just this body (bodyTransforms[i]); 'all' = the whole import (group transform). */
-    scope: 'body' | 'all';
+    scope: 'body' | 'all' | 'feature';
     /** Placement at Move-start, restored on Cancel (each drag commits, so
      *  Cancel reverts the whole session to this snapshot). */
     snapshot: { transform: unknown; bodyTransforms: unknown };
+    /**
+     * `scope: 'feature'` only. The `move` feature carrying this session's
+     * placement: an existing trailing one when there was a match, else null
+     * until the first drag creates it. Null at Done means nothing was
+     * dragged and nothing was written.
+     */
+    moveFeatureId?: string | null;
+    /** `scope: 'feature'` only. True when this session created the feature,
+     *  so Cancel deletes it rather than restoring a transform. */
+    createdHere?: boolean;
   } | null>(null);
+
+  // The gizmo callback is installed once per Move session and fires on every
+  // drag, so it cannot close over `moveState` — after the first drag creates
+  // the feature, the closure would still think there isn't one and create a
+  // second. A ref gives it the current value without re-installing the gizmo
+  // mid-session (which would drop the handles the user is holding).
+  const moveStateRef = useRef(moveState);
+  useEffect(() => { moveStateRef.current = moveState; }, [moveState]);
 
   const handleToolbarSectionClick = useCallback(() => {
     setSectionActive(prev => {
@@ -634,15 +660,63 @@ export function Shell({
       : [bodyId as BodyId];
 
     viewportCtrl.attachBodyMoveGizmo(moveBodyIds, mode, (delta) => {
-      const f = findFeature();
-      if (!f) return;
-      // The gesture D is in WORLD space. The body is baked as G·P·raw (group
-      // ∘ per-body). So a world gesture maps differently to each scope:
       const D = new THREE.Matrix4().compose(
         new THREE.Vector3(...delta.position),
         new THREE.Quaternion(...delta.quaternion),
         new THREE.Vector3(1, 1, 1),
       );
+
+      // Derived body: maintain a trailing `move` feature. Its transform is
+      // the outermost thing applied to the body, so a world-space gesture
+      // composes straight onto it — no conjugation, unlike the per-body case
+      // below which sits inside the import's group transform.
+      if (scope === 'feature') {
+        const proj = getAppState().documentStore.getState();
+        const owner = Object.values(proj.parts)
+          .find(part => part.timeline.some(ff => ff.id === sourceFeatureId));
+        if (!owner) return;
+
+        const existingId = moveStateRef.current?.moveFeatureId ?? null;
+        const existing = existingId
+          ? owner.timeline.find(ff => ff.id === existingId)
+          : undefined;
+
+        if (existing) {
+          const M = toMatrix((existing.inputs as { transform?: T3 }).transform ?? ID);
+          commandBus.dispatch({
+            type: 'UpdateFeatureInput', partId: owner.id as PartId,
+            featureId: existingId as FeatureId,
+            path: ['transform'], value: toT3(D.clone().multiply(M)),
+          });
+          return;
+        }
+
+        // First drag of the session with nothing to reuse — create it now
+        // rather than on Move-start, so opening Move and closing it again
+        // leaves no empty feature behind.
+        const created = commandBus.dispatch({
+          type: 'CreateMove', partId: owner.id as PartId,
+          inputs: {
+            targetBodies: [{ partId: owner.id as PartId, bodyId: bodyId as BodyId }],
+            transform: toT3(D),
+          },
+        });
+        if (!created.ok) {
+          consoleLog('error', `Move failed: ${created.error.message}`, 'move');
+          return;
+        }
+        const after = getAppState().documentStore.getState().parts[owner.id]!;
+        const newest = [...after.timeline].reverse().find(ff => ff.type === 'move');
+        setMoveState(prev => prev && {
+          ...prev, moveFeatureId: newest ? String(newest.id) : null, createdHere: true,
+        });
+        return;
+      }
+
+      const f = findFeature();
+      if (!f) return;
+      // The gesture D is in WORLD space. The body is baked as G·P·raw (group
+      // ∘ per-body), so a world gesture maps differently to each scope.
       const G = toMatrix((f.inputs['transform'] as T3) ?? ID);
 
       if (scope === 'all') {
@@ -676,6 +750,29 @@ export function Shell({
   const cancelMove = useCallback(() => {
     if (moveState) {
       const cur = getAppState().documentStore.getState();
+
+      // Derived body: the session either created the `move` feature (delete
+      // it — cancelling should leave no trace) or reused an existing one
+      // (restore the transform it had on entry).
+      if (moveState.scope === 'feature') {
+        const owner = Object.values(cur.parts)
+          .find(part => part.timeline.some(ff => ff.id === moveState.moveFeatureId));
+        if (owner && moveState.moveFeatureId) {
+          commandBus.dispatch(moveState.createdHere
+            ? {
+              type: 'DeleteFeature', partId: owner.id as PartId,
+              featureId: moveState.moveFeatureId as FeatureId,
+            }
+            : {
+              type: 'UpdateFeatureInput', partId: owner.id as PartId,
+              featureId: moveState.moveFeatureId as FeatureId,
+              path: ['transform'], value: moveState.snapshot.transform,
+            });
+        }
+        setMoveState(null);
+        return;
+      }
+
       for (const part of Object.values(cur.parts)) {
         const f = part.timeline.find(ff => ff.id === moveState.sourceFeatureId);
         if (!f) continue;
@@ -1266,7 +1363,35 @@ export function Shell({
             break;
           }
         }
-        setMoveState({ bodyId, sourceFeatureId: featureId, mode: 'translate', scope: 'body', snapshot });
+        // Imports own a placement field; everything else needs a `move`
+        // feature to hold one. Reuse a trailing move that already targets
+        // exactly this body, so nudging the same body repeatedly leaves one
+        // feature in the timeline rather than a dozen.
+        const sourceType = Object.values(docNow.parts)
+          .flatMap(prt => prt.timeline).find(ff => ff.id === featureId)?.type;
+        const derived = sourceType !== 'importedGeometry';
+        let reuseId: string | null = null;
+        if (derived) {
+          for (const part of Object.values(docNow.parts)) {
+            const trailing = [...part.timeline].reverse().find(ff => ff.type === 'move');
+            if (trailing && targetsExactly(
+              trailing.inputs as unknown as MoveFeatureInputs, [String(bodyId)],
+            )) {
+              reuseId = String(trailing.id);
+              snapshot = {
+                transform: (trailing.inputs as { transform?: unknown }).transform,
+                bodyTransforms: undefined,
+              };
+            }
+            if (reuseId) break;
+          }
+        }
+        setMoveState({
+          bodyId, sourceFeatureId: featureId, mode: 'translate',
+          scope: derived ? 'feature' : 'body',
+          snapshot,
+          ...(derived ? { moveFeatureId: reuseId, createdHere: false } : {}),
+        });
         consoleLog('info', 'Move: drag the arrows; Esc to cancel, Done to keep', 'move');
         break;
       }
@@ -3685,9 +3810,16 @@ export function Shell({
             const ID: MoveTransform = { position: [0, 0, 0], rotation: [0, 0, 0, 1] };
             const feat = parts.flatMap(p => p.timeline).find(f => f.id === moveState.sourceFeatureId);
             const inputs = feat?.inputs as { transform?: MoveTransform; bodyTransforms?: Record<string, MoveTransform> } | undefined;
+            // Derived bodies read and write the trailing `move` feature; the
+            // import cases edit the source feature's own placement fields.
+            const moveFeat = moveState.scope === 'feature' && moveState.moveFeatureId
+              ? parts.flatMap(p => p.timeline).find(f => f.id === moveState.moveFeatureId)
+              : undefined;
             const targetT: MoveTransform = moveState.scope === 'all'
               ? (inputs?.transform ?? ID)
-              : (inputs?.bodyTransforms?.[moveState.bodyId] ?? ID);
+              : moveState.scope === 'feature'
+                ? ((moveFeat?.inputs as { transform?: MoveTransform } | undefined)?.transform ?? ID)
+                : (inputs?.bodyTransforms?.[moveState.bodyId] ?? ID);
             const partId = parts.find(p => p.timeline.some(f => f.id === moveState.sourceFeatureId))?.id as PartId | undefined;
             return (
               <MovePanel
@@ -3697,6 +3829,35 @@ export function Shell({
                 onModeChange={(mode) => setMoveState(s => s && ({ ...s, mode }))}
                 onTransformChange={(t) => {
                   if (!partId) return;
+                  if (moveState.scope === 'feature') {
+                    // Typing a number before ever dragging still has to land
+                    // somewhere, so create the feature here too.
+                    if (moveState.moveFeatureId) {
+                      commandBus.dispatch({
+                        type: 'UpdateFeatureInput', partId,
+                        featureId: moveState.moveFeatureId as FeatureId,
+                        path: ['transform'], value: t,
+                      });
+                      return;
+                    }
+                    const created = commandBus.dispatch({
+                      type: 'CreateMove', partId,
+                      inputs: {
+                        targetBodies: [{ partId, bodyId: moveState.bodyId as BodyId }],
+                        transform: t,
+                      },
+                    });
+                    if (!created.ok) {
+                      consoleLog('error', `Move failed: ${created.error.message}`, 'move');
+                      return;
+                    }
+                    const after = getAppState().documentStore.getState().parts[partId]!;
+                    const newest = [...after.timeline].reverse().find(f => f.type === 'move');
+                    setMoveState(s => s && ({
+                      ...s, moveFeatureId: newest ? String(newest.id) : null, createdHere: true,
+                    }));
+                    return;
+                  }
                   if (moveState.scope === 'all') {
                     commandBus.dispatch({
                       type: 'UpdateFeatureInput', partId, featureId: moveState.sourceFeatureId as FeatureId,
