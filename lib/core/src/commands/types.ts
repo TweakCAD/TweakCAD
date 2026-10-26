@@ -19,13 +19,13 @@ import type {
   FilletFeatureInputs,
   ChamferFeatureInputs,
   HoleFeatureInputs,
+  PrimitiveFeatureInputs,
   MirrorFeatureInputs,
   PatternFeatureInputs,
   ShellFeatureInputs,
   SweepFeatureInputs,
   ImportedGeometryFeatureInputs,
-  ImportedComponentFeatureInputs,
-  ComponentInstanceFeatureInputs,
+  ComponentFeatureInputs,
   ComponentDefinition,
   ConstructionPlaneFeatureInputs,
   ParameterValue,
@@ -74,13 +74,13 @@ export type CadCommand =
   | CreateFilletCommand
   | CreateChamferCommand
   | CreateHoleCommand
+  | CreatePrimitiveCommand
   | CreateMirrorCommand
   | CreateShellCommand
   | CreateSweepCommand
   | CreateImportedGeometryCommand
   | CreatePatternCommand
-  | CreateComponentInstanceCommand
-  | CreateImportedComponentCommand
+  | CreateComponentCommand
   | CreateConstructionPlaneCommand
   // Edit commands
   | UpdateFeatureInputCommand
@@ -590,6 +590,12 @@ export type CreateHoleCommand = {
   inputs: HoleFeatureInputs;
 };
 
+export type CreatePrimitiveCommand = {
+  type: 'CreatePrimitive';
+  partId: PartId;
+  inputs: PrimitiveFeatureInputs;
+};
+
 export type CreatePatternCommand = {
   type: 'CreatePattern';
   partId: PartId;
@@ -620,22 +626,16 @@ export type CreateImportedGeometryCommand = {
   inputs: ImportedGeometryFeatureInputs;
 };
 
-export type CreateComponentInstanceCommand = {
-  type: 'CreateComponentInstance';
-  partId: PartId;
-  inputs: ComponentInstanceFeatureInputs;
-};
-
 /**
  * Insert an instance of an embedded parametric component into a host
  * part's timeline. Handler upserts `component` into
  * `project.embeddedComponents[component.hash]` (idempotent on hash —
  * inserting the same .cadcomponent twice shares one entry) and
- * appends an `importedComponent` feature whose `componentRef` points
+ * appends an `component` feature whose `componentRef` points
  * at that hash. Single command keeps embed + insert in one undo step.
  */
-export type CreateImportedComponentCommand = {
-  type: 'CreateImportedComponent';
+export type CreateComponentCommand = {
+  type: 'CreateComponent';
   partId: PartId;
   /** Full embedded payload (hash + source). Handler stores under `embeddedComponents[hash]`. */
   component: ComponentDefinition;
@@ -644,7 +644,7 @@ export type CreateImportedComponentCommand = {
    * the handler derives from `component.hash` so caller can't pass a
    * mismatched ref).
    */
-  inputs: Omit<ImportedComponentFeatureInputs, 'componentRef'>;
+  inputs: Omit<ComponentFeatureInputs, 'componentRef'>;
 };
 
 export type CreateConstructionPlaneCommand = {
@@ -823,6 +823,8 @@ export function commandLabel(command: CadCommand): string {
       return `Create Chamfer (${command.inputs.edges.length} edges, d=${command.inputs.distance})`;
     case 'CreateHole':
       return `Create Hole (${command.inputs.kind})`;
+    case 'CreatePrimitive':
+      return `Create ${command.inputs.shape.kind} (${command.inputs.operation})`;
     case 'CreatePattern':
       return 'Create Pattern';
     case 'CreateMirror':
@@ -833,9 +835,7 @@ export function commandLabel(command: CadCommand): string {
       return `Create Sweep`;
     case 'CreateImportedGeometry':
       return `Import ${command.inputs.fileName}`;
-    case 'CreateComponentInstance':
-      return `Insert Component "${command.inputs.componentName}"`;
-    case 'CreateImportedComponent':
+    case 'CreateComponent':
       return `Insert Component "${command.component.name}"`;
     case 'CreateConstructionPlane':
       return command.inputs.kind === 'offsetFromPlane'

@@ -23,6 +23,7 @@
  */
 import type { CadProject } from '@tweakcad/core/src/document/schema.ts';
 import { loadCadDocumentOrThrow } from '@tweakcad/core/src/document/loader.ts';
+import { hashComponentSource } from '@tweakcad/core/src/document/contentHash.ts';
 
 const FILE_TYPES: FilePickerAcceptType[] = [
   {
@@ -116,7 +117,7 @@ export type ImportPickResult = {
  * Result of a parametric-component file pick: a parsed CadProject ready
  * to be wrapped in a ComponentDefinition and embedded into the host
  * project. The hash is pre-computed so the calling layer can dedupe
- * before dispatching the CreateImportedComponent command (and pin the
+ * before dispatching the CreateComponent command (and pin the
  * exact-version the host is built against).
  */
 export type ComponentImportPickResult = {
@@ -466,7 +467,7 @@ export function pickFcstdForImport(): Promise<FcstdImportPickResult | null> {
 /**
  * Prompt the user for a `.cadcomponent` (or `.cadjson` used as one) and
  * return its parsed CadProject + content hash, ready for the App layer
- * to dispatch a `CreateImportedComponent` command.
+ * to dispatch a `CreateComponent` command.
  *
  * Hashing happens HERE rather than in the command handler so:
  *   1. The expensive Web Crypto digest only runs at pick time (not on
@@ -518,47 +519,10 @@ async function fileToComponentResult(file: File): Promise<ComponentImportPickRes
   }
 
   const source = parsed as CadProject;
-  const hash = await sha256Hex(canonicalJson(source));
+  const hash = await hashComponentSource(source);
   return { fileName: file.name, source, hash };
 }
 
-/**
- * Canonical-JSON serialization: deterministic key order, no whitespace.
- * Two semantically-equal CadProject objects produce byte-identical
- * output, so SHA-256 of this form is a stable content-address.
- *
- * Same shape JCS (RFC 8785) prescribes for our usage: sort object keys
- * lexicographically, recurse into arrays/objects. We don't normalize
- * numbers beyond `JSON.stringify`'s defaults since the .cadjson schema
- * uses string-form expressions for all parametric values anyway.
- */
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) {
-    return '[' + value.map(canonicalJson).join(',') + ']';
-  }
-  const keys = Object.keys(value as Record<string, unknown>).sort();
-  return '{' + keys.map(k =>
-    JSON.stringify(k) + ':' + canonicalJson((value as Record<string, unknown>)[k]),
-  ).join(',') + '}';
-}
-
-/**
- * SHA-256 hex digest using the Web Crypto API. Available in every
- * browser context (main thread and worker) since 2017. Synchronous
- * `crypto.subtle.digest` is async-only — that's why
- * `fileToComponentResult` is async even after the file is in memory.
- */
-async function sha256Hex(input: string): Promise<string> {
-  const enc = new TextEncoder().encode(input);
-  const digest = await crypto.subtle.digest('SHA-256', enc);
-  const bytes = new Uint8Array(digest);
-  let hex = '';
-  for (let i = 0; i < bytes.length; i++) {
-    hex += bytes[i]!.toString(16).padStart(2, '0');
-  }
-  return hex;
-}
 
 // --- Save ----------------------------------------------------------------
 

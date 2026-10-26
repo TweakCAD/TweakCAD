@@ -78,6 +78,11 @@ import {
   DistanceYToolIcon,
   FinishSketchIcon,
   ConstructionGeometryIcon,
+  BoxIcon,
+  CylinderIcon,
+  SphereIcon,
+  ConeIcon,
+  TorusIcon,
 } from '../icons/cadIcons.tsx';
 // Logo as a Vite asset → content-hashed + base-prefixed (`/cad/assets/…` in the
 // embedded build, `/assets/…` standalone). Not a root-absolute `/500.png`,
@@ -150,7 +155,7 @@ interface AppBarProps {
   onImportFcstd?: (() => void) | undefined;
   /**
    * Import a parametric component (.cadcomponent / .cadjson) and embed
-   * it as an `importedComponent` feature.
+   * it as an `component` feature.
    */
   onImportComponent?: (() => void) | undefined;
   /** Import a DXF drawing as a new 2D sketch on a chosen plane. */
@@ -223,6 +228,8 @@ interface RibbonProps {
   onChamferClick?: (() => void) | undefined;
   /** Called when user clicks Hole tool in the toolbar */
   onHoleClick?: (() => void) | undefined;
+  /** Called with the shape the clicked ribbon entry stands for. */
+  onPrimitiveClick?: ((kind: 'box' | 'cylinder' | 'sphere' | 'cone' | 'torus') => void) | undefined;
   /** Called when user clicks Mirror Body tool in the toolbar */
   onMirrorClick?: (() => void) | undefined;
   /** Called when user clicks Shell tool in the toolbar */
@@ -245,6 +252,11 @@ type ToolId =
   | 'planeFromFace'
   | 'extrude'
   | 'hole'
+  | 'primBox'
+  | 'primCylinder'
+  | 'primSphere'
+  | 'primCone'
+  | 'primTorus'
   | 'cut'
   | 'fuse'
   | 'fillet'
@@ -296,6 +308,13 @@ const TOOLS: ToolDef[] = [
   // glyph lands (same pattern Loft followed).
   { id: 'sweep',   label: 'Sweep',   icon: (c) => <PatternIcon size={26} color={c} />, group: 'CREATE', color: '#eab308', primary: true },
   { id: 'hole',    label: 'Hole',    icon: (c) => <HoleIcon size={26} color={c} />,    shortcut: 'H', group: 'CREATE', color: '#f97316', primary: true },
+  // Primitives — a solid from numbers, no sketch. Box earns a ribbon slot;
+  // the other four live in the CREATE dropdown and open the same dialog.
+  { id: 'primBox',      label: 'Box',      icon: (c) => <BoxIcon size={26} color={c} />,      group: 'CREATE', color: '#14b8a6', primary: true },
+  { id: 'primCylinder', label: 'Cylinder', icon: (c) => <CylinderIcon size={26} color={c} />, group: 'CREATE', color: '#14b8a6' },
+  { id: 'primSphere',   label: 'Sphere',   icon: (c) => <SphereIcon size={26} color={c} />,   group: 'CREATE', color: '#14b8a6' },
+  { id: 'primCone',     label: 'Cone',     icon: (c) => <ConeIcon size={26} color={c} />,     group: 'CREATE', color: '#14b8a6' },
+  { id: 'primTorus',    label: 'Torus',    icon: (c) => <TorusIcon size={26} color={c} />,    group: 'CREATE', color: '#14b8a6' },
   { id: 'fillet',  label: 'Fillet',  icon: (c) => <FilletIcon size={26} color={c} />,  shortcut: 'F', group: 'MODIFY', color: '#06b6d4', primary: true },
   { id: 'chamfer', label: 'Chamfer', icon: (c) => <ChamferIcon size={26} color={c} />, group: 'MODIFY', color: '#06b6d4', primary: true },
   { id: 'shell',   label: 'Shell',   icon: (c) => <ShellIcon size={26} color={c} />,   group: 'MODIFY', color: '#64748b', primary: true },
@@ -961,6 +980,7 @@ export function MainRibbon({
   onFilletClick,
   onChamferClick,
   onHoleClick,
+  onPrimitiveClick,
   onMirrorClick,
   onShellClick,
   onPatternClick,
@@ -992,6 +1012,7 @@ export function MainRibbon({
           onFilletClick={onFilletClick}
           onChamferClick={onChamferClick}
           onHoleClick={onHoleClick}
+          onPrimitiveClick={onPrimitiveClick}
           onMirrorClick={onMirrorClick}
           onShellClick={onShellClick}
           onPatternClick={onPatternClick}
@@ -1018,6 +1039,7 @@ function ModelingRibbon({
   onFilletClick,
   onChamferClick,
   onHoleClick,
+  onPrimitiveClick,
   onMirrorClick,
   onShellClick,
   onPatternClick,
@@ -1036,6 +1058,8 @@ function ModelingRibbon({
   onFilletClick?: (() => void) | undefined;
   onChamferClick?: (() => void) | undefined;
   onHoleClick?: (() => void) | undefined;
+  /** Called with the shape the clicked ribbon entry stands for. */
+  onPrimitiveClick?: ((kind: 'box' | 'cylinder' | 'sphere' | 'cone' | 'torus') => void) | undefined;
   onMirrorClick?: (() => void) | undefined;
   onShellClick?: (() => void) | undefined;
   onPatternClick?: (() => void) | undefined;
@@ -1086,6 +1110,11 @@ function ModelingRibbon({
     }
     if (toolId === 'hole') {
       onHoleClick?.();
+      return;
+    }
+    if (toolId.startsWith('prim')) {
+      const kind = toolId.slice(4).toLowerCase() as 'box' | 'cylinder' | 'sphere' | 'cone' | 'torus';
+      onPrimitiveClick?.(kind);
       return;
     }
     if (toolId === 'mirror') {

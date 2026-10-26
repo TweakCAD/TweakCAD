@@ -14,7 +14,7 @@
  *     way along the extrusion axis. Fix: signed offset by direction.
  *
  * These bugs lived in the gap between kernel tests (single-face
- * extrude works fine) and importedComponent tests (use single-profile
+ * extrude works fine) and component tests (use single-profile
  * fixtures). No layer had been verifying multi-profile orchestration
  * or operation semantics.
  */

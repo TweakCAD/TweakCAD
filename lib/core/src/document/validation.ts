@@ -358,12 +358,12 @@ const ImportedGeometryFeatureInputsSchema = z.object({
 });
 
 /**
- * ImportedComponent feature inputs schema. `componentRef` is the
+ * Component feature inputs schema. `componentRef` is the
  * hash key into `project.embeddedComponents`; the builder fails the
  * feature if that key is missing at rebuild time (no schema-level
  * cross-validation since Zod can't see the project root from here).
  */
-const ImportedComponentFeatureInputsSchema = z.object({
+const ComponentFeatureInputsSchema = z.object({
   componentRef: z.string().min(1),
   transform: Transform3DSchema,
   parameterOverrides: z.record(z.string(), ExpressionSchema),
@@ -445,6 +445,48 @@ const MirrorFeatureInputsSchema = z.object({
   targetBodies: z.array(z.object({ partId: z.string(), bodyId: z.string() })).optional(),
 });
 
+/**
+ * Primitive dimensions, discriminated on `shape.kind`. Positivity is not
+ * checked here — the fields are `Expression`s, so `"wallThickness * 2"` is a
+ * legal value and its sign is only known once parameters resolve. The builder
+ * rejects non-positive results, where the number actually exists.
+ */
+const PrimitiveShapeSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('box'),
+    width: ExpressionSchema,
+    height: ExpressionSchema,
+    depth: ExpressionSchema,
+  }),
+  z.object({
+    kind: z.literal('cylinder'),
+    radius: ExpressionSchema,
+    height: ExpressionSchema,
+  }),
+  z.object({
+    kind: z.literal('sphere'),
+    radius: ExpressionSchema,
+  }),
+  z.object({
+    kind: z.literal('cone'),
+    bottomRadius: ExpressionSchema,
+    topRadius: ExpressionSchema,
+    height: ExpressionSchema,
+  }),
+  z.object({
+    kind: z.literal('torus'),
+    majorRadius: ExpressionSchema,
+    minorRadius: ExpressionSchema,
+  }),
+]);
+
+const PrimitiveFeatureInputsSchema = z.object({
+  shape: PrimitiveShapeSchema,
+  transform: Transform3DSchema,
+  operation: BooleanOperationSchema,
+  targetBodies: z.array(BodyRefSchema).optional(),
+});
+
 const HoleFeatureInputsSchema = z.object({
   // The hole is anchored to a face, not a plane — the FaceRef's
   // stableTopology variant carries the bodyId so the builder knows what
@@ -503,26 +545,6 @@ const LoftFeatureInputsSchema = z.object({
   targetBodies: z.array(BodyRefSchema).optional(),
 });
 
-/**
- * A component linked from the SaaS catalog, as opposed to `importedComponent`
- * which embeds its source. `parameters` stays `unknown` per value: the
- * component's own manifest defines them, and this document cannot see it.
- */
-const ComponentInstanceFeatureInputsSchema = z.object({
-  componentProjectId: z.string().min(1),
-  componentSlug: z.string().min(1),
-  componentName: z.string(),
-  manifestVersion: z.number(),
-  parameters: z.record(z.string(), z.unknown()),
-  boolean: BooleanOperationSchema.optional(),
-  placement: z
-    .object({
-      plane: PlaneRefSchema.optional(),
-      offset: Vec3Schema.optional(),
-    })
-    .optional(),
-});
-
 // --- Feature Node ---
 
 const FeatureTypeSchema = z.union([
@@ -538,10 +560,10 @@ const FeatureTypeSchema = z.union([
   z.literal('fillet'),
   z.literal('chamfer'),
   z.literal('mirror'),
-  z.literal('componentInstance'),
-  z.literal('importedComponent'),
+  z.literal('component'),
   z.literal('constructionPlane'),
   z.literal('importedGeometry'),
+  z.literal('primitive'),
 ]);
 
 /**
@@ -566,10 +588,10 @@ const FEATURE_INPUT_SCHEMAS: Record<FeatureTypeName, z.ZodTypeAny> = {
   fillet: FilletFeatureInputsSchema,
   chamfer: ChamferFeatureInputsSchema,
   mirror: MirrorFeatureInputsSchema,
-  componentInstance: ComponentInstanceFeatureInputsSchema,
-  importedComponent: ImportedComponentFeatureInputsSchema,
+  component: ComponentFeatureInputsSchema,
   constructionPlane: ConstructionPlaneFeatureInputsSchema,
   importedGeometry: ImportedGeometryFeatureInputsSchema,
+  primitive: PrimitiveFeatureInputsSchema,
 };
 
 /** The envelope every feature shares, regardless of type. */
@@ -745,7 +767,7 @@ export {
   ShellFeatureInputsSchema,
   SweepFeatureInputsSchema,
   ImportedGeometryFeatureInputsSchema,
-  ImportedComponentFeatureInputsSchema,
+  ComponentFeatureInputsSchema,
   PatternFeatureInputsSchema,
   LinearPatternInputsSchema,
   CircularPatternInputsSchema,

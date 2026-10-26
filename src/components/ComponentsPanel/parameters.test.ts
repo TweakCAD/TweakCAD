@@ -1,169 +1,138 @@
 /**
- * Pure-logic tests for the ComponentsPanel parameter form.
- * No DOM rendering — matches the existing test style (sketchSolver.test.ts).
+ * The configure form's inputs and outputs.
+ *
+ * Everything here reads from the component's own document — its `public`
+ * parameters and configuration rows. There is no catalog manifest in the
+ * picture: a component is a project, and its parameter table already says
+ * what is adjustable.
  */
 
 import { describe, expect, it } from 'vitest';
-import type { ComponentManifest, ComponentParameter } from '@tweakcad/api-types';
+import { hexBoltComponent } from '@tweakcad/testing/src/componentFixtures.ts';
+import type { CadPart, CadProject } from '@tweakcad/core/src/document/schema.ts';
 import {
-  clampNumber,
-  coerceParameterValue,
+  componentPart,
+  configurationRows,
   initialParameterValues,
+  isAllowedChoice,
+  overridesFrom,
+  publicParameters,
 } from './parameters.ts';
 
-function manifest(parameters: ComponentParameter[]): ComponentManifest {
-  return { schemaVersion: 1, parameters };
+function sourcePart(source: CadProject): CadPart {
+  const part = componentPart(source);
+  if (!part) throw new Error('test setup: component has no part');
+  return part;
 }
 
+describe('componentPart', () => {
+  it('returns the single part of a component', () => {
+    expect(sourcePart(hexBoltComponent()).name).toBe('Bolt');
+  });
+
+  it('returns null for a document with no parts', () => {
+    const empty = { ...hexBoltComponent(), parts: {} };
+    expect(componentPart(empty)).toBeNull();
+  });
+});
+
+describe('publicParameters', () => {
+  it('offers only what the author marked public, in declaration order', () => {
+    // `headHeight` is derived from the other two — showing it would invite
+    // the user to break the relationship the author built.
+    expect(publicParameters(sourcePart(hexBoltComponent())).map(p => p.name))
+      .toEqual(['length', 'grade']);
+  });
+
+  it('is empty for a component whose author published nothing', () => {
+    const source = hexBoltComponent();
+    const part = sourcePart(source);
+    for (const param of Object.values(part.parameters.values)) delete param.public;
+    expect(publicParameters(part)).toEqual([]);
+  });
+});
+
+describe('configurationRows', () => {
+  it('reads the named sizes off the component', () => {
+    expect(configurationRows(sourcePart(hexBoltComponent())).map(r => r.name))
+      .toEqual(['M5×20', 'M5×40']);
+  });
+
+  it('is empty when the author defined none', () => {
+    const part = sourcePart(hexBoltComponent());
+    delete part.configurations;
+    expect(configurationRows(part)).toEqual([]);
+  });
+});
+
 describe('initialParameterValues', () => {
-  it('returns the manifest default for a well-formed number parameter', () => {
-    const m = manifest([
-      { name: 'length', label: 'Length', type: 'number', default: 20, range: [6, 120] },
-    ]);
-    expect(initialParameterValues(m)).toEqual({ length: 20 });
+  it('seeds from the chosen configuration row', () => {
+    expect(initialParameterValues(sourcePart(hexBoltComponent()), 'cfg_m5x40'))
+      .toEqual({ length: '40', grade: '8.8' });
   });
 
-  it('clamps an out-of-range numeric default to the range', () => {
-    const m = manifest([
-      { name: 'length', label: 'Length', type: 'number', default: 200, range: [6, 120] },
-    ]);
-    expect(initialParameterValues(m)).toEqual({ length: 120 });
+  it('falls back to parameter defaults when no row is chosen', () => {
+    expect(initialParameterValues(sourcePart(hexBoltComponent()), null))
+      .toEqual({ length: '20', grade: '8.8' });
   });
 
-  it('falls back to range[0] when the default is missing for a number', () => {
-    const m = manifest([
-      { name: 'length', label: 'Length', type: 'number', default: undefined, range: [6, 120] },
-    ]);
-    expect(initialParameterValues(m)).toEqual({ length: 6 });
-  });
-
-  it('falls back to 0 when both default and range are missing for a number', () => {
-    const m = manifest([
-      { name: 'count', label: 'Count', type: 'number', default: undefined },
-    ]);
-    expect(initialParameterValues(m)).toEqual({ count: 0 });
-  });
-
-  it('uses the manifest default when it is in the allowed enum values', () => {
-    const m = manifest([
-      {
-        name: 'grade',
-        label: 'Grade',
-        type: 'enum',
-        default: '10.9',
-        values: ['8.8', '10.9', '12.9'],
-      },
-    ]);
-    expect(initialParameterValues(m)).toEqual({ grade: '10.9' });
-  });
-
-  it('falls back to first enum value when default is not in the value set', () => {
-    const m = manifest([
-      {
-        name: 'grade',
-        label: 'Grade',
-        type: 'enum',
-        default: 'unknown',
-        values: ['8.8', '10.9', '12.9'],
-      },
-    ]);
-    expect(initialParameterValues(m)).toEqual({ grade: '8.8' });
-  });
-
-  it('returns false for boolean parameter with a non-boolean default', () => {
-    const m = manifest([
-      { name: 'flag', label: 'Flag', type: 'boolean', default: 'maybe' },
-    ]);
-    expect(initialParameterValues(m)).toEqual({ flag: false });
-  });
-
-  it('returns the default for boolean parameter when properly typed', () => {
-    const m = manifest([
-      { name: 'flag', label: 'Flag', type: 'boolean', default: true },
-    ]);
-    expect(initialParameterValues(m)).toEqual({ flag: true });
-  });
-
-  it('returns the string default for string parameters', () => {
-    const m = manifest([
-      { name: 'note', label: 'Note', type: 'string', default: 'hello' },
-    ]);
-    expect(initialParameterValues(m)).toEqual({ note: 'hello' });
-  });
-
-  it('handles multiple parameters of mixed types', () => {
-    const m = manifest([
-      { name: 'length', label: 'Length', type: 'number', default: 20, range: [6, 120] },
-      { name: 'grade', label: 'Grade', type: 'enum', default: '8.8', values: ['8.8', '10.9'] },
-      { name: 'threaded', label: 'Threaded', type: 'boolean', default: true },
-    ]);
-    expect(initialParameterValues(m)).toEqual({
-      length: 20,
-      grade: '8.8',
-      threaded: true,
-    });
+  it('falls back to defaults when the row id does not exist', () => {
+    // A stale id — the component was republished without that size. Showing
+    // the defaults beats showing nothing.
+    expect(initialParameterValues(sourcePart(hexBoltComponent()), 'cfg_gone'))
+      .toEqual({ length: '20', grade: '8.8' });
   });
 });
 
-describe('clampNumber', () => {
-  it('returns the value unchanged when within range', () => {
-    expect(clampNumber(50, [0, 100])).toBe(50);
+describe('overridesFrom', () => {
+  it('keeps only values that differ from the configuration baseline', () => {
+    // Pinning a value equal to the default would freeze it: a later version of
+    // the component that changed that default would be ignored here, silently.
+    expect(overridesFrom(sourcePart(hexBoltComponent()), 'cfg_m5x40', {
+      length: '40', grade: '12.9',
+    })).toEqual({ grade: '12.9' });
   });
 
-  it('clamps below the minimum to the minimum', () => {
-    expect(clampNumber(-5, [0, 100])).toBe(0);
+  it('is empty when the user changed nothing', () => {
+    const part = sourcePart(hexBoltComponent());
+    expect(overridesFrom(part, 'cfg_m5x20', initialParameterValues(part, 'cfg_m5x20')))
+      .toEqual({});
   });
 
-  it('clamps above the maximum to the maximum', () => {
-    expect(clampNumber(150, [0, 100])).toBe(100);
+  it('drops blank entries rather than storing an empty expression', () => {
+    expect(overridesFrom(sourcePart(hexBoltComponent()), null, {
+      length: '   ', grade: '10.9',
+    })).toEqual({ grade: '10.9' });
   });
 
-  it('returns the value unchanged when no range is supplied', () => {
-    expect(clampNumber(999, undefined)).toBe(999);
+  it('ignores surrounding whitespace when deciding what changed', () => {
+    expect(overridesFrom(sourcePart(hexBoltComponent()), null, {
+      length: ' 20 ', grade: '8.8',
+    })).toEqual({});
+  });
+
+  it('keeps an expression that references a host parameter', () => {
+    // Overrides are expressions, not numbers — that is what keeps an inserted
+    // component parametric instead of frozen at insert time.
+    expect(overridesFrom(sourcePart(hexBoltComponent()), null, {
+      length: 'plateThickness * 3', grade: '8.8',
+    })).toEqual({ length: 'plateThickness * 3' });
   });
 });
 
-describe('coerceParameterValue', () => {
-  it('parses numeric strings and clamps to the range', () => {
-    const param: ComponentParameter = {
-      name: 'length',
-      label: 'Length',
-      type: 'number',
-      default: 10,
-      range: [0, 100],
-    };
-    expect(coerceParameterValue(param, '50')).toBe(50);
-    expect(coerceParameterValue(param, '500')).toBe(100); // clamped
-    expect(coerceParameterValue(param, '-5')).toBe(0); // clamped
+describe('isAllowedChoice', () => {
+  it('rejects a value outside a choice parameter options', () => {
+    const grade = publicParameters(sourcePart(hexBoltComponent()))
+      .find(p => p.name === 'grade')!;
+    expect(isAllowedChoice(grade, '10.9')).toBe(true);
+    expect(isAllowedChoice(grade, '4.6')).toBe(false);
   });
 
-  it('rejects non-numeric input for number parameters', () => {
-    const param: ComponentParameter = { name: 'l', label: 'L', type: 'number', default: 1 };
-    expect(coerceParameterValue(param, 'abc')).toBeNull();
-  });
-
-  it('rejects enum values outside the allowed set', () => {
-    const param: ComponentParameter = {
-      name: 'grade',
-      label: 'Grade',
-      type: 'enum',
-      default: '8.8',
-      values: ['8.8', '10.9'],
-    };
-    expect(coerceParameterValue(param, '10.9')).toBe('10.9');
-    expect(coerceParameterValue(param, '5.6')).toBeNull();
-  });
-
-  it('coerces truthy/falsy values to boolean', () => {
-    const param: ComponentParameter = { name: 'f', label: 'F', type: 'boolean', default: false };
-    expect(coerceParameterValue(param, true)).toBe(true);
-    expect(coerceParameterValue(param, '')).toBe(false);
-    expect(coerceParameterValue(param, 'on')).toBe(true);
-  });
-
-  it('coerces arbitrary input to string for string parameters', () => {
-    const param: ComponentParameter = { name: 's', label: 'S', type: 'string', default: '' };
-    expect(coerceParameterValue(param, 'hello')).toBe('hello');
-    expect(coerceParameterValue(param, 42)).toBe('42');
+  it('accepts anything for a numeric parameter', () => {
+    // Numeric values are expressions; only the evaluator can judge them, and
+    // it reports failures against the feature where they can be named.
+    const length = publicParameters(sourcePart(hexBoltComponent()))
+      .find(p => p.name === 'length')!;
+    expect(isAllowedChoice(length, 'wallThickness * 2')).toBe(true);
   });
 });

@@ -28,6 +28,8 @@ import type {
   CylinderSpec,
   ConeSpec,
   BoxSpec,
+  SphereSpec,
+  TorusSpec,
   TessellationOptions,
   StlExportOptions,
   StepExportOptions,
@@ -774,6 +776,81 @@ export class OcctKernel implements CadKernel {
     } catch (e) {
       console.error('[OcctKernel] makeBox failed:', e);
       return err(kernelError('kernel', 'BOX_FAILED', e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  async makeSphere(spec: SphereSpec, origin?: string): Promise<Result<KernelBody, KernelError>> {
+    try {
+      const k = this.getKernel();
+      if (!(spec.radius > 0)) {
+        return err(kernelError('parameter', 'INVALID_RADIUS', 'Sphere radius must be positive'));
+      }
+      // A sphere needs no orientation — only a translation. Skipping the
+      // transform when it is at the origin avoids building an identity
+      // matrix and a second shape for the common case.
+      const sphere = k.makeSphere(spec.radius);
+      try {
+        const [cx, cy, cz] = spec.center;
+        if (cx === 0 && cy === 0 && cz === 0) {
+          return ok(this.storeFreshBody(sphere, originTag('sphere', origin)));
+        }
+        const placed = k.translate(sphere, cx, cy, cz);
+        k.release(sphere);
+        return ok(this.storeFreshBody(placed, originTag('sphere', origin)));
+      } catch (e) {
+        try { k.release(sphere); } catch { /* already released */ }
+        throw e;
+      }
+    } catch (e) {
+      console.error('[OcctKernel] makeSphere failed:', e);
+      return err(kernelError('kernel', 'SPHERE_FAILED', e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  async makeTorus(spec: TorusSpec, origin?: string): Promise<Result<KernelBody, KernelError>> {
+    try {
+      const k = this.getKernel();
+      if (!(spec.majorRadius > 0) || !(spec.minorRadius > 0)) {
+        return err(kernelError('parameter', 'INVALID_RADIUS', 'Torus radii must be positive'));
+      }
+      if (spec.minorRadius >= spec.majorRadius) {
+        // OCCT builds this happily and produces a self-intersecting solid
+        // that fails later, inside a boolean, with an error naming neither
+        // the torus nor the reason. Reject it where the cause is obvious.
+        return err(kernelError(
+          'parameter',
+          'TORUS_SELF_INTERSECTS',
+          `Torus minor radius (${spec.minorRadius}) must be smaller than its major ` +
+            `radius (${spec.majorRadius}); otherwise the tube passes through itself.`,
+        ));
+      }
+      // Canonical torus lies in XY about +Z, same as the cylinder's canonical
+      // form — so it takes the identical orientation path.
+      const torus = k.makeTorus(spec.majorRadius, spec.minorRadius);
+      try {
+        const [ax, ay, az] = spec.axis;
+        const len = Math.hypot(ax, ay, az);
+        if (len === 0) {
+          return err(kernelError('parameter', 'ZERO_AXIS', 'Torus axis cannot be zero'));
+        }
+        const dir: Vec3 = [ax / len, ay / len, az / len];
+        const { uDir, vDir } = computeLocalAxes(dir[0], dir[1], dir[2]);
+        const [cx, cy, cz] = spec.center;
+        const matrix = [
+          uDir[0], vDir[0], dir[0], cx,
+          uDir[1], vDir[1], dir[1], cy,
+          uDir[2], vDir[2], dir[2], cz,
+        ];
+        const oriented = k.transform(torus, matrix);
+        k.release(torus);
+        return ok(this.storeFreshBody(oriented, originTag('torus', origin)));
+      } catch (e) {
+        try { k.release(torus); } catch { /* already released */ }
+        throw e;
+      }
+    } catch (e) {
+      console.error('[OcctKernel] makeTorus failed:', e);
+      return err(kernelError('kernel', 'TORUS_FAILED', e instanceof Error ? e.message : String(e)));
     }
   }
 

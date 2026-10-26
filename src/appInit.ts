@@ -25,13 +25,13 @@ import {
   createFilletHandler,
   createChamferHandler,
   createHoleHandler,
+  createPrimitiveHandler,
   createMirrorHandler,
   createShellHandler,
   createSweepHandler,
   createImportedGeometryHandler,
   createPatternHandler,
-  createComponentInstanceHandler,
-  createImportedComponentHandler,
+  createComponentHandler,
   createConstructionPlaneHandler,
   suppressFeatureHandler,
   setFeatureVisibilityHandler,
@@ -143,13 +143,13 @@ export function initializeApp(): AppState {
   commandBus.register('CreateFillet', createFilletHandler);
   commandBus.register('CreateChamfer', createChamferHandler);
   commandBus.register('CreateHole', createHoleHandler);
+  commandBus.register('CreatePrimitive', createPrimitiveHandler);
   commandBus.register('CreateMirror', createMirrorHandler);
   commandBus.register('CreateShell', createShellHandler);
   commandBus.register('CreateSweep', createSweepHandler);
   commandBus.register('CreateImportedGeometry', createImportedGeometryHandler);
   commandBus.register('CreatePattern', createPatternHandler);
-  commandBus.register('CreateComponentInstance', createComponentInstanceHandler);
-  commandBus.register('CreateImportedComponent', createImportedComponentHandler);
+  commandBus.register('CreateComponent', createComponentHandler);
   commandBus.register('CreateConstructionPlane', createConstructionPlaneHandler);
   commandBus.register('SuppressFeature', suppressFeatureHandler);
   commandBus.register('SetFeatureVisibility', setFeatureVisibilityHandler);

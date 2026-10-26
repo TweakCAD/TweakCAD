@@ -1,86 +1,99 @@
 /**
  * Pure helpers for the configure-view parameter form.
  *
- * Kept separate from the React component so the logic (defaults,
- * clamping, type coercion) is testable without DOM rendering — matches
- * the existing test style in this repo (sketchSolver.test.ts).
+ * The knobs come from the component's **own document** — the `public`
+ * parameters and the configuration rows of its single part — not from a
+ * separate catalog manifest. The `.cadjson` is the manifest: a component is
+ * just a project, and its parameter table already says what is adjustable,
+ * what unit it is in and what it means. A parallel manifest would be a second
+ * copy of that, free to drift from the geometry it claims to describe.
+ *
+ * Kept apart from the React component so defaults, coercion and the
+ * configuration merge are testable without rendering.
  */
 
-import type { ComponentManifest, ComponentParameter } from '@tweakcad/api-types';
+import type {
+  CadProject,
+  CadPart,
+  ConfigurationRow,
+  ParameterValue,
+} from '@tweakcad/core/src/document/schema.ts';
+
+/** A component's single part. Components are one-part projects by definition. */
+export function componentPart(source: CadProject): CadPart | null {
+  const parts = Object.values(source.parts ?? {});
+  return parts[0] ?? null;
+}
 
 /**
- * Build the initial parameter value map for a manifest.
+ * The parameters a consumer is meant to touch, in declaration order.
  *
- * Falls back to a type-sensible default when the manifest's `default` is
- * missing or ill-typed, so the configure view always renders something a
- * user can edit.
+ * `public: true` is the author's opt-in. A component with none published is
+ * not broken — it is simply non-adjustable, and the panel says so rather than
+ * showing every internal helper parameter.
+ */
+export function publicParameters(part: CadPart): ParameterValue[] {
+  return Object.values(part.parameters?.values ?? {}).filter(p => p.public === true);
+}
+
+/** Named presets, if the author defined any. */
+export function configurationRows(part: CadPart): ConfigurationRow[] {
+  return part.configurations?.rows ?? [];
+}
+
+/**
+ * Starting expression for each public parameter under a chosen configuration.
+ *
+ * Merge order matches the rebuilder's: parameter default, then the active
+ * configuration row's override. Per-instance overrides are what this form
+ * produces, so they are the layer above and not applied here.
  */
 export function initialParameterValues(
-  manifest: ComponentManifest,
-): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const param of manifest.parameters) {
-    out[param.name] = resolveDefault(param);
+  part: CadPart,
+  configurationId: string | null,
+): Record<string, string> {
+  const row = configurationId
+    ? configurationRows(part).find(r => r.id === configurationId)
+    : undefined;
+  const out: Record<string, string> = {};
+  for (const param of publicParameters(part)) {
+    out[param.name] = String(row?.overrides?.[param.name] ?? param.expression);
   }
   return out;
 }
 
-function resolveDefault(param: ComponentParameter): unknown {
-  switch (param.type) {
-    case 'number': {
-      if (typeof param.default === 'number' && Number.isFinite(param.default)) {
-        return clampNumber(param.default, param.range);
-      }
-      if (param.range) return param.range[0];
-      return 0;
-    }
-    case 'enum': {
-      if (typeof param.default === 'string' && param.values?.includes(param.default)) {
-        return param.default;
-      }
-      return param.values?.[0] ?? '';
-    }
-    case 'boolean':
-      return typeof param.default === 'boolean' ? param.default : false;
-    case 'string':
-      return typeof param.default === 'string' ? param.default : '';
+/**
+ * Narrow the form's values to the ones that actually differ from what the
+ * component would do on its own.
+ *
+ * Storing an override equal to the default would pin the value: a later
+ * component update that changes that default would be silently ignored on
+ * this instance. Only real edits are kept.
+ */
+export function overridesFrom(
+  part: CadPart,
+  configurationId: string | null,
+  values: Record<string, string>,
+): Record<string, string> {
+  const baseline = initialParameterValues(part, configurationId);
+  const out: Record<string, string> = {};
+  for (const [name, value] of Object.entries(values)) {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) continue;
+    if (trimmed === String(baseline[name] ?? '').trim()) continue;
+    out[name] = trimmed;
   }
-}
-
-/** Clamp a number to the parameter's optional [min, max] range. */
-export function clampNumber(
-  value: number,
-  range: readonly [number, number] | undefined,
-): number {
-  if (!range) return value;
-  const [min, max] = range;
-  if (value < min) return min;
-  if (value > max) return max;
-  return value;
+  return out;
 }
 
 /**
- * Coerce a raw form value (string from <input>, etc.) into the manifest's
- * declared type. Returns `null` when the input can't be coerced — the
- * caller can fall back to the previous value rather than store garbage.
+ * Whether a choice parameter would accept `value`.
+ *
+ * Numeric parameters are not validated here: they hold expressions, which may
+ * reference other parameters and can only be judged by the evaluator. The
+ * rebuild reports a bad one against the feature, where the error can name it.
  */
-export function coerceParameterValue(
-  param: ComponentParameter,
-  raw: unknown,
-): unknown {
-  switch (param.type) {
-    case 'number': {
-      const num = typeof raw === 'number' ? raw : parseFloat(String(raw));
-      if (!Number.isFinite(num)) return null;
-      return clampNumber(num, param.range);
-    }
-    case 'enum': {
-      const str = String(raw);
-      return param.values?.includes(str) ? str : null;
-    }
-    case 'boolean':
-      return Boolean(raw);
-    case 'string':
-      return String(raw);
-  }
+export function isAllowedChoice(param: ParameterValue, value: string): boolean {
+  if (param.kind !== 'choice') return true;
+  return (param.options ?? []).includes(value);
 }

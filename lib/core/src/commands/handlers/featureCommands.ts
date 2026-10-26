@@ -566,54 +566,11 @@ export const createLoftHandler: CommandHandler = {
   },
 };
 
-export const createComponentInstanceHandler: CommandHandler = {
-  validate(command: CadCommand, state: Readonly<CadProject>): Result<void, ValidationError> {
-    if (command.type !== 'CreateComponentInstance') {
-      return err({ code: 'WRONG_TYPE', message: 'Expected CreateComponentInstance command' });
-    }
-    const partCheck = findPart(state, command.partId);
-    if (!partCheck.ok) return partCheck;
-    if (!command.inputs.componentSlug.trim()) {
-      return err({ code: 'INVALID_INPUT', message: 'componentSlug is required' });
-    }
-    if (!command.inputs.componentName.trim()) {
-      return err({ code: 'INVALID_INPUT', message: 'componentName is required' });
-    }
-    return ok(undefined);
-  },
-
-  execute(draft: CadProject, command: CadCommand): void {
-    if (command.type !== 'CreateComponentInstance') return;
-    const part = draft.parts[command.partId];
-    if (!part) return;
-
-    const id = featureId(generateId('component'));
-    const now = new Date().toISOString();
-    const count = part.timeline.filter(f => f.type === 'componentInstance').length;
-
-    const feature: FeatureNode = {
-      id,
-      type: 'componentInstance',
-      name: count === 0 ? command.inputs.componentName : `${command.inputs.componentName} (${count + 1})`,
-      version: 1,
-      enabled: true,
-      visible: true,
-      inputs: command.inputs as unknown as Record<string, unknown>,
-      dependsOn: [],
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    part.timeline.push(feature);
-    draft.metadata.updatedAt = now;
-  },
-};
-
 /**
- * `CreateImportedComponent` handler.
+ * `CreateComponent` handler.
  *
  * Atomic: upserts the embedded component under `embeddedComponents[hash]`
- * AND appends the `importedComponent` feature in one mutation, so undo
+ * AND appends the `component` feature in one mutation, so undo
  * rolls back both halves at once.
  *
  * Validation:
@@ -628,10 +585,10 @@ export const createComponentInstanceHandler: CommandHandler = {
  * Idempotent on hash: inserting the same .cadcomponent twice reuses
  * the existing entry — no duplicate storage.
  */
-export const createImportedComponentHandler: CommandHandler = {
+export const createComponentHandler: CommandHandler = {
   validate(command: CadCommand, state: Readonly<CadProject>): Result<void, ValidationError> {
-    if (command.type !== 'CreateImportedComponent') {
-      return err({ code: 'WRONG_TYPE', message: 'Expected CreateImportedComponent command' });
+    if (command.type !== 'CreateComponent') {
+      return err({ code: 'WRONG_TYPE', message: 'Expected CreateComponent command' });
     }
     const partCheck = findPart(state, command.partId);
     if (!partCheck.ok) return partCheck;
@@ -660,7 +617,7 @@ export const createImportedComponentHandler: CommandHandler = {
   },
 
   execute(draft: CadProject, command: CadCommand): void {
-    if (command.type !== 'CreateImportedComponent') return;
+    if (command.type !== 'CreateComponent') return;
     const part = draft.parts[command.partId];
     if (!part) return;
 
@@ -673,9 +630,9 @@ export const createImportedComponentHandler: CommandHandler = {
       ...command.component,
     };
 
-    const id = featureId(generateId('imported_component'));
+    const id = featureId(generateId('component'));
     const now = new Date().toISOString();
-    const count = part.timeline.filter(f => f.type === 'importedComponent').length;
+    const count = part.timeline.filter(f => f.type === 'component').length;
 
     // Compose final inputs with the derived componentRef so the caller
     // can't pass a mismatched ref.
@@ -691,8 +648,9 @@ export const createImportedComponentHandler: CommandHandler = {
 
     const feature: FeatureNode = {
       id,
-      type: 'importedComponent',
-      // Match componentInstance naming convention: "Bolt" / "Bolt (2)" / …
+      type: 'component',
+      // "Bolt" for the first, "Bolt (2)" for the next — the component names
+      // itself, since "Component 3" says nothing about which one it is.
       name: count === 0 ? command.component.name : `${command.component.name} (${count + 1})`,
       version: 1,
       enabled: true,
@@ -728,6 +686,57 @@ export const createHoleHandler: CommandHandler = {
       id,
       type: 'hole',
       name: `Hole ${part.timeline.filter(f => f.type === 'hole').length + 1}`,
+      version: 1,
+      enabled: true,
+      visible: true,
+      inputs: command.inputs as unknown as Record<string, unknown>,
+      dependsOn: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    part.timeline.push(feature);
+    draft.metadata.updatedAt = now;
+  },
+};
+
+/**
+ * Primitives are named for their shape ("Box 1", "Cylinder 2") rather than
+ * the feature type, counted per shape. "Primitive 4" in the tree would say
+ * nothing about which of the five it is.
+ */
+export const createPrimitiveHandler: CommandHandler = {
+  validate(command: CadCommand, state: Readonly<CadProject>): Result<void, ValidationError> {
+    if (command.type !== 'CreatePrimitive') {
+      return err({ code: 'WRONG_TYPE', message: 'Expected CreatePrimitive command' });
+    }
+    if (!command.inputs.shape?.kind) {
+      return err({ code: 'INVALID_INPUT', message: 'Primitive requires a shape' });
+    }
+    if (!command.inputs.transform) {
+      return err({ code: 'INVALID_INPUT', message: 'Primitive requires a transform' });
+    }
+    return findPart(state, command.partId);
+  },
+
+  execute(draft: CadProject, command: CadCommand): void {
+    if (command.type !== 'CreatePrimitive') return;
+    const part = draft.parts[command.partId];
+    if (!part) return;
+
+    const kind = command.inputs.shape.kind;
+    const id = featureId(generateId(kind));
+    const now = new Date().toISOString();
+
+    const sameKind = part.timeline.filter(
+      f => f.type === 'primitive'
+        && (f.inputs as { shape?: { kind?: string } }).shape?.kind === kind,
+    ).length;
+
+    const feature: FeatureNode = {
+      id,
+      type: 'primitive',
+      name: `${kind.charAt(0).toUpperCase()}${kind.slice(1)} ${sameKind + 1}`,
       version: 1,
       enabled: true,
       visible: true,

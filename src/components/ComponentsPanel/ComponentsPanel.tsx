@@ -2,43 +2,64 @@
  * Right-side Components Panel.
  *
  * Three views:
- *   1. Browse   — search + category groups + card grid
+ *   1. Browse    — search + category groups + card grid
  *   2. Configure — header (back arrow, name, standard chip) + parameter form
- *   3. Inserted — brief confirmation, auto-returns to browse
+ *   3. Inserted  — brief confirmation, auto-returns to browse
  *
- * Insertion dispatches a CreateComponentInstance command into the editor
- * CommandBus. The worker's placeholder cylinder builder draws a stand-in
- * body so the user sees feedback in the viewport while the real
- * parametric geometry rebuild is still in development.
+ * Selecting a component downloads its `.cadcomponent` — a plain `.cadjson`
+ * with one part — validates it through the document loader, and
+ * content-addresses it. The form is then built from the component's **own**
+ * public parameters and configuration rows; the catalog manifest supplies
+ * only presentation metadata (standard chip, install hint).
+ *
+ * Insert dispatches `CreateComponent`, which embeds that document under its
+ * hash. So an inserted component carries its definition with it: the host
+ * project opens offline, and the user can keep editing its parameters
+ * afterwards through the component dialog — the whole point of a parametric
+ * catalog rather than a shape library.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ChevronDown, ChevronRight, Search, Star, X } from 'lucide-react';
-import type {
-  ComponentDetail,
-  ComponentManifest,
-  ComponentParameter,
-  ComponentSummary,
-} from '@tweakcad/api-types';
+import type { ComponentDetail, ComponentSummary } from '@tweakcad/api-types';
 import type { CommandBus } from '@tweakcad/core/src/commands/bus.ts';
 import type { PartId } from '@tweakcad/core/src/ids.ts';
+import type {
+  CadPart,
+  CadProject,
+  ParameterValue,
+} from '@tweakcad/core/src/document/schema.ts';
+import { loadCadDocument } from '@tweakcad/core/src/document/loader.ts';
+import { hashComponentSource } from '@tweakcad/core/src/document/contentHash.ts';
 import { getApiClient } from '../../api/client.ts';
-import { listComponents, getComponentBySlug } from '@tweakcad/api-client';
+import { listComponents, getComponentBySlug, getComponentDocument } from '@tweakcad/api-client';
 import { consoleLog } from '@tweakcad/core/src/store/consoleStore.ts';
 import {
-  clampNumber,
-  coerceParameterValue,
+  componentPart,
+  configurationRows,
   initialParameterValues,
+  overridesFrom,
+  publicParameters,
 } from './parameters.ts';
 
 type BooleanMode = 'newBody' | 'cut' | 'join';
+
+/** Sentinel for "no configuration row", which is a legal choice, unlike "". */
+const DEFAULTS_ROW = '__defaults__';
 
 type View =
   | { kind: 'browse' }
   | {
       kind: 'configure';
       detail: ComponentDetail;
-      values: Record<string, unknown>;
+      /** The downloaded document, embedded verbatim on insert. */
+      source: CadProject;
+      /** Its content hash — the `embeddedComponents` key. */
+      hash: string;
+      part: CadPart;
+      configurationId: string | null;
+      /** Expression per public parameter, as typed. */
+      values: Record<string, string>;
       booleanMode: BooleanMode;
     }
   | { kind: 'inserted'; componentName: string };
@@ -91,19 +112,62 @@ export function ComponentsPanel({ onClose, commandBus, partId }: ComponentsPanel
   const groups = useMemo(() => groupByCategory(items), [items]);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
+  /**
+   * Catalog metadata and the document itself are fetched together, because
+   * neither alone is enough to configure an insert — and failing here, before
+   * the form appears, is better than offering knobs for a component that
+   * cannot actually be placed.
+   */
   const handleSelectComponent = useCallback(async (slug: string) => {
     setError(null);
     setLoading(true);
-    const res = await getComponentBySlug(getApiClient(), slug);
+    const client = getApiClient();
+    const [detailRes, documentRes] = await Promise.all([
+      getComponentBySlug(client, slug),
+      getComponentDocument(client, slug),
+    ]);
     setLoading(false);
-    if (!res.ok) {
-      setError(res.error.message || 'Failed to load component');
+
+    if (!detailRes.ok) {
+      setError(detailRes.error.message || 'Failed to load component');
       return;
     }
+    if (!documentRes.ok) {
+      setError(documentRes.error.message || 'Failed to download component');
+      return;
+    }
+
+    // Validate through the same loader the editor uses for a project file.
+    // A component published by a newer client may carry a feature this build
+    // doesn't know; the loader degrades that one feature and keeps the rest,
+    // so it is worth surfacing as a warning rather than a refusal.
+    const loaded = loadCadDocument(documentRes.value);
+    if (!loaded.ok) {
+      setError(`"${detailRes.value.name}" could not be read: ${loaded.error.message}`);
+      return;
+    }
+    for (const diagnostic of loaded.value.diagnostics) {
+      consoleLog('warn', `${detailRes.value.name}: ${diagnostic.message}`, 'components');
+    }
+
+    const source = loaded.value.project;
+    const part = componentPart(source);
+    if (!part) {
+      setError(`"${detailRes.value.name}" has no parts, so there is nothing to insert.`);
+      return;
+    }
+
+    // Default to the component's own active configuration — the author's
+    // choice of which size is the representative one.
+    const configurationId = part.configurations?.active ?? null;
     setView({
       kind: 'configure',
-      detail: res.value,
-      values: initialParameterValues(res.value.manifest),
+      detail: detailRes.value,
+      source,
+      hash: await hashComponentSource(source),
+      part,
+      configurationId,
+      values: initialParameterValues(part, configurationId),
       booleanMode: 'newBody',
     });
   }, []);
@@ -112,14 +176,22 @@ export function ComponentsPanel({ onClose, commandBus, partId }: ComponentsPanel
     setView({ kind: 'browse' });
   }, []);
 
-  const handleParameterChange = useCallback((paramName: string, raw: unknown) => {
+  /** Switching configuration re-seeds the fields from that row's overrides. */
+  const handleConfigurationChange = useCallback((configurationId: string | null) => {
     setView((prev) => {
       if (prev.kind !== 'configure') return prev;
-      const param = prev.detail.manifest.parameters.find((p) => p.name === paramName);
-      if (!param) return prev;
-      const coerced = coerceParameterValue(param, raw);
-      if (coerced === null) return prev;
-      return { ...prev, values: { ...prev.values, [paramName]: coerced } };
+      return {
+        ...prev,
+        configurationId,
+        values: initialParameterValues(prev.part, configurationId),
+      };
+    });
+  }, []);
+
+  const handleParameterChange = useCallback((paramName: string, value: string) => {
+    setView((prev) => {
+      if (prev.kind !== 'configure') return prev;
+      return { ...prev, values: { ...prev.values, [paramName]: value } };
     });
   }, []);
 
@@ -133,16 +205,21 @@ export function ComponentsPanel({ onClose, commandBus, partId }: ComponentsPanel
       consoleLog('warn', 'Cannot insert component: no active part.', 'components');
       return;
     }
-    const { detail, values, booleanMode } = view;
+    const { detail, source, hash, part, configurationId, values, booleanMode } = view;
     const result = commandBus.dispatch({
-      type: 'CreateComponentInstance',
+      type: 'CreateComponent',
       partId,
+      component: {
+        hash,
+        name: detail.name,
+        origin: `catalog:${detail.slug}`,
+        embeddedAt: new Date().toISOString(),
+        source,
+      },
       inputs: {
-        componentProjectId: detail.id,
-        componentSlug: detail.slug,
-        componentName: detail.name,
-        manifestVersion: detail.manifest.schemaVersion,
-        parameters: values,
+        transform: { position: [0, 0, 0], rotation: [0, 0, 0, 1] },
+        parameterOverrides: overridesFrom(part, configurationId, values),
+        configurationId,
         boolean: booleanMode,
       },
     });
@@ -199,8 +276,11 @@ export function ComponentsPanel({ onClose, commandBus, partId }: ComponentsPanel
       {view.kind === 'configure' && (
         <ConfigureView
           detail={view.detail}
+          part={view.part}
+          configurationId={view.configurationId}
           values={view.values}
           booleanMode={view.booleanMode}
+          onConfigurationChange={handleConfigurationChange}
           onParameterChange={handleParameterChange}
           onBooleanModeChange={handleBooleanModeChange}
           onBack={handleBackToBrowse}
@@ -364,8 +444,11 @@ function ComponentCard({
 
 function ConfigureView({
   detail,
+  part,
+  configurationId,
   values,
   booleanMode,
+  onConfigurationChange,
   onParameterChange,
   onBooleanModeChange,
   onBack,
@@ -373,14 +456,20 @@ function ConfigureView({
   insertDisabled,
 }: {
   detail: ComponentDetail;
-  values: Record<string, unknown>;
+  part: CadPart;
+  configurationId: string | null;
+  values: Record<string, string>;
   booleanMode: BooleanMode;
-  onParameterChange: (name: string, value: unknown) => void;
+  onConfigurationChange: (id: string | null) => void;
+  onParameterChange: (name: string, value: string) => void;
   onBooleanModeChange: (mode: BooleanMode) => void;
   onBack: () => void;
   onInsert: () => void;
   insertDisabled: boolean;
 }) {
+  const params = publicParameters(part);
+  const rows = configurationRows(part);
+
   return (
     <div style={styles.content}>
       <div style={styles.configHeader}>
@@ -415,15 +504,41 @@ function ConfigureView({
         <p style={styles.installHint}>{detail.manifest.installHint}</p>
       )}
 
+      {rows.length > 0 && (
+        <label style={styles.paramRow}>
+          <span style={styles.paramLabel}>Size</span>
+          <select
+            value={configurationId ?? DEFAULTS_ROW}
+            onChange={(e) =>
+              onConfigurationChange(e.target.value === DEFAULTS_ROW ? null : e.target.value)
+            }
+            style={styles.selectInput}
+            data-testid="components-configuration-select"
+            aria-label="Component configuration"
+          >
+            <option value={DEFAULTS_ROW}>Default</option>
+            {rows.map((row) => (
+              <option key={row.id} value={row.id}>{row.name}</option>
+            ))}
+          </select>
+        </label>
+      )}
+
       <div style={styles.paramList}>
-        {detail.manifest.parameters.map((param) => (
-          <ParameterInput
-            key={param.name}
-            param={param}
-            value={values[param.name]}
-            onChange={(next) => onParameterChange(param.name, next)}
-          />
-        ))}
+        {params.length === 0 ? (
+          <p style={styles.installHint}>
+            This component has no adjustable parameters.
+          </p>
+        ) : (
+          params.map((param) => (
+            <ParameterInput
+              key={param.name}
+              param={param}
+              value={values[param.name] ?? ''}
+              onChange={(next) => onParameterChange(param.name, next)}
+            />
+          ))
+        )}
       </div>
 
       <label style={styles.paramRow}>
@@ -460,141 +575,61 @@ function ConfigureView({
   );
 }
 
+/**
+ * One public parameter.
+ *
+ * Numeric parameters are free text rather than a number spinner: the value is
+ * an `Expression`, so `boreDiameter + 2` is as legal as `8`, and an
+ * `<input type="number">` would refuse to hold it. Choice parameters get a
+ * dropdown of their declared options.
+ *
+ * Nothing is validated on the way in. These become per-instance overrides, and
+ * the rebuild reports a bad expression against the feature — where the error
+ * can name the parameter and the parse failure, which this form could not.
+ */
 function ParameterInput({
   param,
   value,
   onChange,
 }: {
-  param: ComponentParameter;
-  value: unknown;
-  onChange: (next: unknown) => void;
+  param: ParameterValue;
+  value: string;
+  onChange: (next: string) => void;
 }) {
-  switch (param.type) {
-    case 'number':
-      return <NumberParameterInput param={param} value={value} onChange={onChange} />;
-    case 'enum':
-      return <EnumParameterInput param={param} value={value} onChange={onChange} />;
-    case 'boolean':
-      return <BooleanParameterInput param={param} value={value} onChange={onChange} />;
-    case 'string':
-      return <StringParameterInput param={param} value={value} onChange={onChange} />;
-  }
-}
+  const label = param.description || param.name;
 
-function NumberParameterInput({
-  param,
-  value,
-  onChange,
-}: {
-  param: ComponentParameter;
-  value: unknown;
-  onChange: (next: unknown) => void;
-}) {
-  const numeric = typeof value === 'number' ? value : 0;
-  const [min, max] = param.range ?? [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY];
+  if (param.kind === 'choice') {
+    return (
+      <label style={styles.paramRow}>
+        <span style={styles.paramLabel} title={param.name}>{label}</span>
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          style={styles.selectInput}
+          data-testid={`param-input-${param.name}`}
+        >
+          {(param.options ?? []).map((option) => (
+            <option key={option} value={option}>{option}</option>
+          ))}
+        </select>
+      </label>
+    );
+  }
+
   return (
     <label style={styles.paramRow}>
-      <span style={styles.paramLabel}>{param.label}</span>
+      <span style={styles.paramLabel} title={param.name}>{label}</span>
       <div style={styles.paramControlRow}>
         <input
-          type="number"
-          value={numeric}
-          onChange={(e) => onChange(parseFloat(e.target.value))}
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
           style={styles.numberInput}
-          {...(param.range
-            ? { min: param.range[0], max: param.range[1] }
-            : {})}
+          spellCheck={false}
           data-testid={`param-input-${param.name}`}
         />
-        {param.range && (
-          <input
-            type="range"
-            min={min}
-            max={max}
-            step={(max - min) / 200 || 0.1}
-            value={clampNumber(numeric, param.range)}
-            onChange={(e) => onChange(parseFloat(e.target.value))}
-            style={styles.rangeInput}
-            aria-label={`${param.label} slider`}
-          />
-        )}
+        <span style={styles.paramUnit}>{param.unit}</span>
       </div>
-    </label>
-  );
-}
-
-function EnumParameterInput({
-  param,
-  value,
-  onChange,
-}: {
-  param: ComponentParameter;
-  value: unknown;
-  onChange: (next: unknown) => void;
-}) {
-  const str = typeof value === 'string' ? value : '';
-  return (
-    <label style={styles.paramRow}>
-      <span style={styles.paramLabel}>{param.label}</span>
-      <select
-        value={str}
-        onChange={(e) => onChange(e.target.value)}
-        style={styles.selectInput}
-        data-testid={`param-input-${param.name}`}
-      >
-        {(param.values ?? []).map((v) => (
-          <option key={v} value={v}>
-            {v}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function BooleanParameterInput({
-  param,
-  value,
-  onChange,
-}: {
-  param: ComponentParameter;
-  value: unknown;
-  onChange: (next: unknown) => void;
-}) {
-  const checked = Boolean(value);
-  return (
-    <label style={{ ...styles.paramRow, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        data-testid={`param-input-${param.name}`}
-      />
-      <span style={styles.paramLabel}>{param.label}</span>
-    </label>
-  );
-}
-
-function StringParameterInput({
-  param,
-  value,
-  onChange,
-}: {
-  param: ComponentParameter;
-  value: unknown;
-  onChange: (next: unknown) => void;
-}) {
-  const str = typeof value === 'string' ? value : '';
-  return (
-    <label style={styles.paramRow}>
-      <span style={styles.paramLabel}>{param.label}</span>
-      <input
-        type="text"
-        value={str}
-        onChange={(e) => onChange(e.target.value)}
-        style={styles.textInput}
-        data-testid={`param-input-${param.name}`}
-      />
     </label>
   );
 }
@@ -611,11 +646,6 @@ function InsertedView({ componentName }: { componentName: string }) {
     </div>
   );
 }
-
-// ---- Manifest helpers exposed for unit tests ----
-
-/** Used by tests so the panel module is the public surface, not the helper file. */
-export type { ComponentManifest };
 
 // ---- Styles ----
 
@@ -890,7 +920,8 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 6,
   },
   numberInput: {
-    width: 78,
+    flex: 1,
+    minWidth: 0,
     padding: '4px 6px',
     fontSize: 12,
     border: '1px solid #d8d8d8',
@@ -900,9 +931,10 @@ const styles: Record<string, React.CSSProperties> = {
     outline: 'none',
     boxSizing: 'border-box',
   },
-  rangeInput: {
-    flex: 1,
-    minWidth: 0,
+  paramUnit: {
+    fontSize: 10,
+    color: '#999',
+    fontWeight: 500,
   },
   selectInput: {
     width: '100%',

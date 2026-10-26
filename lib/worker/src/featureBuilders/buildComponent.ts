@@ -1,5 +1,5 @@
 /**
- * `importedComponent` feature builder.
+ * `component` feature builder.
  *
  * Rebuilds an embedded parametric component instance into the host
  * part. Pipeline:
@@ -28,15 +28,14 @@
  *      UX is not yet wired. Non-identity transforms are logged as a
  *      build warning but not applied (no UX to produce them yet).
  *   8. Apply `inputs.boolean` against existing host bodies — same
- *      cut/join/newBody semantics as the legacy `componentInstance`
- *      builder (mirrors `ExtrudeFeatureInputs.operation`).
+ *      cut/join/newBody semantics as `ExtrudeFeatureInputs.operation`.
  */
 
 import type {
   FeatureNode,
   CadProject,
   CadPart,
-  ImportedComponentFeatureInputs,
+  ComponentFeatureInputs,
   ParameterTable,
   ParameterValue,
 } from '@tweakcad/core/src/document/schema.ts';
@@ -48,7 +47,7 @@ import type { KernelBody } from '@tweakcad/kernel/src/types.ts';
 import type { BuildContext, BuildResult } from '@tweakcad/core/src/features/contracts.ts';
 import { runSubTimeline } from '../subTimelineRunner.ts';
 
-export async function buildImportedComponent(
+export async function buildComponent(
   node: FeatureNode,
   _params: ResolvedParams,
   context: BuildContext,
@@ -56,10 +55,10 @@ export async function buildImportedComponent(
   project: CadProject,
   visited: Set<string>,
 ): Promise<BuildResult> {
-  const inputs = node.inputs as unknown as ImportedComponentFeatureInputs;
+  const inputs = node.inputs as unknown as ComponentFeatureInputs;
   const ref = inputs.componentRef;
   if (!ref) {
-    throw new Error('importedComponent feature missing componentRef');
+    throw new Error('component feature missing componentRef');
   }
 
   const def = project.embeddedComponents?.[ref];
@@ -140,7 +139,7 @@ export async function buildImportedComponent(
   // origin like identity does.
   if (!isIdentityTransform(inputs.transform)) {
     console.warn(
-      `[buildImportedComponent] Non-identity transform on "${def.name}" — ` +
+      `[buildComponent] Non-identity transform on "${def.name}" — ` +
       `Phase 6 will apply it; component currently lands at origin`,
     );
   }
@@ -222,9 +221,24 @@ function applyInstanceOverrides(
     }
   }
 
+  // The merge above is final for this instance, so the effective part must
+  // not look like it still has a configuration waiting to be applied:
+  // `runSubTimeline` calls `applyActiveConfiguration` on whatever part it is
+  // given, and that would re-apply the component's OWN active row on top —
+  // silently discarding the per-instance `configurationId` the user picked.
+  // Clearing `active` makes that call a no-op while keeping the rows, which
+  // the dialog still reads to offer the choice.
+  const settledConfigurations = part.configurations
+    ? { ...part.configurations, active: null }
+    : undefined;
+
   return {
     source: { ...source, parameters: projectParams },
-    part: { ...part, parameters: partParams },
+    part: {
+      ...part,
+      parameters: partParams,
+      ...(settledConfigurations ? { configurations: settledConfigurations } : {}),
+    },
   };
 }
 

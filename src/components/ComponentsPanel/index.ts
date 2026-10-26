@@ -1,6 +1,8 @@
 export { ComponentsPanel } from './ComponentsPanel.tsx';
 export {
+  componentPart,
+  configurationRows,
   initialParameterValues,
-  clampNumber,
-  coerceParameterValue,
+  overridesFrom,
+  publicParameters,
 } from './parameters.ts';

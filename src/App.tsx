@@ -282,7 +282,7 @@ export function App() {
    * File → Import Component. Prompts for a `.cadcomponent` (or `.cadjson`
    * used as one), computes its content hash, embeds the sub-document
    * into `project.embeddedComponents[hash]` and appends an
-   * `importedComponent` feature to the active part's timeline. The
+   * `component` feature to the active part's timeline. The
    * rebuilder then re-runs the sub-timeline and surfaces the bodies.
    *
    * v1 always lands the instance at the origin — the Transform UX
@@ -306,7 +306,7 @@ export function App() {
       const componentName = pick.source.metadata?.name?.trim() || baseName;
 
       const result = appState.commandBus.dispatch({
-        type: 'CreateImportedComponent',
+        type: 'CreateComponent',
         partId,
         component: {
           hash: pick.hash,

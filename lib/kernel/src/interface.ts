@@ -19,6 +19,8 @@ import type {
   CylinderSpec,
   ConeSpec,
   BoxSpec,
+  SphereSpec,
+  TorusSpec,
   TessellationOptions,
   StlExportOptions,
   StepExportOptions,
@@ -90,6 +92,16 @@ export interface CadKernel {
 
   /** Create a box primitive. `origin` tags the body for stable IDs. */
   makeBox(spec: BoxSpec, origin?: string): Promise<Result<KernelBody, KernelError>>;
+
+  /** Create a sphere. `origin` tags the body for stable IDs. */
+  makeSphere(spec: SphereSpec, origin?: string): Promise<Result<KernelBody, KernelError>>;
+
+  /**
+   * Create a torus about `spec.axis`. Rejects `minorRadius >= majorRadius`,
+   * which OCCT would build as a self-intersecting solid that only fails
+   * later inside a boolean. `origin` tags the body for stable IDs.
+   */
+  makeTorus(spec: TorusSpec, origin?: string): Promise<Result<KernelBody, KernelError>>;
 
   // --- Boolean operations ---
 

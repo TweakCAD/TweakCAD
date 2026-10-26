@@ -309,8 +309,8 @@ export async function incrementalRebuild(
       const bodiesBefore = new Set(context.bodies.keys());
 
       // Dispatch through the shared switch in subTimelineRunner.ts so
-      // top-level and recursive (importedComponent) builds use the
-      // same code path. `visited` starts empty here; an importedComponent
+      // top-level and recursive (component) builds use the
+      // same code path. `visited` starts empty here; an component
       // builder adds its componentRef and threads through to nested
       // sub-builds for cycle defense.
       result = await dispatchFeatureBuilder(feature, params, context, kernel, project, new Set());

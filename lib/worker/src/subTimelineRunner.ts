@@ -4,11 +4,11 @@
  * Walks an embedded component's timeline with the same builder dispatch
  * the main rebuilder uses, but in a FRESH BuildContext so its bodies
  * don't collide with the host part's body-id space. Used by
- * `buildImportedComponent` as part of the rebuild flow.
+ * `buildComponent` as part of the rebuild flow.
  *
  * Why a separate module from rebuilder.ts: avoids a circular import
- * with `buildImportedComponent`. Both rebuilder.ts and
- * buildImportedComponent.ts import from this file; this file imports
+ * with `buildComponent`. Both rebuilder.ts and
+ * buildComponent.ts import from this file; this file imports
  * the individual builders directly (which themselves don't import
  * rebuilder.ts), so no cycle.
  *
@@ -43,9 +43,9 @@ import { buildLinearPattern } from './featureBuilders/buildLinearPattern.ts';
 import { buildCircularPattern } from './featureBuilders/buildCircularPattern.ts';
 import { buildSweep } from './featureBuilders/buildSweep.ts';
 import { buildImportedGeometry } from './featureBuilders/buildImportedGeometry.ts';
-import { buildComponentInstance } from './featureBuilders/buildComponentInstance.ts';
 import { buildConstructionPlane } from './featureBuilders/buildConstructionPlane.ts';
-import { buildImportedComponent } from './featureBuilders/buildImportedComponent.ts';
+import { buildPrimitive } from './featureBuilders/buildPrimitive.ts';
+import { buildComponent } from './featureBuilders/buildComponent.ts';
 
 export type SubTimelineResult = {
   bodies: KernelBody[];
@@ -59,7 +59,7 @@ export type SubTimelineResult = {
  *
  * Param resolution: the caller is responsible for handing in a part
  * whose `parameters` already reflects all instance overrides — this
- * function just resolves it. (See `buildImportedComponent.applyInstanceOverrides`
+ * function just resolves it. (See `buildComponent.applyInstanceOverrides`
  * for how the merge is computed.)
  *
  * @param part      The embedded component's part (with effective params)
@@ -67,7 +67,7 @@ export type SubTimelineResult = {
  *                  lookups if the component itself instances sub-components)
  * @param kernel    The shared geometry kernel
  * @param visited   componentRef cycle-defense set; passed through to
- *                  any nested importedComponent builds so an A→B→A
+ *                  any nested component builds so an A→B→A
  *                  cycle is detected at the right depth.
  */
 export async function runSubTimeline(
@@ -113,7 +113,7 @@ export async function runSubTimeline(
  *
  * Signature matches the existing builder calling convention; the
  * `project` + `visited` extras are only consumed by
- * `buildImportedComponent` — every other builder ignores them.
+ * `buildComponent` — every other builder ignores them.
  */
 export async function dispatchFeatureBuilder(
   feature: FeatureNode,
@@ -137,9 +137,9 @@ export async function dispatchFeatureBuilder(
     case 'circularPattern':   return buildCircularPattern(feature, params, context, kernel);
     case 'sweep':             return buildSweep(feature, params, context, kernel);
     case 'importedGeometry':  return buildImportedGeometry(feature, params, context, kernel);
-    case 'componentInstance': return buildComponentInstance(feature, params, context, kernel);
-    case 'importedComponent': return buildImportedComponent(feature, params, context, kernel, project, visited);
+    case 'component': return buildComponent(feature, params, context, kernel, project, visited);
     case 'constructionPlane': return buildConstructionPlane(feature, params, context, kernel);
+    case 'primitive':         return buildPrimitive(feature, params, context, kernel);
     default:                  throw new Error(`No builder for feature type: ${feature.type}`);
   }
 }

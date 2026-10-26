@@ -1,5 +1,5 @@
 /**
- * Per-instance properties editor for an `importedComponent` feature.
+ * Per-instance properties editor for an `component` feature.
  *
  * Lets the consumer pick a configuration row, override individual public
  * parameters, and choose the boolean op against host bodies — without
@@ -19,7 +19,7 @@ import { formatWithUnit } from '@tweakcad/core/src/units.ts';
 import type {
   CadPart,
   ComponentDefinition,
-  ImportedComponentFeatureInputs,
+  ComponentFeatureInputs,
   ParameterValue,
 } from '@tweakcad/core/src/document/schema.ts';
 import type { PartId, FeatureId } from '@tweakcad/core/src/ids.ts';
@@ -54,7 +54,7 @@ const DEFAULTS_ROW_ID = '__defaults__';
  * on open AND on Revert; never reads its own state, so it's pure.
  */
 function makeDraftFrom(
-  inputs: ImportedComponentFeatureInputs,
+  inputs: ComponentFeatureInputs,
   componentPart: CadPart,
 ): DraftState {
   // Seed overrides with what's in the feature today. Empty record =
@@ -79,7 +79,7 @@ function makeDraftFrom(
 
 // ---- Component ----
 
-export function ImportedComponentDialog({ open, partId, featureId, onClose }: DialogProps) {
+export function ComponentDialog({ open, partId, featureId, onClose }: DialogProps) {
   const ref = useRef<HTMLDialogElement | null>(null);
   const project = useDocumentState();
   const commandBus = useCommandBus();
@@ -107,8 +107,8 @@ export function ImportedComponentDialog({ open, partId, featureId, onClose }: Di
     const part = project.parts[partId];
     if (!part) return null;
     const feature = part.timeline.find(f => f.id === featureId);
-    if (!feature || feature.type !== 'importedComponent') return null;
-    const inputs = feature.inputs as unknown as ImportedComponentFeatureInputs;
+    if (!feature || feature.type !== 'component') return null;
+    const inputs = feature.inputs as unknown as ComponentFeatureInputs;
     const def: ComponentDefinition | undefined =
       project.embeddedComponents?.[inputs.componentRef];
     if (!def) return null;
@@ -171,7 +171,7 @@ export function ImportedComponentDialog({ open, partId, featureId, onClose }: Di
 
   // Resolve current parameter values so we can show "= 4.00 mm" hints
   // next to each row. Mirrors the builder's merge logic
-  // (buildImportedComponent.applyInstanceOverrides): config-row
+  // (buildComponent.applyInstanceOverrides): config-row
   // overrides apply at PART scope; per-instance overrides flow into
   // whichever scope holds the param. Without that, an override of a
   // project-scope param like the dowel pin's `D` would be silently
@@ -247,7 +247,7 @@ export function ImportedComponentDialog({ open, partId, featureId, onClose }: Di
     for (const [n, expr] of Object.entries(draft.overrides)) {
       if (expr.trim() !== '') overrides[n] = expr;
     }
-    const nextInputs: ImportedComponentFeatureInputs = {
+    const nextInputs: ComponentFeatureInputs = {
       componentRef: resolved.inputs.componentRef,
       transform: resolved.inputs.transform,
       parameterOverrides: overrides,
@@ -265,7 +265,7 @@ export function ImportedComponentDialog({ open, partId, featureId, onClose }: Di
     } else {
       // Validation failures here are unlikely (the handler doesn't
       // re-validate the inputs shape), but log defensively.
-      console.error('[ImportedComponentDialog] Apply failed:', result.error.message);
+      console.error('[ComponentDialog] Apply failed:', result.error.message);
     }
   }, [resolved, draft, partId, featureId, commandBus, onClose]);
 
@@ -460,7 +460,7 @@ export function ImportedComponentDialog({ open, partId, featureId, onClose }: Di
  * `useParametersEditor` shape so App.tsx can mount one extra dialog
  * without scattering the open/close logic.
  */
-export function useImportedComponentEditor() {
+export function useComponentEditor() {
   const [state, setState] = useState<{
     open: boolean;
     partId: PartId | null;
@@ -476,7 +476,7 @@ export function useImportedComponentEditor() {
   }, []);
 
   const element = (
-    <ImportedComponentDialog
+    <ComponentDialog
       open={state.open}
       partId={state.partId}
       featureId={state.featureId}
@@ -484,7 +484,7 @@ export function useImportedComponentEditor() {
     />
   );
 
-  return { openImportedComponentEditor: open, importedComponentDialogElement: element };
+  return { openComponentEditor: open, componentDialogElement: element };
 }
 
 // ---- Sub-components ----
