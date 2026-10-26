@@ -205,4 +205,69 @@ describe('buildImportedGeometry', () => {
     await buildImportedGeometry(makeNode(), {} as ResolvedParams, emptyCtx(), kernel);
     expect(disposed).toHaveLength(0);
   });
+
+  /**
+   * Placement values and order. The release tests above prove a transform is
+   * *applied*; nothing pinned *which* transform, or that per-body composes
+   * under the group rather than over it. A swap there is invisible for pure
+   * translation and only shows up once a rotation is involved, by which point
+   * the wrong body is in the wrong place for a reason nobody can see.
+   */
+  it('applies the per-body placement first, then the group placement', async () => {
+    const kernel = new MockKernel();
+    await kernel.init();
+    const applied: unknown[] = [];
+    vi.spyOn(kernel, 'transform').mockImplementation(async (body, t) => {
+      applied.push(t);
+      return { ok: true as const, value: body };
+    });
+
+    const perBody = { position: [4, 5, 6] as [number, number, number], rotation: [0, 0, 0, 1] as [number, number, number, number] };
+    const group = { position: [1, 2, 3] as [number, number, number], rotation: [0, 0, 0, 1] as [number, number, number, number] };
+    await buildImportedGeometry(
+      makeNode({ transform: group, bodyTransforms: { body_import_import_1_0: perBody } }),
+      {} as ResolvedParams, emptyCtx(), kernel,
+    );
+    expect(applied).toEqual([perBody, group]);
+  });
+
+  it('applies the group placement alone when a body has no own placement', async () => {
+    const kernel = new MockKernel();
+    await kernel.init();
+    const applied: unknown[] = [];
+    vi.spyOn(kernel, 'transform').mockImplementation(async (body, t) => {
+      applied.push(t);
+      return { ok: true as const, value: body };
+    });
+
+    const group = { position: [1, 2, 3] as [number, number, number], rotation: [0, 0, 0, 1] as [number, number, number, number] };
+    await buildImportedGeometry(makeNode({ transform: group }), {} as ResolvedParams, emptyCtx(), kernel);
+    expect(applied).toEqual([group]);
+  });
+
+  it('skips the kernel entirely for an identity placement', async () => {
+    // Stored identity is the common case — an import nobody has moved. Each
+    // call would derive another full copy of the mesh for no change.
+    const kernel = new MockKernel();
+    await kernel.init();
+    const spy = vi.spyOn(kernel, 'transform');
+    await buildImportedGeometry(
+      makeNode({ transform: { position: [0, 0, 0], rotation: [0, 0, 0, 1] } }),
+      {} as ResolvedParams, emptyCtx(), kernel,
+    );
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('names the file and the body when a placement fails', async () => {
+    const kernel = new MockKernel();
+    await kernel.init();
+    vi.spyOn(kernel, 'transform').mockResolvedValue(
+      err({ category: 'kernel', code: 'TRANSFORM_FAILED', message: 'bad matrix' }),
+    );
+    await expect(buildImportedGeometry(
+      makeNode({ bodyTransforms: { body_import_import_1_0: { position: [1, 0, 0], rotation: [0, 0, 0, 1] } } }),
+      {} as ResolvedParams, emptyCtx(), kernel,
+    )).rejects.toThrow(/Placing "cube.step" body 0 failed: bad matrix/);
+  });
+
 });
