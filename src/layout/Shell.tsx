@@ -211,6 +211,9 @@ export type ShellProps = {
   /** Export the current part to a downloadable geometry format. */
   onFileExport?: (format: 'stl' | 'step' | 'brep' | '3mf') => Promise<void> | void;
   /** SaaS availability — drives the account chip in the title bar. */
+  /** Opens the revision-history panel. Absent when the project is not in the
+   *  cloud — a disk file has no history to show. */
+  onOpenHistory?: (() => void) | undefined;
   saas?: import('../storage/index.ts').SaasState;
   /** Open the inline sign-in modal. */
   onRequestSignIn?: () => void;
@@ -231,6 +234,7 @@ export function Shell({
   onFileSave,
   onFileSaveAs,
   onFileExport,
+  onOpenHistory,
   saas,
   onRequestSignIn,
   onSignOut,
@@ -3684,6 +3688,7 @@ export function Shell({
         onToggleComponentsPanel={() => setComponentsPanelOpen((v) => !v)}
         onNew={onFileNew}
         onOpen={onFileOpen}
+        onOpenHistory={onOpenHistory}
         onImport={onFileImport}
         onImportFcstd={onImportFcstd}
         onImportComponent={onComponentImport}

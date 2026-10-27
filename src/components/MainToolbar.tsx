@@ -32,6 +32,7 @@ import {
   Box,
   Wand2,
   ExternalLink,
+  History,
 } from 'lucide-react';
 import {
   SketchIcon,
@@ -195,6 +196,8 @@ interface AppBarProps {
    * dispatches the toggle and updates the active state.
    */
   onToggleChatPanel?: (() => void) | undefined;
+  /** Opens revision history. Absent when the project has no cloud history. */
+  onOpenHistory?: (() => void) | undefined;
 }
 
 interface RibbonProps {
@@ -428,6 +431,7 @@ export function MainAppBar({
   onSignOut,
   onOpenSettings,
   onRenameProject,
+  onOpenHistory,
   chatPanelOpen,
   onToggleChatPanel,
 }: AppBarProps) {
@@ -481,6 +485,9 @@ export function MainAppBar({
       <ImportButton onImport={onImport} onImportFcstd={onImportFcstd} onImportComponent={onImportComponent} onImportSketchDxf={onImportSketchDxf} onImportSketchSvg={onImportSketchSvg} />
       <IconBtn icon={<Save size={16} />}       label="Save (Ctrl+S)"    onClick={() => onSave?.()} />
       <IconBtn icon={<FileDown size={16} />}   label="Save as (Ctrl+Shift+S)" onClick={() => onSaveAs?.()} />
+      {onOpenHistory && (
+        <IconBtn icon={<History size={16} />} label="Version history" onClick={onOpenHistory} />
+      )}
       <ExportButton onExport={onExport} />
 
       <div style={styles.separator} />

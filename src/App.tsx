@@ -40,6 +40,11 @@ import { Toast } from './components/Toast.tsx';
 import { useToastStore } from './components/toastStore.ts';
 import { SignInModal } from './components/SignInModal.tsx';
 import { SaveAsPicker } from './components/SaveAsPicker.tsx';
+import { HistoryPanel } from './components/HistoryPanel.tsx';
+import {
+  listCloudRevisions, loadCloudRevision, restoreCloudRevision,
+  createCloudVersion, loadCloudProject,
+} from './storage/cloudAdapter.ts';
 import { useParametersEditor } from './components/ParametersDialog.tsx';
 import { useSettingsDialog } from './components/SettingsDialog.tsx';
 import { startBridgeClient } from './ai/mcpBridgeClient.ts';
@@ -91,6 +96,74 @@ export function App() {
     });
     return stop;
   }, [appState]);
+
+  // --- Revision history ----------------------------------------------------
+
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const cloudProjectId = storage?.storage.kind === 'cloud' ? storage.storage.projectId : null;
+
+  /**
+   * Mint a revision when the tab goes away.
+   *
+   * Autosave keeps the newest bytes safe but writes no history, so without
+   * this a session that ends by closing the tab — which is how most of them
+   * end — leaves nothing to come back to. `visibilitychange` rather than
+   * `beforeunload`: the latter is unreliable on mobile and increasingly
+   * ignored, while `hidden` fires on tab switch, minimise and close alike.
+   *
+   * Over-firing is cheap because the server dedupes on the document's etag:
+   * switching tabs ten times without editing produces one revision, not ten.
+   */
+  useEffect(() => {
+    if (!cloudProjectId || !storage) return;
+    const onHidden = () => {
+      if (document.visibilityState !== 'hidden') return;
+      void storage.scheduler.flushNow()
+        .then(() => createCloudVersion(cloudProjectId, 'Session end'))
+        .catch(() => { /* leaving anyway; a lost revision is not worth a dialog */ });
+    };
+    document.addEventListener('visibilitychange', onHidden);
+    return () => document.removeEventListener('visibilitychange', onHidden);
+  }, [cloudProjectId, storage]);
+
+  const listRevisions = useCallback(
+    (cursor?: string) => {
+      if (!cloudProjectId) return Promise.resolve({ items: [], nextCursor: null });
+      return listCloudRevisions(cloudProjectId, cursor ? { cursor } : {});
+    },
+    [cloudProjectId],
+  );
+
+  /**
+   * Open a revision without committing to it.
+   *
+   * Loads the old document into the editor but leaves the server's live copy
+   * alone, so looking is free. The next autosave would write the previewed
+   * content back — which is why previewing marks the session so the user can
+   * tell, and why Restore exists as the deliberate path.
+   */
+  const previewRevision = useCallback(async (revisionId: string) => {
+    if (!cloudProjectId) return;
+    const doc = await loadCloudRevision(cloudProjectId, revisionId);
+    appState.documentStore.replaceDocument(doc);
+    consoleLog('info', `Previewing revision ${revisionId}. Restore to keep it.`, 'history');
+  }, [cloudProjectId, appState.documentStore]);
+
+  const restoreRevision = useCallback(async (revisionId: string) => {
+    if (!cloudProjectId) return;
+    const { snapshotVersionId } = await restoreCloudRevision(cloudProjectId, revisionId);
+    // Pull the restored document back down rather than assuming what the
+    // server wrote: the restore is the server's copy operation, and reading
+    // it back is the only way to be sure the editor agrees with it.
+    const result = await loadCloudProject(cloudProjectId);
+    if (result?.doc) appState.documentStore.replaceDocument(result.doc);
+    setHistoryOpen(false);
+    consoleLog(
+      'success',
+      `Restored ${revisionId}. Your previous work is saved as ${snapshotVersionId}.`,
+      'history',
+    );
+  }, [cloudProjectId, appState.documentStore]);
 
   // ?autoExport=1 flow: once the project resolves to a cloud-backed
   // context, generate STL/STEP/3MF and PUT them as attachments to the
@@ -450,6 +523,7 @@ export function App() {
           onFileSave={onFileSave}
           onFileSaveAs={onFileSaveAs}
           onFileExport={onFileExport}
+          onOpenHistory={cloudProjectId ? () => setHistoryOpen(true) : undefined}
           saas={saas}
           onRequestSignIn={onRequestSignIn}
           onSignOut={onSignOut}
@@ -457,6 +531,14 @@ export function App() {
           onOpenSettings={openSettings}
         />
       </ErrorBoundary>
+      {historyOpen && cloudProjectId && (
+        <HistoryPanel
+          list={listRevisions}
+          onPreview={previewRevision}
+          onRestore={restoreRevision}
+          onClose={() => setHistoryOpen(false)}
+        />
+      )}
       {parametersDialogElement}
       {settingsDialogElement}
       {storage && (
