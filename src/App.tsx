@@ -33,6 +33,9 @@ import { consoleLog } from '@tweakcad/core/src/store/consoleStore.ts';
 import { SaveStatus } from './components/SaveStatus.tsx';
 import { useConfirm } from './components/ConfirmDialog.tsx';
 import { CLOUD_DOCUMENT_MAX_BYTES, wouldExceedCloudLimit } from './storage/cloudAdapter.ts';
+import { makeImportedData } from '@tweakcad/core/src/document/importedData.ts';
+import { sha256Hex } from '@tweakcad/core/src/document/contentHash.ts';
+import { referenceId, generateId } from '@tweakcad/core/src/ids.ts';
 import { Toast } from './components/Toast.tsx';
 import { useToastStore } from './components/toastStore.ts';
 import { SignInModal } from './components/SignInModal.tsx';
@@ -276,21 +279,21 @@ export function App() {
         if (!go) return;
       }
 
+      // Small files stay embedded and the document stays portable; large
+      // ones become a `ref` into `project.references`, which is what lets the
+      // bytes be stored once and shared across revisions rather than copied
+      // into every snapshot. `makeImportedData` owns that threshold.
+      const { data, asset } = makeImportedData(pick.dataBase64, {
+        name: pick.fileName,
+        type: pick.format,
+        hash: await sha256Hex(pick.dataBase64),
+        referenceId: referenceId(generateId('ref')),
+      });
       const result = appState.commandBus.dispatch({
         type: 'CreateImportedGeometry',
         partId,
-        inputs: {
-          fileName: pick.fileName,
-          format: pick.format,
-          // Always inline today: nothing produces a `ref` yet, and a local
-          // document has nowhere better to put the bytes. The discriminator
-          // is what lets that change without a format break.
-          data: {
-            kind: 'inline' as const,
-            base64: pick.dataBase64,
-            sizeBytes: Math.floor((pick.dataBase64.length * 3) / 4),
-          },
-        },
+        inputs: { fileName: pick.fileName, format: pick.format, data },
+        ...(asset ? { asset } : {}),
       });
       if (!result.ok) {
         console.error('[App] Import dispatch failed:', result.error.message);

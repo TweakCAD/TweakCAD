@@ -26,6 +26,7 @@ import type {
   ShellFeatureInputs,
   SweepFeatureInputs,
   ImportedGeometryFeatureInputs,
+  ReferenceAsset,
   ComponentFeatureInputs,
   ComponentDefinition,
   ConstructionPlaneFeatureInputs,
@@ -636,6 +637,13 @@ export type CreateImportedGeometryCommand = {
   type: 'CreateImportedGeometry';
   partId: PartId;
   inputs: ImportedGeometryFeatureInputs;
+  /**
+   * The file's bytes, when `inputs.data.kind === 'ref'`. The handler registers
+   * it under `project.references` in the same mutation that appends the
+   * feature, so undo rolls back both halves and a document can never hold a
+   * reference to an asset it did not also store.
+   */
+  asset?: ReferenceAsset;
 };
 
 /**

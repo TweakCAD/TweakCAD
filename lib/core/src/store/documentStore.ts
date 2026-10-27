@@ -212,6 +212,18 @@ export class DocumentStore {
         // rebuild from the start. Only affects the part the config lives on.
         const partId = patch.path[1] as PartId;
         markPart(partId, 0);
+      } else if (patch.path[0] === 'references' || patch.path[0] === 'embeddedComponents') {
+        // Imported-geometry assets and embedded component sources are shared
+        // document-level stores: any part may hold a feature pointing into
+        // them, and the patch path says nothing about which. Rebuild all.
+        //
+        // Without this, re-linking a reference whose bytes were not loaded
+        // changed the document and nothing else — the import stayed broken
+        // and the error's own advice ("re-link the file to rebuild this
+        // import") did not work.
+        for (const partId of Object.keys(this.state.parts) as PartId[]) {
+          markPart(partId, 0);
+        }
       }
     }
 

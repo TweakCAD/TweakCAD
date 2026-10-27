@@ -84,6 +84,10 @@ export async function runSubTimeline(
   }
   const params = paramResult.value;
   const context = emptyBuildContext(params);
+  // A component can contain a large import of its own, and its assets live in
+  // its own project's references — not the host's. Without this a ref'd import
+  // inside a component resolves to "not loaded" and the body silently vanishes.
+  context.references = project.references;
 
   for (const feature of part.timeline) {
     if (!feature.enabled) continue;

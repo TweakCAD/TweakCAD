@@ -683,8 +683,8 @@ export type ImportedGeometryData =
  * would otherwise make the document unopenable in a text editor and slow to
  * autosave.
  *
- * Not enforced yet: nothing produces `ref`, so this is the threshold the
- * resolver will use, recorded next to the type it governs.
+ * Enforced at import: `makeImportedData` returns `ref` above this and the
+ * import pipeline registers the asset alongside the feature.
  */
 export const IMPORT_INLINE_MAX_BYTES = 256 * 1024;
 
@@ -707,8 +707,10 @@ export type ImportedGeometryFeatureInputs = {
    * third, and until autosave stopped minting a revision per keystroke
    * burst, a 20 MB STEP was re-uploaded whole every two seconds.
    *
-   * `ref` is defined but not yet produced — every import still writes
-   * `inline`. See `IMPORT_INLINE_MAX_BYTES`.
+   * Which one you get is decided by `IMPORT_INLINE_MAX_BYTES`, in
+   * `makeImportedData`. A `ref`'s asset is registered in the same mutation
+   * that appends the feature, so a document never references bytes it did
+   * not store.
    */
   data: ImportedGeometryData;
   /**

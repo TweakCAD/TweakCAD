@@ -28,7 +28,7 @@ import { sketchBuildGeometry } from '../sketch/derivedGeometry.ts';
 import { describe, it, expect } from 'vitest';
 import { DocumentStore } from './documentStore.ts';
 import { createPart, newProjectWithPart } from '../document/factory.ts';
-import { featureId, entityId } from '../ids.ts';
+import { featureId, entityId, referenceId } from '../ids.ts';
 import type { PartId, FeatureId } from '../ids.ts';
 import type {
   CadProject,
@@ -605,6 +605,57 @@ describe('DocumentStore — detectDirty patch classification', () => {
     expect(dirty).toEqual([]);
   });
 });
+
+describe('DocumentStore — document-level stores dirty every part', () => {
+  /**
+   * `references` (imported-geometry assets) and `embeddedComponents` are
+   * shared across parts, and a patch into them says nothing about which part
+   * holds a feature pointing at it. They have to dirty everything.
+   *
+   * This was missed until imports started producing `ref`: before that
+   * `references` was always empty, so nothing could change in it. The visible
+   * symptom would have been re-linking a missing asset doing nothing at all —
+   * while the error on screen told the user to re-link the file.
+   */
+  it(`re-linking a reference rebuilds, so the error's own advice works`, () => {
+    const { store, partId } = newStore();
+    store.mutate('Import', draft => {
+      draft.references[referenceId('ref_1')] = {
+        id: referenceId('ref_1'), name: 'big.step', type: 'step',
+        sizeBytes: 999, hash: 'abc',
+      };
+    });
+
+    const dirty = recordDirty(store, () => {
+      store.mutate('Re-link', draft => {
+        draft.references[referenceId('ref_1')]!.bytes = 'QUJD';
+      });
+    });
+    expect(dirty).toEqual([{ fromIndex: 0, partId }]);
+  });
+
+  it('updating an embedded component rebuilds', () => {
+    const { store, partId } = newStore();
+    const dirty = recordDirty(store, () => {
+      store.mutate('Embed', draft => {
+        draft.embeddedComponents = {
+          h1: { hash: 'h1', name: 'Bolt', embeddedAt: 'now', source: {} as never },
+        };
+      });
+    });
+    expect(dirty).toEqual([{ fromIndex: 0, partId }]);
+  });
+
+  it('leaves metadata alone — a rename is not a rebuild', () => {
+    // The guard against over-dirtying: top-level patches are not all equal.
+    const { store } = newStore();
+    const dirty = recordDirty(store, () => {
+      store.mutate('Rename', draft => { draft.metadata.name = 'Renamed'; });
+    });
+    expect(dirty).toEqual([]);
+  });
+});
+
 
 // ---- Stack boundaries -----------------------------------------------------
 

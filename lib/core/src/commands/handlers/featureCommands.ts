@@ -921,6 +921,21 @@ export const createImportedGeometryHandler: CommandHandler = {
     if (isEmptyImportedData(command.inputs.data)) {
       return err({ code: 'INVALID_INPUT', message: 'Imported geometry has empty data' });
     }
+    // A `ref` must resolve: either the caller brings the asset, or the
+    // document already holds one under that id. Accepting a dangling
+    // reference would store a feature whose bytes exist nowhere, and the
+    // failure would surface as an empty body at rebuild rather than here.
+    if (command.inputs.data.kind === 'ref') {
+      const id = String(command.inputs.data.referenceId);
+      const brought = command.asset?.id !== undefined && String(command.asset.id) === id;
+      if (!brought && !state.references[command.inputs.data.referenceId]) {
+        return err({
+          code: 'INVALID_INPUT',
+          message: `Imported geometry references "${id}", which has no asset`,
+          field: 'asset',
+        });
+      }
+    }
     return findPart(state, command.partId);
   },
 
@@ -931,6 +946,13 @@ export const createImportedGeometryHandler: CommandHandler = {
 
     const id = featureId(generateId('import'));
     const now = new Date().toISOString();
+
+    // Register the asset in the same mutation that appends the feature, so
+    // undo removes both and the document never holds a reference to bytes it
+    // did not also store.
+    if (command.asset) {
+      draft.references[command.asset.id] = { ...command.asset };
+    }
 
     // Imported geometry has no upstream feature dependency — it's a
     // root-level body source like a primitive. dependsOn stays empty.
