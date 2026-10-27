@@ -13,6 +13,8 @@
  */
 
 import { Children, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { isSaasAvailable } from '../storage/saasState.ts';
+import type { SaasState } from '../storage/saasState.ts';
 import { useBridgeStatus } from '../hooks/useBridgeStatus.ts';
 import {
   Undo2,
@@ -169,7 +171,7 @@ interface AppBarProps {
   /** Export the current document to a downloadable geometry format. */
   onExport?: ((format: 'stl' | 'step' | 'brep' | '3mf') => void) | undefined;
   /** Optional SaaS state — drives the account chip on the right. */
-  saas?: import('../storage/index.ts').SaasState | undefined;
+  saas?: SaasState | undefined;
   /** Open the inline sign-in modal. */
   onRequestSignIn?: (() => void) | undefined;
   /** Sign out + refresh state. */
@@ -446,12 +448,20 @@ export function MainAppBar({
         onClick={() => onToggleSidebar?.()}
       />
 
-      <IconBtn
-        icon={<Box size={16} />}
-        label="Components (Ctrl+I)"
-        onClick={() => onToggleComponentsPanel?.()}
-        active={componentsPanelOpen}
-      />
+      {/* The catalog is a SaaS surface — a standalone build has nothing to
+          browse, so the button is absent rather than present-and-failing.
+          Gated on `available` rather than `signedIn` because the published
+          catalog is public; you can browse and insert without an account.
+          Importing a .cadcomponent from disk stays available either way (File
+          → Import), which is the standalone path. */}
+      {isSaasAvailable(saas) && (
+        <IconBtn
+          icon={<Box size={16} />}
+          label="Components (Ctrl+I)"
+          onClick={() => onToggleComponentsPanel?.()}
+          active={componentsPanelOpen}
+        />
+      )}
 
       {/* 20px gap between the collapse toggle and the rest of the app bar. */}
       <div style={styles.afterCollapseGap} />
@@ -480,7 +490,7 @@ export function MainAppBar({
       {/* Wand only shows when SaaS is actually reachable — local-only
           deployments don't get the in-app chat panel (they have the MCP
           bridge for that). Same visibility rule as AccountChip below. */}
-      {saas?.kind === 'available' && (
+      {isSaasAvailable(saas) && (
         <IconBtn
           icon={<Wand2 size={16} />}
           label={chatPanelOpen ? 'Close AI assistant' : 'AI assistant'}
@@ -731,7 +741,7 @@ function AccountChip({
   onRequestSignIn,
   onSignOut,
 }: {
-  saas?: import('../storage/index.ts').SaasState | undefined;
+  saas?: SaasState | undefined;
   onRequestSignIn?: (() => void) | undefined;
   onSignOut?: (() => void) | undefined;
 }) {

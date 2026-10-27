@@ -1,4 +1,5 @@
 import { sketchBuildGeometry } from '@tweakcad/core/src/sketch/derivedGeometry.ts';
+import { isSaasAvailable } from '../storage/saasState.ts';
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import * as THREE from 'three';
 import { ViewportController } from '@tweakcad/viewport/src/ViewportController.ts';
@@ -299,6 +300,12 @@ export function Shell({
 
   // Components panel visibility (right-side drawer).
   const [componentsPanelOpen, setComponentsPanelOpen] = useState(false);
+
+  // The global key handler is installed once and does not depend on `saas`,
+  // so reading it through a ref keeps the shortcut's gate current without
+  // re-binding the listener every time the probe resolves.
+  const saasRef = useRef(saas);
+  useEffect(() => { saasRef.current = saas; }, [saas]);
 
   // Chat panel visibility (right-side drawer, opened by the wand
   // button in MainAppBar). Lives next to the Components panel —
@@ -3421,8 +3428,10 @@ export function Shell({
       if (e.key === '`' && !mod) {
         consoleToggle();
       }
-      // Ctrl+I toggles the Components panel
-      if (mod && e.key.toLowerCase() === 'i') {
+      // Ctrl+I toggles the Components panel. Same gate as the toolbar
+      // button: no catalog without a backend, so the shortcut is inert
+      // rather than opening a panel that can only show an error.
+      if (mod && e.key.toLowerCase() === 'i' && isSaasAvailable(saasRef.current)) {
         e.preventDefault();
         setComponentsPanelOpen((v) => !v);
       }
@@ -4154,7 +4163,7 @@ export function Shell({
         </div>
 
         {/* Right Panel - Components catalog (collapsible) */}
-        {componentsPanelOpen && (
+        {componentsPanelOpen && isSaasAvailable(saas) && (
           <ComponentsPanel
             onClose={() => setComponentsPanelOpen(false)}
             commandBus={commandBus}
@@ -4169,7 +4178,7 @@ export function Shell({
             instances are dropped. Gated on SaaS availability so the panel
             vanishes (and the wand button in MainAppBar hides) when the
             backend isn't reachable — same rule as AccountChip. */}
-        {chatPanelOpen && saas?.kind === 'available' && (
+        {chatPanelOpen && isSaasAvailable(saas) && (
           <ChatPanel
             onClose={() => setChatPanelOpen(false)}
             saas={saas}

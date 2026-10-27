@@ -124,8 +124,25 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 
 // --- Convenience predicates ---
 
-export function isSaasAvailable(s: SaasState): boolean {
-  return s.kind === 'available';
+/**
+ * Whether a backend is reachable — the gate for every SaaS-only surface.
+ *
+ * Standalone builds must not merely *fail* at SaaS features, they must not
+ * offer them: a button that only ever produces a network error is worse than
+ * no button. Behind this today are the components catalog (panel + Ctrl+I),
+ * the AI assistant, and the account chip.
+ *
+ * `available` rather than `signedIn` on purpose for the catalog: the published
+ * component list is public, so browsing and inserting work signed-out. Features
+ * that genuinely need an account use {@link isSignedIn} instead.
+ *
+ * Accepts `undefined` because the UI holds the state before the probe
+ * resolves; the alternative is every call site writing
+ * `saas && isSaasAvailable(saas)`, which is how the inline checks this
+ * replaces got there in the first place.
+ */
+export function isSaasAvailable(s: SaasState | undefined): boolean {
+  return s?.kind === 'available';
 }
 export function isSignedIn(
   s: SaasState,
