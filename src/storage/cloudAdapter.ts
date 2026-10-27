@@ -111,6 +111,58 @@ export async function createCloudVersion(
   });
 }
 
+// --- Revision history -----------------------------------------------------
+
+export type CloudRevision = {
+  versionId: string;
+  createdAt: string;
+  message: string | null;
+  sizeBytes: number;
+  authorId: string | null;
+};
+
+/** One page of a project's revision history, newest first. */
+export async function listCloudRevisions(
+  projectId: string,
+  opts: { cursor?: string | undefined; limit?: number | undefined } = {},
+): Promise<{ items: CloudRevision[]; nextCursor: string | null }> {
+  return client().listRevisions(projectId, opts);
+}
+
+/** Fetch and parse one revision's document, for a read-only preview. */
+export async function loadCloudRevision(
+  projectId: string,
+  revisionId: string,
+): Promise<CadProject> {
+  const url = await client().revisionUrl(projectId, revisionId);
+  const res = await fetch(url, { credentials: 'omit' });
+  if (!res.ok) throw new Error(`Revision fetch failed: ${res.status}`);
+  // Validated like any other document the app opens. A revision written by a
+  // newer client can carry a feature this build does not know, and refusing
+  // to show it would make the history unusable rather than merely degraded.
+  return loadCadDocumentOrThrow(await res.json()).project;
+}
+
+/**
+ * Restore a revision, and adopt the etag the server hands back.
+ *
+ * That last part is the whole reason this wrapper exists rather than calling
+ * the provider directly. A restore replaces the live document, so the etag
+ * this module has cached is immediately stale — and the next autosave would
+ * send it as `If-Match` and be rejected. The user would see a conflict the
+ * instant after fixing their document, which is the worst possible moment.
+ */
+export async function restoreCloudRevision(
+  projectId: string,
+  revisionId: string,
+): Promise<{ snapshotVersionId: string }> {
+  const result = await client().restoreRevision(projectId, revisionId, {
+    ifMatch: liveEtags.get(projectId) ?? null,
+  });
+  liveEtags.set(projectId, result.etag);
+  return { snapshotVersionId: result.snapshotVersionId };
+}
+
 /**
  * Largest document a cloud project may hold — mirrors `MAX_BYTES` on the
  * server's `PUT /projects/{id}/document`.

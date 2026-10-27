@@ -21,6 +21,8 @@ import type { CadProject } from '@tweakcad/core/src/document/schema.ts';
 // The provider is the seam: stub it so these tests cover OUR adapter logic —
 // etag bookkeeping and which endpoint gets called — not HTTP.
 const save = vi.fn();
+const listRevisions = vi.fn();
+const restoreRevision = vi.fn();
 const createVersion = vi.fn();
 const load = vi.fn();
 
@@ -29,6 +31,8 @@ class StubConflictError extends Error {}
 vi.mock('@tweakcad/cloud-providers', () => ({
   CloudStorageProvider: class {
     save = save;
+    listRevisions = listRevisions;
+    restoreRevision = restoreRevision;
     createVersion = createVersion;
     load = load;
   },
@@ -39,7 +43,11 @@ vi.mock('./thumbnailCapture.ts', () => ({
   captureThumbnail: vi.fn(async () => null),
 }));
 
-const { saveCloudProject, createCloudVersion, clearCloudEtag, wouldExceedCloudLimit, CLOUD_DOCUMENT_MAX_BYTES } = await import('./cloudAdapter.ts');
+const {
+  saveCloudProject, createCloudVersion, clearCloudEtag,
+  wouldExceedCloudLimit, CLOUD_DOCUMENT_MAX_BYTES,
+  listCloudRevisions, restoreCloudRevision,
+} = await import('./cloudAdapter.ts');
 
 const PROJECT = 'proj_1';
 const doc = () => ({ schemaVersion: 1, metadata: { name: 'x' } }) as never;
@@ -177,5 +185,71 @@ describe('wouldExceedCloudLimit', () => {
     // Duplicated across repos on purpose (the warning must work offline), so
     // this is the reminder that moving one means moving the other.
     expect(CLOUD_DOCUMENT_MAX_BYTES).toBe(5 * 1024 * 1024);
+  });
+});
+
+describe('restoreCloudRevision — etag bookkeeping', () => {
+  /**
+   * A restore replaces the live document, so the etag this module has cached
+   * is stale the instant it returns. If it is not adopted, the next autosave
+   * sends it as `If-Match` and the server rejects — the user sees a conflict
+   * immediately after fixing their document, which is the one moment they
+   * least expect one and least deserve one.
+   */
+  it('adopts the etag the restore returns, so the next autosave is clean', async () => {
+    await saveCloudProject(PROJECT, doc());            // caches etag-1
+    restoreRevision.mockResolvedValue({
+      etag: 'etag-after-restore',
+      restoredFrom: 'rev_old',
+      snapshotVersionId: 'rev_snapshot',
+    });
+
+    await restoreCloudRevision(PROJECT, 'rev_old');
+    await saveCloudProject(PROJECT, doc());
+
+    // The save after the restore must state the RESTORED etag, not the one
+    // from before it.
+    expect(save.mock.calls.at(-1)?.[2]).toEqual({ ifMatch: 'etag-after-restore' });
+  });
+
+  it('sends the cached etag as the restore precondition', async () => {
+    // Between listing history and choosing from it, another tab may have
+    // moved the document. Restoring over that is the same last-write-wins
+    // bug the autosave precondition exists to prevent.
+    await saveCloudProject(PROJECT, doc());
+    restoreRevision.mockResolvedValue({
+      etag: 'e2', restoredFrom: 'rev_old', snapshotVersionId: 'rev_s',
+    });
+
+    await restoreCloudRevision(PROJECT, 'rev_old');
+    expect(restoreRevision).toHaveBeenCalledWith(PROJECT, 'rev_old', { ifMatch: 'etag-1' });
+  });
+
+  it('sends a null precondition when nothing is cached yet', async () => {
+    // Opening the history straight after load, before any save this session.
+    restoreRevision.mockResolvedValue({
+      etag: 'e2', restoredFrom: 'rev_old', snapshotVersionId: 'rev_s',
+    });
+    await restoreCloudRevision(PROJECT, 'rev_old');
+    expect(restoreRevision).toHaveBeenCalledWith(PROJECT, 'rev_old', { ifMatch: null });
+  });
+
+  it('hands back the snapshot id so the UI can offer to undo the restore', async () => {
+    restoreRevision.mockResolvedValue({
+      etag: 'e2', restoredFrom: 'rev_old', snapshotVersionId: 'rev_before',
+    });
+    const result = await restoreCloudRevision(PROJECT, 'rev_old');
+    expect(result.snapshotVersionId).toBe('rev_before');
+  });
+});
+
+describe('listCloudRevisions', () => {
+  it('passes paging through untouched', async () => {
+    listRevisions.mockResolvedValue({ items: [], nextCursor: null });
+    await listCloudRevisions(PROJECT, { cursor: '2026-01-01T00:00:00.000Z', limit: 10 });
+    expect(listRevisions).toHaveBeenCalledWith(PROJECT, {
+      cursor: '2026-01-01T00:00:00.000Z',
+      limit: 10,
+    });
   });
 });

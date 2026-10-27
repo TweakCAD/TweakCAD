@@ -34,12 +34,45 @@ const SaveResponse = z.object({
 });
 type SaveResponse = z.infer<typeof SaveResponse>;
 
-/** `POST .../versions` — mints an immutable snapshot of the live document. */
+/** `POST .../revisions` — mints an immutable snapshot of the live document. */
 const VersionResponse = z.object({
   versionId: z.string(),
   createdAt: z.string(),
 });
 type VersionResponse = z.infer<typeof VersionResponse>;
+
+/** One entry in a project's revision history. */
+const RevisionSummary = z.object({
+  versionId: z.string(),
+  createdAt: z.string(),
+  message: z.string().nullable(),
+  sizeBytes: z.number().int(),
+  authorId: z.string().nullable(),
+});
+
+const RevisionPage = z.object({
+  items: z.array(RevisionSummary),
+  nextCursor: z.string().nullable(),
+});
+type RevisionPage = z.infer<typeof RevisionPage>;
+
+const RevisionUrlResponse = z.object({
+  revisionId: z.string(),
+  downloadUrl: z.string(),
+  expiresInSeconds: z.number().int(),
+});
+
+/**
+ * `restoredFrom` echoes the revision asked for; `snapshotVersionId` is the
+ * revision the server minted of the pre-restore state, so the UI can offer
+ * "undo this restore" without inventing one.
+ */
+const RestoreResponse = z.object({
+  etag: z.string(),
+  restoredFrom: z.string(),
+  snapshotVersionId: z.string(),
+});
+type RestoreResponse = z.infer<typeof RestoreResponse>;
 
 /** Thrown when `If-Match` fails: the project moved under us. */
 export class CloudConflictError extends Error {
@@ -144,11 +177,75 @@ export class CloudStorageProvider {
     if (meta.thumbnail) form.append('thumbnail', meta.thumbnail, 'thumb.webp');
     const res = await this.api.request(
       'POST',
-      `/api/v1/projects/${encodeURIComponent(projectId)}/versions`,
+      `/api/v1/projects/${encodeURIComponent(projectId)}/revisions`,
       VersionResponse,
       form,
     );
     if (!res.ok) throw apiError(res.error);
+    return res.value;
+  }
+
+  /**
+   * The project's revision history, newest first.
+   *
+   * "Revision" not "version": a revision is a private snapshot of the working
+   * document, while a published *version* is a public release with a
+   * changelog. Two different things that briefly shared a URL segment.
+   */
+  async listRevisions(
+    projectId: string,
+    opts: { cursor?: string | undefined; limit?: number | undefined } = {},
+  ): Promise<RevisionPage> {
+    const params = new URLSearchParams();
+    if (opts.cursor) params.set('cursor', opts.cursor);
+    if (opts.limit !== undefined) params.set('limit', String(opts.limit));
+    const query = params.toString();
+    const res = await this.api.request(
+      'GET',
+      `/api/v1/projects/${encodeURIComponent(projectId)}/revisions${query ? `?${query}` : ''}`,
+      RevisionPage,
+    );
+    if (!res.ok) throw apiError(res.error);
+    return res.value;
+  }
+
+  /** Short-lived signed URL for one revision's bytes, for a read-only preview. */
+  async revisionUrl(projectId: string, revisionId: string): Promise<string> {
+    const res = await this.api.request(
+      'GET',
+      `/api/v1/projects/${encodeURIComponent(projectId)}/revisions/${encodeURIComponent(revisionId)}`,
+      RevisionUrlResponse,
+    );
+    if (!res.ok) throw apiError(res.error);
+    return res.value.downloadUrl;
+  }
+
+  /**
+   * Make a past revision the live document again.
+   *
+   * `ifMatch` is the etag the caller believes the live document has; the
+   * server refuses if another tab has moved it since. The returned etag must
+   * be adopted by the caller — see `cloudAdapter`, where ignoring it would
+   * make the next autosave conflict right after the user fixed their work.
+   */
+  async restoreRevision(
+    projectId: string,
+    revisionId: string,
+    opts: { ifMatch?: string | null } = {},
+  ): Promise<RestoreResponse> {
+    const headers: Record<string, string> = {};
+    if (opts.ifMatch) headers['If-Match'] = opts.ifMatch;
+    const res = await this.api.request(
+      'POST',
+      `/api/v1/projects/${encodeURIComponent(projectId)}/revisions/${encodeURIComponent(revisionId)}/restore`,
+      RestoreResponse,
+      undefined,
+      { headers },
+    );
+    if (!res.ok) {
+      if (res.error.code === 'conflict') throw new CloudConflictError(res.error.message);
+      throw apiError(res.error);
+    }
     return res.value;
   }
 
