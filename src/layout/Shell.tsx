@@ -65,6 +65,8 @@ import type {
 } from '../components/ConstructionPlaneDialog.tsx';
 import { HoleDialog } from '../components/HoleDialog.tsx';
 import { PrimitiveDialog } from '../components/PrimitiveDialog.tsx';
+import { BooleanDialog } from '../components/BooleanDialog.tsx';
+import type { BooleanDialogResult } from '../components/BooleanDialog.tsx';
 import type { PrimitiveDialogResult } from '../components/PrimitiveDialog.tsx';
 import { MirrorDialog } from '../components/MirrorDialog.tsx';
 import type {
@@ -436,6 +438,14 @@ export function Shell({
     pickedFace: HoleDialogPickedFace | null;
     initialValues?: Partial<HoleDialogResult>;
   }>({ visible: false, pickedFace: null });
+
+  // Boolean-dialog state. The op the ribbon entry stood for; the dialog can
+  // change it. Bodies are picked in the dialog rather than the viewport, so
+  // there is nothing else to hold here.
+  const [booleanState, setBooleanState] = useState<{
+    visible: boolean;
+    operation: 'union' | 'subtract' | 'intersect';
+  }>({ visible: false, operation: 'subtract' });
 
   // Primitive-dialog state. Nothing is picked in the viewport — a primitive
   // is numbers only — so `kind` is the whole of it: which shape the clicked
@@ -2912,6 +2922,36 @@ export function Shell({
     return () => { unsubscribe(); };
   }, [holeState.visible]);
 
+  const handleToolbarBooleanClick = useCallback((operation: 'union' | 'subtract' | 'intersect') => {
+    if (sketchActive) {
+      activeSketchIdRef.current = null;
+      sketchActions.exitSketch();
+      useSketchEditorStore.getState().clearAll();
+    }
+    setBooleanState({ visible: true, operation });
+  }, [sketchActive, sketchActions]);
+
+  const handleBooleanConfirm = useCallback((result: BooleanDialogResult) => {
+    const partsList = Object.values(project.parts);
+    if (partsList.length === 0) return;
+    const partId = partsList[0]!.id as PartId;
+    const r = commandBus.dispatch({
+      type: 'CreateBoolean',
+      partId,
+      inputs: {
+        operation: result.operation,
+        targetBody: { partId, bodyId: result.targetBodyId as BodyId },
+        toolBodies: result.toolBodyIds.map(id => ({ partId, bodyId: id as BodyId })),
+      },
+    });
+    if (r.ok) {
+      consoleLog('success', `${result.operation} with ${result.toolBodyIds.length} tool body(ies)`, 'boolean');
+    } else {
+      consoleLog('error', `Boolean failed: ${r.error.message}`, 'boolean');
+    }
+    setBooleanState(s => ({ ...s, visible: false }));
+  }, [project.parts, commandBus]);
+
   const handleToolbarPrimitiveClick = useCallback((kind: PrimitiveKind) => {
     // A primitive needs no sketch and no body, so unlike Hole there is
     // nothing to check — just leave the sketch if one is open.
@@ -3731,6 +3771,7 @@ export function Shell({
             onSweepClick={handleToolbarSweepClick}
             onLoftClick={handleToolbarLoftClick}
             onHoleClick={handleToolbarHoleClick}
+            onBooleanClick={handleToolbarBooleanClick}
             onPrimitiveClick={handleToolbarPrimitiveClick}
             onOffsetPlaneClick={handleToolbarOffsetPlaneClick}
             onPlaneFromFaceClick={handleToolbarPlaneFromFaceClick}
@@ -4081,6 +4122,26 @@ export function Shell({
               onCancel={handleHoleCancel}
             />
           )}
+
+          {booleanState.visible && (() => {
+            const partFor = Object.values(project.parts)[0];
+            const availableBodies = partFor
+              ? Object.entries(bodyToFeatureMap)
+                  .filter(([bid]) => partFor.timeline.some(f => f.id === bodyToFeatureMap[bid as never]))
+                  .map(([bid, fid], i) => {
+                    const feature = partFor.timeline.find(f => f.id === fid);
+                    return { id: String(bid), label: feature ? `Body ${i + 1} (${feature.name})` : `Body ${i + 1}` };
+                  })
+              : [];
+            return (
+              <BooleanDialog
+                operation={booleanState.operation}
+                availableBodies={availableBodies}
+                onConfirm={handleBooleanConfirm}
+                onCancel={() => setBooleanState(s => ({ ...s, visible: false }))}
+              />
+            );
+          })()}
 
           {/* Primitive: numbers only — no viewport picking, so the dialog
               stands alone. The target-body picker is built the same way as

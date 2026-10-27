@@ -485,6 +485,12 @@ const PrimitiveShapeSchema = z.discriminatedUnion('kind', [
  * move is legal (a Move session the user cancelled back to zero), and the
  * refs are validated by resolution at build time, not here.
  */
+const BooleanFeatureInputsSchema = z.object({
+  operation: z.union([z.literal('union'), z.literal('subtract'), z.literal('intersect')]),
+  targetBody: BodyRefSchema,
+  toolBodies: z.array(BodyRefSchema).min(1),
+});
+
 const MoveFeatureInputsSchema = z.object({
   targetBodies: z.array(BodyRefSchema),
   transform: Transform3DSchema,
@@ -575,6 +581,7 @@ const FeatureTypeSchema = z.union([
   z.literal('importedGeometry'),
   z.literal('primitive'),
   z.literal('move'),
+  z.literal('boolean'),
 ]);
 
 /**
@@ -604,6 +611,7 @@ const FEATURE_INPUT_SCHEMAS: Record<FeatureTypeName, z.ZodTypeAny> = {
   importedGeometry: ImportedGeometryFeatureInputsSchema,
   primitive: PrimitiveFeatureInputsSchema,
   move: MoveFeatureInputsSchema,
+  boolean: BooleanFeatureInputsSchema,
 };
 
 /** The envelope every feature shares, regardless of type. */

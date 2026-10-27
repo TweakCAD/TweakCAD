@@ -443,10 +443,21 @@ export async function incrementalRebuild(
     }
   }
 
-  // Build bodyId → featureId mapping from the effects (consumed/created) tracking
+  // Build bodyId → featureId mapping from the effects (consumed/created)
+  // tracking, restricted to bodies that actually survived.
+  //
+  // `effect.created` is every body any feature ever produced, including ones
+  // a later boolean consumed. Keeping those made the map a history rather
+  // than a description of the scene, and every body picker reads it — so a
+  // cut's tool body stayed on offer as a target for the next operation, long
+  // after it stopped existing.
+  const surviving = new Set<string>(
+    Array.from(context.bodies.keys(), (bid) => String(bid)),
+  );
   const bodyToFeatureMap: Record<string, string> = {};
   for (const [featureId, effect] of effects) {
     for (const createdBodyId of effect.created) {
+      if (!surviving.has(String(createdBodyId))) continue;
       bodyToFeatureMap[createdBodyId as string] = featureId as string;
     }
   }

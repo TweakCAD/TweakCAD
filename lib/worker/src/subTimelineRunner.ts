@@ -46,6 +46,7 @@ import { buildImportedGeometry } from './featureBuilders/buildImportedGeometry.t
 import { buildConstructionPlane } from './featureBuilders/buildConstructionPlane.ts';
 import { buildPrimitive } from './featureBuilders/buildPrimitive.ts';
 import { buildMove } from './featureBuilders/buildMove.ts';
+import { buildBoolean } from './featureBuilders/buildBoolean.ts';
 import { buildComponent } from './featureBuilders/buildComponent.ts';
 
 export type SubTimelineResult = {
@@ -146,6 +147,7 @@ export async function dispatchFeatureBuilder(
     case 'constructionPlane': return buildConstructionPlane(feature, params, context, kernel);
     case 'primitive':         return buildPrimitive(feature, params, context, kernel);
     case 'move':              return buildMove(feature, params, context, kernel);
+    case 'boolean':           return buildBoolean(feature, params, context, kernel);
     default:                  throw new Error(`No builder for feature type: ${feature.type}`);
   }
 }

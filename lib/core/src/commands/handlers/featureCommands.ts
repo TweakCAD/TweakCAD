@@ -716,6 +716,84 @@ export const createHoleHandler: CommandHandler = {
  * Chamfer / Mirror — the rebuilder runs strictly in order, and a move always
  * follows the feature that made its target.
  */
+/**
+ * `CreateBoolean` handler.
+ *
+ * Appended at the end of the timeline, like Move: it combines what the
+ * timeline has already produced, so running it earlier would operate on
+ * bodies that do not exist yet. `dependsOn` stays empty and order does the
+ * work, matching Fillet / Chamfer / Mirror.
+ */
+export const createBooleanHandler: CommandHandler = {
+  validate(command: CadCommand, state: Readonly<CadProject>): Result<void, ValidationError> {
+    if (command.type !== 'CreateBoolean') {
+      return err({ code: 'WRONG_TYPE', message: 'Expected CreateBoolean command' });
+    }
+    const { operation, targetBody, toolBodies } = command.inputs;
+    if (operation !== 'union' && operation !== 'subtract' && operation !== 'intersect') {
+      return err({
+        code: 'INVALID_INPUT',
+        message: `Unknown boolean operation: ${String(operation)}`,
+        field: 'inputs.operation',
+      });
+    }
+    if (!targetBody?.bodyId) {
+      return err({
+        code: 'INVALID_INPUT',
+        message: 'Boolean requires a target body',
+        field: 'inputs.targetBody',
+      });
+    }
+    if (!toolBodies?.length) {
+      return err({
+        code: 'INVALID_INPUT',
+        message: 'Boolean requires at least one tool body',
+        field: 'inputs.toolBodies',
+      });
+    }
+    // A body combined with itself is a no-op dressed as a feature, and the
+    // builder would silently drop it — better to say so at the point the
+    // user picked the same body twice.
+    if (toolBodies.every(t => String(t.bodyId) === String(targetBody.bodyId))) {
+      return err({
+        code: 'INVALID_INPUT',
+        message: 'Boolean target and tool are the same body',
+        field: 'inputs.toolBodies',
+      });
+    }
+    return findPart(state, command.partId);
+  },
+
+  execute(draft: CadProject, command: CadCommand): void {
+    if (command.type !== 'CreateBoolean') return;
+    const part = draft.parts[command.partId];
+    if (!part) return;
+
+    const id = featureId(generateId('boolean'));
+    const now = new Date().toISOString();
+    const label = command.inputs.operation === 'union' ? 'Combine'
+      : command.inputs.operation === 'subtract' ? 'Cut' : 'Intersect';
+
+    const feature: FeatureNode = {
+      id,
+      type: 'boolean',
+      // Named for what it does, not for the type: "Cut 1" reads in the
+      // timeline where "Boolean 1" would need opening to understand.
+      name: `${label} ${part.timeline.filter(f => f.type === 'boolean').length + 1}`,
+      version: 1,
+      enabled: true,
+      visible: true,
+      inputs: command.inputs as unknown as Record<string, unknown>,
+      dependsOn: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    part.timeline.push(feature);
+    draft.metadata.updatedAt = now;
+  },
+};
+
 export const createMoveHandler: CommandHandler = {
   validate(command: CadCommand, state: Readonly<CadProject>): Result<void, ValidationError> {
     if (command.type !== 'CreateMove') {

@@ -230,6 +230,8 @@ interface RibbonProps {
   onChamferClick?: (() => void) | undefined;
   /** Called when user clicks Hole tool in the toolbar */
   onHoleClick?: (() => void) | undefined;
+  /** Called with the boolean op the clicked ribbon entry stands for. */
+  onBooleanClick?: ((op: 'union' | 'subtract' | 'intersect') => void) | undefined;
   /** Called with the shape the clicked ribbon entry stands for. */
   onPrimitiveClick?: ((kind: 'box' | 'cylinder' | 'sphere' | 'cone' | 'torus') => void) | undefined;
   /** Called when user clicks Mirror Body tool in the toolbar */
@@ -261,6 +263,7 @@ type ToolId =
   | 'primTorus'
   | 'cut'
   | 'fuse'
+  | 'intersect'
   | 'fillet'
   | 'chamfer'
   | 'pattern'
@@ -324,6 +327,7 @@ const TOOLS: ToolDef[] = [
   // Boolean ops live in the MODIFY overflow dropdown only
   { id: 'cut',     label: 'Cut',     icon: (c) => <CutIcon size={26} color={c} />,     group: 'MODIFY', color: '#ef4444' },
   { id: 'fuse',    label: 'Combine', icon: (c) => <FuseIcon size={26} color={c} />,    group: 'MODIFY', color: '#8b5cf6' },
+  { id: 'intersect', label: 'Intersect', icon: (c) => <FuseIcon size={26} color={c} />, group: 'MODIFY', color: '#8b5cf6' },
   { id: 'mirror',  label: 'Mirror',  icon: (c) => <MirrorIcon size={26} color={c} />,  group: 'MODIFY', color: '#a855f7' },
   // CONSTRUCT — reference geometry (no bodies). Each plane *type* is its
   // own ribbon entry ("Offset Plane", "Plane from Face", etc.) as distinct
@@ -990,6 +994,7 @@ export function MainRibbon({
   onFilletClick,
   onChamferClick,
   onHoleClick,
+  onBooleanClick,
   onPrimitiveClick,
   onMirrorClick,
   onShellClick,
@@ -1022,6 +1027,7 @@ export function MainRibbon({
           onFilletClick={onFilletClick}
           onChamferClick={onChamferClick}
           onHoleClick={onHoleClick}
+          onBooleanClick={onBooleanClick}
           onPrimitiveClick={onPrimitiveClick}
           onMirrorClick={onMirrorClick}
           onShellClick={onShellClick}
@@ -1049,6 +1055,7 @@ function ModelingRibbon({
   onFilletClick,
   onChamferClick,
   onHoleClick,
+  onBooleanClick,
   onPrimitiveClick,
   onMirrorClick,
   onShellClick,
@@ -1068,6 +1075,8 @@ function ModelingRibbon({
   onFilletClick?: (() => void) | undefined;
   onChamferClick?: (() => void) | undefined;
   onHoleClick?: (() => void) | undefined;
+  /** Called with the boolean op the clicked ribbon entry stands for. */
+  onBooleanClick?: ((op: 'union' | 'subtract' | 'intersect') => void) | undefined;
   /** Called with the shape the clicked ribbon entry stands for. */
   onPrimitiveClick?: ((kind: 'box' | 'cylinder' | 'sphere' | 'cone' | 'torus') => void) | undefined;
   onMirrorClick?: (() => void) | undefined;
@@ -1120,6 +1129,10 @@ function ModelingRibbon({
     }
     if (toolId === 'hole') {
       onHoleClick?.();
+      return;
+    }
+    if (toolId === 'cut' || toolId === 'fuse' || toolId === 'intersect') {
+      onBooleanClick?.(toolId === 'cut' ? 'subtract' : toolId === 'fuse' ? 'union' : 'intersect');
       return;
     }
     if (toolId.startsWith('prim')) {
@@ -1183,7 +1196,8 @@ function ModelingRibbon({
             shortcut={tool.shortcut}
             onClick={() => handleToolClick(tool.id)}
             // All MODIFY tools (Fillet/Chamfer/Mirror/Shell/Pattern) now wired.
-            disabled={tool.id !== 'fillet' && tool.id !== 'chamfer' && tool.id !== 'mirror' && tool.id !== 'shell' && tool.id !== 'pattern'}
+            // Every MODIFY tool is wired now; the booleans were the last.
+            disabled={false}
           />
         ))}
       </RibbonGroupView>

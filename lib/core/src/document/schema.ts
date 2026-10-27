@@ -121,7 +121,8 @@ export type FeatureType =
   | 'constructionPlane'
   | 'importedGeometry'
   | 'primitive'
-  | 'move';
+  | 'move'
+  | 'boolean';
 
 // --- Feature Status (in build artifacts, not in document) ---
 
@@ -829,6 +830,37 @@ export type HoleFeatureInputs = {
   /** Countersink full included angle in degrees (90° is the ISO 7046 default; 82° matches Imperial flatheads). */
   countersinkAngle?: Expression;
   targetBodies?: BodyRef[];
+};
+
+// --- Boolean ---
+
+/**
+ * Combine existing bodies with a boolean operation.
+ *
+ * Extrude, revolve and the rest each carry their own `operation` field, which
+ * covers the common case of "make this shape and subtract it as you go". What
+ * they cannot express is combining two bodies that already exist — two
+ * imports, two primitives, an extrude and a component — because neither one
+ * is being created at the moment the combination is wanted.
+ *
+ * Like {@link MoveFeatureInputs} this is a **modifier**: the result carries
+ * the primary target's id (see `bodyIdentity.ts`), so a `FaceRef` captured
+ * before the boolean still resolves after it. Tool bodies are consumed and
+ * their ids retire — they are now part of the target.
+ */
+export type BooleanFeatureInputs = {
+  /**
+   * `union` fuses everything into one body. `subtract` removes the tools from
+   * the target. `intersect` keeps only the overlap.
+   */
+  operation: 'union' | 'subtract' | 'intersect';
+  /**
+   * The body that survives, and whose id the result carries. For `union` and
+   * `intersect` the distinction is only about identity, not geometry.
+   */
+  targetBody: BodyRef;
+  /** Bodies combined into the target and consumed. At least one. */
+  toolBodies: BodyRef[];
 };
 
 // --- Move ---

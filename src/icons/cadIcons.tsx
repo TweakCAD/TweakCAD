@@ -766,6 +766,8 @@ export function getFeatureIcon(featureType: string, size = 14): ReactElement {
       return <ConeIcon size={size} />;
     case 'torus':
       return <TorusIcon size={size} />;
+    case 'boolean':
+      return <FuseIcon size={size} />;
     case 'move':
       return <MoveIcon size={size} />;
     case 'importedGeometry':
@@ -796,6 +798,7 @@ export const featureTypeColors: Record<string, string> = {
   revolve: '#ec4899',    // pink
   constructionPlane: '#3b82f6', // blue — same family as Sketch (both are reference-geometry inputs)
   component: '#6366f1',          // indigo
+  boolean: '#8b5cf6',           // purple — matches the ribbon Combine/Cut
   move: '#0ea5e9',               // sky — a placement, not new material
   importedGeometry: '#64748b',   // slate
   // Primitives key on their shape (see `featureIconType`) and share one

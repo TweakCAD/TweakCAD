@@ -19,6 +19,7 @@ import type {
   FilletFeatureInputs,
   ChamferFeatureInputs,
   HoleFeatureInputs,
+  BooleanFeatureInputs,
   MoveFeatureInputs,
   PrimitiveFeatureInputs,
   MirrorFeatureInputs,
@@ -78,6 +79,7 @@ export type CadCommand =
   | CreateHoleCommand
   | CreatePrimitiveCommand
   | CreateMoveCommand
+  | CreateBooleanCommand
   | CreateMirrorCommand
   | CreateShellCommand
   | CreateSweepCommand
@@ -597,6 +599,16 @@ export type CreateHoleCommand = {
  * Append a `move` feature. Used for bodies with nowhere else to store a
  * placement — an import or a component edits its own `transform` instead.
  */
+/**
+ * Combine bodies that already exist. Distinct from the `operation` field on
+ * Extrude and friends, which only applies while creating a shape.
+ */
+export type CreateBooleanCommand = {
+  type: 'CreateBoolean';
+  partId: PartId;
+  inputs: BooleanFeatureInputs;
+};
+
 export type CreateMoveCommand = {
   type: 'CreateMove';
   partId: PartId;
@@ -848,6 +860,8 @@ export function commandLabel(command: CadCommand): string {
       return `Create ${command.inputs.shape.kind} (${command.inputs.operation})`;
     case 'CreateMove':
       return `Move ${command.inputs.targetBodies.length} body${command.inputs.targetBodies.length === 1 ? '' : 'ies'}`;
+    case 'CreateBoolean':
+      return `${command.inputs.operation[0]!.toUpperCase()}${command.inputs.operation.slice(1)} ${command.inputs.toolBodies.length + 1} bodies`;
     case 'CreatePattern':
       return 'Create Pattern';
     case 'CreateMirror':
