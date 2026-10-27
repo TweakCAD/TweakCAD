@@ -56,3 +56,18 @@ export type ExportRequest = {
   part: CadPart;
   project: CadProject;
 };
+
+/**
+ * What to measure. Identified by the same stable ids the rest of the app
+ * uses, not by kernel handles — those never leave the worker.
+ */
+export type MeasureTarget =
+  | { kind: 'body'; bodyId: string }
+  | { kind: 'face'; bodyId: string; stableFaceId: string }
+  | { kind: 'edge'; bodyId: string; stableEdgeId: string };
+
+/** All lengths in mm, areas in mm², volumes in mm³. */
+export type MeasureResult =
+  | { kind: 'body'; volume: number; surfaceArea: number; centerOfMass: [number, number, number]; boundingBox: { min: [number, number, number]; max: [number, number, number] } }
+  | { kind: 'face'; area: number }
+  | { kind: 'edge'; length: number };

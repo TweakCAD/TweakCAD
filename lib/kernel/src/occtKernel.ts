@@ -1570,6 +1570,18 @@ export class OcctKernel implements CadKernel {
     };
   }
 
+  async getEdgeLength(edge: KernelEdge): Promise<number> {
+    const k = this.getKernel();
+    const shape = this.edges.get(edge.handle);
+    if (shape === undefined) throw new Error(`Unknown kernel edge handle: ${edge.handle}`);
+    return Math.abs(k.getLength(shape));
+  }
+
+  async getFaceArea(face: KernelFace): Promise<number> {
+    const k = this.getKernel();
+    return Math.abs(k.getSurfaceArea(this.getFaceShape(face)));
+  }
+
   // --- Output ---
 
   async tessellate(body: KernelBody, options: TessellationOptions): Promise<DisplayMesh> {

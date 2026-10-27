@@ -246,6 +246,14 @@ export class MockKernel implements CadKernel {
     };
   }
 
+  async getEdgeLength(_edge: KernelEdge): Promise<number> {
+    return 10;
+  }
+
+  async getFaceArea(_face: KernelFace): Promise<number> {
+    return 100;
+  }
+
   async resolveFaceRef(
     _body: KernelBody,
     _stableFaceId: StableFaceId,

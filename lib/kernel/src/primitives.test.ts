@@ -12,6 +12,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { OcctKernel } from './occtKernel.ts';
+import { FINE_TESSELLATION } from './types.ts';
 
 async function newKernel(): Promise<OcctKernel> {
   const k = new OcctKernel();
@@ -145,5 +146,55 @@ describe('makeTorus', () => {
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.error.code).toBe('ZERO_AXIS');
+  });
+});
+
+describe('measurement', () => {
+  /**
+   * The measure tool reads these, so they have to be exact rather than
+   * tessellated. A circle's circumference is the test that tells the
+   * difference: measured on the BREP curve it is 2πr, measured on the
+   * display mesh it is a chain of chords that reads short by an amount
+   * depending on the deflection setting.
+   */
+  it('measures a box face area and edge length exactly', async () => {
+    const k = await newKernel();
+    const r = await k.makeBox({ origin: [0, 0, 0], width: 10, height: 20, depth: 30 });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    await k.tessellate(r.value, FINE_TESSELLATION);
+    const topo = await k.getTopology(r.value);
+
+    // Resolve through the stable-id path a measure tool would use, rather
+    // than fabricating handles: a stable face id is not a kernel handle.
+    let total = 0;
+    for (const f of topo.faces) {
+      const face = await k.resolveFaceRef(r.value, f.stableFaceId!);
+      expect(face, `face ${f.stableFaceId} should resolve`).not.toBeNull();
+      if (face) total += await k.getFaceArea!(face);
+    }
+    // 10×20, 10×30 and 20×30 faces, two of each.
+    expect(total).toBeCloseTo(2 * (200 + 300 + 600), 3);
+  });
+
+  it('measures a cylinder the way the curve says, not the mesh', async () => {
+    const k = await newKernel();
+    const r = await k.makeCylinder({ center: [0, 0, 0], axis: [0, 0, 1], radius: 5, height: 10 });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const mass = await k.getMassProperties!(r.value);
+    // πr²h — a faceted approximation would land a percent or so under.
+    expect(mass.volume).toBeCloseTo(Math.PI * 25 * 10, 2);
+    // Lateral 2πrh + two caps 2πr².
+    expect(mass.surfaceArea).toBeCloseTo(2 * Math.PI * 5 * 10 + 2 * Math.PI * 25, 2);
+  });
+
+  it('reports the centre of mass of an off-origin box', async () => {
+    const k = await newKernel();
+    const r = await k.makeBox({ origin: [10, 0, 0], width: 10, height: 10, depth: 10 });
+    if (!r.ok) throw new Error('precondition failed');
+    const mass = await k.getMassProperties!(r.value);
+    expect(mass.centerOfMass[0]).toBeCloseTo(15, 4);
+    expect(mass.centerOfMass[1]).toBeCloseTo(5, 4);
   });
 });

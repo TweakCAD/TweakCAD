@@ -80,6 +80,7 @@ import {
   DistanceYToolIcon,
   FinishSketchIcon,
   ConstructionGeometryIcon,
+  MeasureIcon,
   BoxIcon,
   CylinderIcon,
   SphereIcon,
@@ -232,6 +233,10 @@ interface RibbonProps {
   onHoleClick?: (() => void) | undefined;
   /** Called with the boolean op the clicked ribbon entry stands for. */
   onBooleanClick?: ((op: 'union' | 'subtract' | 'intersect') => void) | undefined;
+  /** Toggle the measure readout panel. */
+  onMeasureClick?: (() => void) | undefined;
+  /** Whether the measure panel is open (highlights the button). */
+  measureActive?: boolean | undefined;
   /** Called with the shape the clicked ribbon entry stands for. */
   onPrimitiveClick?: ((kind: 'box' | 'cylinder' | 'sphere' | 'cone' | 'torus') => void) | undefined;
   /** Called when user clicks Mirror Body tool in the toolbar */
@@ -995,6 +1000,8 @@ export function MainRibbon({
   onChamferClick,
   onHoleClick,
   onBooleanClick,
+  onMeasureClick,
+  measureActive,
   onPrimitiveClick,
   onMirrorClick,
   onShellClick,
@@ -1028,6 +1035,8 @@ export function MainRibbon({
           onChamferClick={onChamferClick}
           onHoleClick={onHoleClick}
           onBooleanClick={onBooleanClick}
+          onMeasureClick={onMeasureClick}
+          measureActive={measureActive}
           onPrimitiveClick={onPrimitiveClick}
           onMirrorClick={onMirrorClick}
           onShellClick={onShellClick}
@@ -1056,6 +1065,8 @@ function ModelingRibbon({
   onChamferClick,
   onHoleClick,
   onBooleanClick,
+  onMeasureClick,
+  measureActive,
   onPrimitiveClick,
   onMirrorClick,
   onShellClick,
@@ -1077,6 +1088,10 @@ function ModelingRibbon({
   onHoleClick?: (() => void) | undefined;
   /** Called with the boolean op the clicked ribbon entry stands for. */
   onBooleanClick?: ((op: 'union' | 'subtract' | 'intersect') => void) | undefined;
+  /** Toggle the measure readout panel. */
+  onMeasureClick?: (() => void) | undefined;
+  /** Whether the measure panel is open (highlights the button). */
+  measureActive?: boolean | undefined;
   /** Called with the shape the clicked ribbon entry stands for. */
   onPrimitiveClick?: ((kind: 'box' | 'cylinder' | 'sphere' | 'cone' | 'torus') => void) | undefined;
   onMirrorClick?: (() => void) | undefined;
@@ -1230,7 +1245,12 @@ function ModelingRibbon({
           active={sectionActive}
           onClick={() => onSectionClick?.()}
         />
-        <RibbonBtn icon={<RectToolIcon size={26} color="#aaa" />} label="Measure" disabled onClick={() => {}} />
+        <RibbonBtn
+          icon={<MeasureIcon size={26} color={measureActive ? '#2563eb' : '#0d9488'} />}
+          label="Measure"
+          active={measureActive}
+          onClick={() => onMeasureClick?.()}
+        />
       </RibbonGroupView>
     </>
   );

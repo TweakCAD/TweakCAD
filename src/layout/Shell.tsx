@@ -66,6 +66,10 @@ import type {
 import { HoleDialog } from '../components/HoleDialog.tsx';
 import { PrimitiveDialog } from '../components/PrimitiveDialog.tsx';
 import { BooleanDialog } from '../components/BooleanDialog.tsx';
+import { MeasurePanel } from '../components/MeasurePanel.tsx';
+import { measureInWorker } from '../rebuildScheduler.ts';
+import type { MeasureTarget } from '@tweakcad/worker/src/protocol.ts';
+import type { Selection } from '@tweakcad/core/src/document/schema.ts';
 import type { BooleanDialogResult } from '../components/BooleanDialog.tsx';
 import type { PrimitiveDialogResult } from '../components/PrimitiveDialog.tsx';
 import { MirrorDialog } from '../components/MirrorDialog.tsx';
@@ -438,6 +442,46 @@ export function Shell({
     pickedFace: HoleDialogPickedFace | null;
     initialValues?: Partial<HoleDialogResult>;
   }>({ visible: false, pickedFace: null });
+
+  // Measure panel. Reads whatever is selected rather than running its own
+  // pick mode — every other operation already resolves a click to a body,
+  // face or edge, and a parallel picker would be a second set of highlight
+  // rules to keep in step with the first.
+  const [measureOpen, setMeasureOpen] = useState(false);
+  const [measureSelection, setMeasureSelection] = useState<Selection | null>(null);
+
+  const handleToolbarMeasureClick = useCallback(() => {
+    setMeasureOpen(v => !v);
+  }, []);
+
+  // Only subscribed while the panel is open: the selection store fires on
+  // every hover-to-click transition in the viewport, and re-rendering Shell
+  // for a panel nobody has opened is work for nothing.
+  useEffect(() => {
+    if (!measureOpen) { setMeasureSelection(null); return; }
+    const { selectionStore } = getAppState();
+    setMeasureSelection(selectionStore.getState().selection);
+    return selectionStore.subscribe(state => setMeasureSelection(state.selection));
+  }, [measureOpen]);
+
+  /**
+   * The current selection as something the worker can measure.
+   *
+   * Only geometry resolves: a plane selection has no body behind it, and a
+   * feature or sketch-entity selection is not a solid at all.
+   */
+  const measureTarget = useMemo((): MeasureTarget | null => {
+    const sel = measureSelection;
+    if (!sel) return null;
+    if (sel.type === 'body') return { kind: 'body', bodyId: String(sel.bodyId) };
+    if (sel.type === 'face') {
+      return { kind: 'face', bodyId: String(sel.bodyId), stableFaceId: String(sel.faceId) };
+    }
+    if (sel.type === 'edge') {
+      return { kind: 'edge', bodyId: String(sel.bodyId), stableEdgeId: String(sel.edgeId) };
+    }
+    return null;
+  }, [measureSelection]);
 
   // Boolean-dialog state. The op the ribbon entry stood for; the dialog can
   // change it. Bodies are picked in the dialog rather than the viewport, so
@@ -3772,6 +3816,8 @@ export function Shell({
             onLoftClick={handleToolbarLoftClick}
             onHoleClick={handleToolbarHoleClick}
             onBooleanClick={handleToolbarBooleanClick}
+            onMeasureClick={handleToolbarMeasureClick}
+            measureActive={measureOpen}
             onPrimitiveClick={handleToolbarPrimitiveClick}
             onOffsetPlaneClick={handleToolbarOffsetPlaneClick}
             onPlaneFromFaceClick={handleToolbarPlaneFromFaceClick}
@@ -4120,6 +4166,14 @@ export function Shell({
               initialValues={holeState.initialValues}
               onConfirm={handleHoleConfirm}
               onCancel={handleHoleCancel}
+            />
+          )}
+
+          {measureOpen && (
+            <MeasurePanel
+              target={measureTarget}
+              measure={measureInWorker}
+              onClose={() => setMeasureOpen(false)}
             />
           )}
 

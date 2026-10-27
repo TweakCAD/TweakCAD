@@ -17,6 +17,7 @@ import type { DocumentStore } from '@tweakcad/core/src/store/documentStore.ts';
 import type { CadPart, FeatureNode } from '@tweakcad/core/src/document/schema.ts';
 import { consoleLog } from '@tweakcad/core/src/store/consoleStore.ts';
 import { WorkerPool } from '@tweakcad/worker/src/pool.ts';
+import type { MeasureTarget, MeasureResult } from '@tweakcad/worker/src/protocol.ts';
 import type { WorkerRebuildResult } from '@tweakcad/worker/src/cadWorker.ts';
 import type { AppState } from './appInit.ts';
 
@@ -320,4 +321,18 @@ export async function exportActivePart(
   else if (format === 'brep') blob = await fallback.kernel.exportBrep(bodyHandles);
   else blob = await fallback.kernel.export3MF(bodyHandles, { name: part.name });
   return blob.arrayBuffer();
+}
+
+/**
+ * Measure a body, face or edge in the current geometry.
+ *
+ * Goes through the scheduler because the pool is private to it, and routes to
+ * the rebuild worker — the one that still holds the bodies on screen. Returns
+ * null before the first rebuild, or when the target has gone.
+ */
+export async function measureInWorker(
+  target: MeasureTarget,
+): Promise<MeasureResult | null> {
+  if (!pool) return null;
+  return pool.requestMeasure(target);
 }

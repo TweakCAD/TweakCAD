@@ -647,6 +647,17 @@ export function RollbackIcon({ size = defaults.size, color = defaults.color, str
   );
 }
 
+/** Calliper jaws over a dimension line — measurement, not modification */
+export function MeasureIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+      <path d="M3 4V12M13 4V12" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      <path d="M3 8H13" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      <path d="M5 6L3 8L5 10M11 6L13 8L11 10" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 // ---- Move ----
 /** Four-way arrows — the body is repositioned, not reshaped */
 export function MoveIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {

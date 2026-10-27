@@ -15,6 +15,7 @@
 import * as Comlink from 'comlink';
 import type { CadPart, CadProject } from '@tweakcad/core/src/document/schema.ts';
 import type { CadWorkerApi, WorkerRebuildResult } from './cadWorker.ts';
+import type { MeasureTarget, MeasureResult } from './protocol.ts';
 
 // ---- Types ----
 
@@ -212,6 +213,22 @@ export class WorkerPool {
   /**
    * Get the current status of both lanes.
    */
+  /**
+   * Measure something in the rebuild worker's current geometry.
+   *
+   * Goes to the **rebuild** worker specifically: it is the one holding the
+   * bodies the last rebuild produced. The export worker runs its own kernel
+   * and its own throwaway rebuild, so it knows nothing about what is on
+   * screen.
+   *
+   * Returns null when the target no longer exists — selection outlives
+   * geometry routinely, and a panel showing nothing is the correct response.
+   */
+  async requestMeasure(target: MeasureTarget): Promise<MeasureResult | null> {
+    const worker = await this.ensureRebuildWorker();
+    return worker.measure(target);
+  }
+
   getStatus(): PoolStatus {
     return {
       rebuild: this.rebuildStatus,

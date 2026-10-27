@@ -249,6 +249,19 @@ export interface CadKernel {
   getMassProperties?(body: KernelBody): Promise<MassProperties>;
 
   /**
+   * Length of one edge, in mm.
+   *
+   * Measured on the BREP curve, not on the tessellation — a tessellated arc
+   * is a chain of chords and always reads short, by an amount that depends on
+   * the deflection setting rather than on the model. A measurement that moves
+   * when you change display quality is not a measurement.
+   */
+  getEdgeLength?(edge: KernelEdge): Promise<number>;
+
+  /** Area of one face, in mm². Measured on the surface, not the mesh. */
+  getFaceArea?(face: KernelFace): Promise<number>;
+
+  /**
    * Resolve a stable face reference back to a runtime `KernelFace` handle
    * on the given body.
    *
