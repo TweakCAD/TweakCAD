@@ -352,3 +352,79 @@ describe('hydrateReferenceAssets', () => {
     expect(out.references.ref_1!.name).toBe('a.step');
   });
 });
+
+describe('reference uploads — not on every save', () => {
+  /**
+   * The bug these exist for: `hydrateReferenceAssets` puts the bytes back into
+   * the document on load, so every subsequent autosave offered them again and
+   * `putReference` sent the whole body before the server could say it already
+   * had it. A 20 MB import on a two-second debounce meant 20 MB per save —
+   * precisely the bandwidth cost the reference mechanism removes.
+   */
+  function docWithAsset(hash: string, bytes: string | undefined): CadProject {
+    return {
+      schemaVersion: 1,
+      metadata: { name: 'x' },
+      references: {
+        ref_1: {
+          id: 'ref_1', name: 'big.step', type: 'step',
+          sizeBytes: 3, hash,
+          ...(bytes === undefined ? {} : { bytes }),
+        },
+      },
+    } as unknown as CadProject;
+  }
+
+  it('uploads an asset the first time it is saved', async () => {
+    await saveCloudProject('p_upload_1', docWithAsset('h_new_1', 'QUJD'));
+    expect(putReference).toHaveBeenCalledTimes(1);
+    expect(putReference.mock.calls[0]?.[1]).toBe('h_new_1');
+  });
+
+  it('does not upload it again on the next save', async () => {
+    const doc = docWithAsset('h_new_2', 'QUJD');
+    await saveCloudProject('p_upload_2', doc);
+    await saveCloudProject('p_upload_2', doc);
+    await saveCloudProject('p_upload_2', doc);
+    expect(putReference).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not upload an asset it just fetched', async () => {
+    // Load hydrates the bytes back in; the save that follows must not send
+    // them straight back up.
+    referenceUrl.mockResolvedValue('https://blob.example/h_hydrated');
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      arrayBuffer: async () => new Uint8Array([65, 66, 67]).buffer,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const hydrated = await hydrateReferenceAssets(
+      'p_upload_3', docWithAsset('h_hydrated', undefined),
+    );
+    expect(hydrated.references.ref_1!.bytes).toBeDefined();
+
+    await saveCloudProject('p_upload_3', hydrated);
+    expect(putReference).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it('tracks assets per project, not globally', async () => {
+    // Two projects can reference the same file; the bytes live under each
+    // project's own prefix, so knowing one has it says nothing about the
+    // other.
+    const doc = docWithAsset('h_shared', 'QUJD');
+    await saveCloudProject('p_upload_4a', doc);
+    await saveCloudProject('p_upload_4b', doc);
+    expect(putReference).toHaveBeenCalledTimes(2);
+  });
+
+  it('still strips the bytes from what is stored', async () => {
+    // The skip must not quietly turn into "leave them in the document".
+    await saveCloudProject('p_upload_5', docWithAsset('h_new_5', 'QUJD'));
+    const sent = save.mock.calls.at(-1)?.[1] as Blob;
+    const text = await sent.text();
+    expect(text).not.toContain('QUJD');
+    expect(text).toContain('big.step');
+  });
+});

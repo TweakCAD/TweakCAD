@@ -164,13 +164,42 @@ export function splitReferenceAssets(doc: CadProject): {
   return { stripped: { ...doc, references }, assets };
 }
 
-/** Upload any assets the server does not already hold, then save. */
+/**
+ * Hashes this session knows the server already holds, per project.
+ *
+ * Without it, every autosave re-uploaded every import in full. The bytes are
+ * put back into the document by {@link hydrateReferenceAssets} on load, so
+ * the next save sees them and offers them again — and the server only
+ * discovers it already has them *after* receiving them. A 20 MB import on a
+ * two-second debounce meant 20 MB per save, which is the bandwidth cost this
+ * whole mechanism exists to remove.
+ *
+ * Safe to trust because the key IS the content hash: an asset that is there
+ * cannot change, and the only thing that removes one is deleting the project
+ * it belongs to.
+ */
+const uploadedAssets = new Map<string, Set<string>>();
+
+function knownAssets(projectId: string): Set<string> {
+  let set = uploadedAssets.get(projectId);
+  if (!set) { set = new Set(); uploadedAssets.set(projectId, set); }
+  return set;
+}
+
+/** Upload the assets the server does not already hold. */
 async function uploadReferenceAssets(
   projectId: string,
   assets: { hash: string; base64: string }[],
 ): Promise<void> {
+  const known = knownAssets(projectId);
+  // Sequential on purpose: the server checks the account's allowance per
+  // upload, and parallel uploads could each pass that check and collectively
+  // bust it. Rare enough after the skip above that the latency does not
+  // matter.
   for (const asset of assets) {
+    if (known.has(asset.hash)) continue;
     await client().putReference(projectId, asset.hash, base64ToBytes(asset.base64));
+    known.add(asset.hash);
   }
 }
 
@@ -200,6 +229,8 @@ export async function hydrateReferenceAssets(
         ...asset,
         bytes: bytesToBase64(new Uint8Array(await res.arrayBuffer())),
       };
+      // Fetching it proves it is there, so the next save can skip it.
+      knownAssets(projectId).add(asset.hash);
     } catch {
       console.warn(`[cloud] Could not load imported file "${asset.name}"`);
     }
