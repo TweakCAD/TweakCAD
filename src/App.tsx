@@ -32,6 +32,7 @@ import {
 import { consoleLog } from '@tweakcad/core/src/store/consoleStore.ts';
 import { SaveStatus } from './components/SaveStatus.tsx';
 import { useConfirm } from './components/ConfirmDialog.tsx';
+import { CLOUD_DOCUMENT_MAX_BYTES, wouldExceedCloudLimit } from './storage/cloudAdapter.ts';
 import { Toast } from './components/Toast.tsx';
 import { useToastStore } from './components/toastStore.ts';
 import { SignInModal } from './components/SignInModal.tsx';
@@ -254,6 +255,27 @@ export function App() {
       // when the document model grows assembly support; until then
       // there's a single active part by convention.
       const partId = partIds[0] as import('@tweakcad/core/src/ids.ts').PartId;
+
+      // Warn before the work, not after. A large import makes a cloud project
+      // exceed the storage limit, and the server only says so on the next
+      // autosave — by which point the user has imported, positioned and
+      // modelled against geometry that was never going to sync.
+      if (storage?.storage.kind === 'cloud'
+        && wouldExceedCloudLimit(project, pick.dataBase64.length)) {
+        const mb = (n: number) => `${(n / (1024 * 1024)).toFixed(1)} MB`;
+        const go = await confirm({
+          title: 'Too large to sync to the cloud',
+          message:
+            `Importing "${pick.fileName}" takes this project past the ${mb(CLOUD_DOCUMENT_MAX_BYTES)} ` +
+            `cloud limit, so it will stop syncing. You can still import it and save to disk. ` +
+            `Import anyway?`,
+          confirmLabel: 'Import anyway',
+          cancelLabel: 'Cancel',
+          tone: 'danger',
+        });
+        if (!go) return;
+      }
+
       const result = appState.commandBus.dispatch({
         type: 'CreateImportedGeometry',
         partId,
@@ -276,7 +298,7 @@ export function App() {
     } catch (err) {
       console.error('[App] Import failed:', err);
     }
-  }, [appState.documentStore, appState.commandBus]);
+  }, [appState.documentStore, appState.commandBus, storage, confirm]);
 
   /**
    * File → Import Component. Prompts for a `.cadcomponent` (or `.cadjson`

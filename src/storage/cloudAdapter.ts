@@ -110,3 +110,28 @@ export async function createCloudVersion(
     thumbnail,
   });
 }
+
+/**
+ * Largest document a cloud project may hold — mirrors `MAX_BYTES` on the
+ * server's `PUT /projects/{id}/document`.
+ *
+ * Duplicated rather than fetched because the value is only consulted to warn
+ * the user *before* an import, and a warning that needs a round-trip is one
+ * that cannot run when the backend is slow or absent. **The server is the
+ * enforcement**; this constant only decides when to speak up early. If the two
+ * drift, the server wins and the user gets the save-time error this exists to
+ * pre-empt — worse, but not wrong.
+ *
+ * See saas-architecture.md §17 "Storage Tier" for why the line sits here.
+ */
+export const CLOUD_DOCUMENT_MAX_BYTES = 5 * 1024 * 1024;
+
+/**
+ * Whether adding `addedBytes` to `doc` would put it past the cloud limit.
+ *
+ * Estimated from the serialized document plus the incoming payload rather
+ * than measured, because the point is to answer before the import runs.
+ */
+export function wouldExceedCloudLimit(doc: CadProject, addedBytes: number): boolean {
+  return JSON.stringify(doc).length + addedBytes > CLOUD_DOCUMENT_MAX_BYTES;
+}

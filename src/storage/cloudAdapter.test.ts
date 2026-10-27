@@ -16,6 +16,7 @@
  *      disappears with no error shown.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import type { CadProject } from '@tweakcad/core/src/document/schema.ts';
 
 // The provider is the seam: stub it so these tests cover OUR adapter logic —
 // etag bookkeeping and which endpoint gets called — not HTTP.
@@ -38,7 +39,7 @@ vi.mock('./thumbnailCapture.ts', () => ({
   captureThumbnail: vi.fn(async () => null),
 }));
 
-const { saveCloudProject, createCloudVersion, clearCloudEtag } = await import('./cloudAdapter.ts');
+const { saveCloudProject, createCloudVersion, clearCloudEtag, wouldExceedCloudLimit, CLOUD_DOCUMENT_MAX_BYTES } = await import('./cloudAdapter.ts');
 
 const PROJECT = 'proj_1';
 const doc = () => ({ schemaVersion: 1, metadata: { name: 'x' } }) as never;
@@ -137,5 +138,44 @@ describe('createCloudVersion — deliberate save points', () => {
     const { captureThumbnail } = await import('./thumbnailCapture.ts');
     vi.mocked(captureThumbnail).mockResolvedValueOnce(null);
     await expect(createCloudVersion(PROJECT)).resolves.toMatchObject({ versionId: 'rev_1' });
+  });
+});
+
+describe('wouldExceedCloudLimit', () => {
+  /**
+   * The free tier's storage line (saas-architecture.md §17). This decides
+   * whether the user is warned *before* an import rather than discovering at
+   * the next autosave that their project stopped syncing — after they have
+   * already positioned and modelled against the geometry.
+   *
+   * Advisory only: the server enforces. These pin that the estimate counts
+   * both halves, because counting only the payload would wave through an
+   * import that is individually fine and collectively over.
+   */
+  function docOfRoughly(bytes: number): CadProject {
+    // `parts` is the only field big enough to pad without tripping the type.
+    return { metadata: { name: 'x'.repeat(Math.max(0, bytes - 40)) } } as unknown as CadProject;
+  }
+
+  it('passes an import that fits', () => {
+    expect(wouldExceedCloudLimit(docOfRoughly(1000), 1000)).toBe(false);
+  });
+
+  it('rejects a payload that busts the limit on its own', () => {
+    expect(wouldExceedCloudLimit(docOfRoughly(1000), CLOUD_DOCUMENT_MAX_BYTES + 1)).toBe(true);
+  });
+
+  it('counts the existing document, not just the new payload', () => {
+    // The case a payload-only check would miss: a project already near the
+    // line plus a second import that is individually unremarkable.
+    const nearLimit = docOfRoughly(CLOUD_DOCUMENT_MAX_BYTES - 1000);
+    expect(wouldExceedCloudLimit(nearLimit, 100)).toBe(false);
+    expect(wouldExceedCloudLimit(nearLimit, 5000)).toBe(true);
+  });
+
+  it('is the same number the server enforces', () => {
+    // Duplicated across repos on purpose (the warning must work offline), so
+    // this is the reminder that moving one means moving the other.
+    expect(CLOUD_DOCUMENT_MAX_BYTES).toBe(5 * 1024 * 1024);
   });
 });
