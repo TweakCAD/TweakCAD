@@ -74,6 +74,17 @@ const RestoreResponse = z.object({
 });
 type RestoreResponse = z.infer<typeof RestoreResponse>;
 
+const PutReferenceResponse = z.object({
+  stored: z.boolean(),
+  bytes: z.number().int(),
+});
+
+const ReferenceUrlResponse = z.object({
+  hash: z.string(),
+  downloadUrl: z.string(),
+  expiresInSeconds: z.number().int(),
+});
+
 /** Thrown when `If-Match` fails: the project moved under us. */
 export class CloudConflictError extends Error {
   constructor(message: string) {
@@ -247,6 +258,34 @@ export class CloudStorageProvider {
       throw apiError(res.error);
     }
     return res.value;
+  }
+
+  /**
+   * Store one imported file, keyed by its content hash.
+   *
+   * Re-sending a hash the server already holds is a cheap no-op, which is the
+   * common case: every save re-sends the document, and its imports have not
+   * changed.
+   */
+  async putReference(projectId: string, hash: string, body: Uint8Array): Promise<void> {
+    const res = await this.api.request(
+      'PUT',
+      `/api/v1/projects/${encodeURIComponent(projectId)}/references/${encodeURIComponent(hash)}`,
+      PutReferenceResponse,
+      new Blob([body as BlobPart], { type: 'application/octet-stream' }),
+    );
+    if (!res.ok) throw apiError(res.error);
+  }
+
+  /** Short-lived signed URL for one stored import. */
+  async referenceUrl(projectId: string, hash: string): Promise<string> {
+    const res = await this.api.request(
+      'GET',
+      `/api/v1/projects/${encodeURIComponent(projectId)}/references/${encodeURIComponent(hash)}`,
+      ReferenceUrlResponse,
+    );
+    if (!res.ok) throw apiError(res.error);
+    return res.value.downloadUrl;
   }
 
   async delete(projectId: string): Promise<void> {

@@ -62,7 +62,12 @@ export async function loadCloudProject(projectId: string): Promise<CloudLoadResu
   // what the server currently holds, so this etag is what our first write
   // claims to be replacing.
   if (result.etag) liveEtags.set(projectId, result.etag);
-  return { name: result.project.name, doc: loaded.project, etag: result.etag };
+  // Pull the imported geometry back in. The document the server holds names
+  // its imports but does not carry them; without this the project opens to a
+  // body that refuses to build, telling the user to re-link a file they never
+  // unlinked.
+  const doc = await hydrateReferenceAssets(projectId, loaded.project);
+  return { name: result.project.name, doc, etag: result.etag };
 }
 
 
@@ -83,7 +88,13 @@ export async function saveCloudProject(
   projectId: string,
   doc: CadProject,
 ): Promise<{ etag: string; savedAt: string }> {
-  const blob = new Blob([JSON.stringify(doc)], { type: 'application/json' });
+  // Imported geometry travels separately and is uploaded first, so the
+  // document never refers to bytes the server has not got. Doing it the
+  // other way round would leave a window where a reader sees a reference
+  // that resolves to nothing.
+  const { stripped, assets } = splitReferenceAssets(doc);
+  if (assets.length > 0) await uploadReferenceAssets(projectId, assets);
+  const blob = new Blob([JSON.stringify(stripped)], { type: 'application/json' });
   const result = await client().save(projectId, blob, {
     ifMatch: liveEtags.get(projectId) ?? null,
   });
@@ -109,6 +120,110 @@ export async function createCloudVersion(
     ...(message ? { message } : {}),
     thumbnail,
   });
+}
+
+// --- Imported-geometry assets ---------------------------------------------
+
+/**
+ * Split a document into what the cloud stores and what travels separately.
+ *
+ * A `ref` import keeps its bytes in `references[id].bytes` so a document on
+ * disk stays one self-contained file. For the cloud that is exactly wrong:
+ * the bytes would be re-uploaded on every autosave and copied into every
+ * revision. So they are uploaded once, keyed by content hash, and dropped
+ * from the document.
+ *
+ * Returns the stripped document plus the assets to upload — the caller
+ * uploads first and saves second, so a document never refers to bytes the
+ * server has not got.
+ */
+export function splitReferenceAssets(doc: CadProject): {
+  stripped: CadProject;
+  assets: { hash: string; base64: string }[];
+} {
+  const assets: { hash: string; base64: string }[] = [];
+  const references: CadProject['references'] = {};
+
+  for (const [id, asset] of Object.entries(doc.references ?? {})) {
+    if (asset.bytes !== undefined) {
+      assets.push({ hash: asset.hash, base64: asset.bytes });
+    }
+    // `bytes` omitted, everything else kept: the entry still describes the
+    // file (name, size, hash) so the UI can name it even before the bytes
+    // come back. Rebuilt field-by-field rather than destructured, so the
+    // omission is a statement rather than an unused binding.
+    references[id as keyof typeof references] = {
+      id: asset.id,
+      name: asset.name,
+      type: asset.type,
+      sizeBytes: asset.sizeBytes,
+      hash: asset.hash,
+    };
+  }
+
+  return { stripped: { ...doc, references }, assets };
+}
+
+/** Upload any assets the server does not already hold, then save. */
+async function uploadReferenceAssets(
+  projectId: string,
+  assets: { hash: string; base64: string }[],
+): Promise<void> {
+  for (const asset of assets) {
+    await client().putReference(projectId, asset.hash, base64ToBytes(asset.base64));
+  }
+}
+
+/**
+ * Fetch the bytes for every reference the document names.
+ *
+ * Without this a cloud project with a large import opens to a body that
+ * refuses to build and a diagnostic telling the user to re-link a file they
+ * never unlinked. Failures are left as a missing `bytes` rather than thrown:
+ * one unreadable asset should cost one import, not the whole document.
+ */
+export async function hydrateReferenceAssets(
+  projectId: string,
+  doc: CadProject,
+): Promise<CadProject> {
+  const entries = Object.entries(doc.references ?? {});
+  if (entries.length === 0) return doc;
+
+  const references = { ...doc.references };
+  await Promise.all(entries.map(async ([id, asset]) => {
+    if (asset.bytes !== undefined) return;
+    try {
+      const url = await client().referenceUrl(projectId, asset.hash);
+      const res = await fetch(url, { credentials: 'omit' });
+      if (!res.ok) throw new Error(String(res.status));
+      references[id as keyof typeof references] = {
+        ...asset,
+        bytes: bytesToBase64(new Uint8Array(await res.arrayBuffer())),
+      };
+    } catch {
+      console.warn(`[cloud] Could not load imported file "${asset.name}"`);
+    }
+  }));
+
+  return { ...doc, references };
+}
+
+function base64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  // Chunked: `String.fromCharCode(...bytes)` on a multi-megabyte array blows
+  // the argument limit, which is a crash rather than a slow path.
+  let bin = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
 }
 
 // --- Revision history -----------------------------------------------------

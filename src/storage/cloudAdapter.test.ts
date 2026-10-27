@@ -23,6 +23,8 @@ import type { CadProject } from '@tweakcad/core/src/document/schema.ts';
 const save = vi.fn();
 const listRevisions = vi.fn();
 const restoreRevision = vi.fn();
+const putReference = vi.fn();
+const referenceUrl = vi.fn();
 const createVersion = vi.fn();
 const load = vi.fn();
 
@@ -33,6 +35,8 @@ vi.mock('@tweakcad/cloud-providers', () => ({
     save = save;
     listRevisions = listRevisions;
     restoreRevision = restoreRevision;
+    putReference = putReference;
+    referenceUrl = referenceUrl;
     createVersion = createVersion;
     load = load;
   },
@@ -47,6 +51,7 @@ const {
   saveCloudProject, createCloudVersion, clearCloudEtag,
   wouldExceedCloudLimit, CLOUD_DOCUMENT_MAX_BYTES,
   listCloudRevisions, restoreCloudRevision,
+  splitReferenceAssets, hydrateReferenceAssets,
 } = await import('./cloudAdapter.ts');
 
 const PROJECT = 'proj_1';
@@ -251,5 +256,99 @@ describe('listCloudRevisions', () => {
       cursor: '2026-01-01T00:00:00.000Z',
       limit: 10,
     });
+  });
+});
+
+describe('splitReferenceAssets', () => {
+  /**
+   * A `ref` import keeps its bytes inside the document so a file on disk stays
+   * self-contained. For the cloud that is exactly wrong: the bytes would be
+   * re-uploaded on every autosave and copied into every revision. These pin
+   * that the split takes the bytes out and loses nothing else.
+   */
+  function docWithRef(bytes: string | undefined): CadProject {
+    return {
+      schemaVersion: 1,
+      metadata: { name: 'x' },
+      references: {
+        ref_1: {
+          id: 'ref_1', name: 'bracket.step', type: 'step',
+          sizeBytes: 4, hash: 'abc123',
+          ...(bytes === undefined ? {} : { bytes }),
+        },
+      },
+    } as unknown as CadProject;
+  }
+
+  it('takes the bytes out of the document', () => {
+    const { stripped, assets } = splitReferenceAssets(docWithRef('QUJDRA=='));
+    expect(stripped.references.ref_1!.bytes).toBeUndefined();
+    expect(assets).toEqual([{ hash: 'abc123', base64: 'QUJDRA==' }]);
+  });
+
+  it('keeps everything that describes the file', () => {
+    // The entry still has to name the import before the bytes come back, or
+    // the UI has nothing to show while loading.
+    const { stripped } = splitReferenceAssets(docWithRef('QUJDRA=='));
+    expect(stripped.references.ref_1).toMatchObject({
+      id: 'ref_1', name: 'bracket.step', type: 'step', sizeBytes: 4, hash: 'abc123',
+    });
+  });
+
+  it('has nothing to upload when the bytes are already absent', () => {
+    // Saving a document that was loaded from the cloud: the assets are
+    // already up there, and re-uploading them every autosave is the cost
+    // this whole mechanism exists to avoid.
+    const { assets } = splitReferenceAssets(docWithRef(undefined));
+    expect(assets).toEqual([]);
+  });
+
+  it('leaves a document with no references alone', () => {
+    const doc = { schemaVersion: 1, references: {} } as unknown as CadProject;
+    const { stripped, assets } = splitReferenceAssets(doc);
+    expect(assets).toEqual([]);
+    expect(stripped.references).toEqual({});
+  });
+
+  it('does not mutate the document it was given', () => {
+    // The live document is Immer-frozen; stripping in place would throw, and
+    // the editor would lose the bytes it still needs to rebuild.
+    const doc = docWithRef('QUJDRA==');
+    splitReferenceAssets(doc);
+    expect(doc.references.ref_1!.bytes).toBe('QUJDRA==');
+  });
+});
+
+describe('hydrateReferenceAssets', () => {
+  it('returns the document untouched when there are no references', async () => {
+    const doc = { schemaVersion: 1, references: {} } as unknown as CadProject;
+    expect(await hydrateReferenceAssets(PROJECT, doc)).toBe(doc);
+  });
+
+  it('leaves an entry alone when it already carries its bytes', async () => {
+    // A document straight off disk. Fetching what we already hold would be a
+    // round trip for nothing.
+    const doc = {
+      schemaVersion: 1,
+      references: {
+        ref_1: { id: 'ref_1', name: 'a.step', type: 'step', sizeBytes: 4, hash: 'h', bytes: 'QQ==' },
+      },
+    } as unknown as CadProject;
+    const out = await hydrateReferenceAssets(PROJECT, doc);
+    expect(out.references.ref_1!.bytes).toBe('QQ==');
+    expect(referenceUrl).not.toHaveBeenCalled();
+  });
+
+  it('survives an asset it cannot fetch, costing one import not the document', async () => {
+    referenceUrl.mockRejectedValue(new Error('gone'));
+    const doc = {
+      schemaVersion: 1,
+      references: {
+        ref_1: { id: 'ref_1', name: 'a.step', type: 'step', sizeBytes: 4, hash: 'h' },
+      },
+    } as unknown as CadProject;
+    const out = await hydrateReferenceAssets(PROJECT, doc);
+    expect(out.references.ref_1!.bytes).toBeUndefined();
+    expect(out.references.ref_1!.name).toBe('a.step');
   });
 });
