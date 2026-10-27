@@ -713,14 +713,15 @@ export type DeleteFeatureCommand = {
 };
 
 /**
- * FUTURE — not yet wired. Moves a feature to a new position in
+ * Moves a feature to a new position in
  * `part.timeline` (the "drag a feature up/down in the tree" reorder).
- * Intentionally has no registered handler and no dispatcher today: there
- * is no timeline-reorder UI yet, so nothing emits it. Dispatching it now
- * returns `UNKNOWN_COMMAND`. When the reorder UI lands, the handler must
- * (a) reject moves that would place a feature before something it
- * `dependsOn`, and (b) mark dirty from `min(oldIndex, newIndex)` so the
- * rebuild pipeline recomputes downstream geometry.
+ * Rejects a move that would put a feature above something it `dependsOn`,
+ * or below something that depends on it — the timeline is an ordered
+ * program, so order is the dependency. Marking the rebuild dirty needs no
+ * special handling: splicing the array patches the part timeline and
+ * `detectDirty` already takes the lowest index it sees.
+ *
+ * No drag-reorder UI emits this yet; the handler is registered and tested.
  */
 export type ReorderFeatureCommand = {
   type: 'ReorderFeature';

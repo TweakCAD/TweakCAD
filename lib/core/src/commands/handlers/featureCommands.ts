@@ -1127,6 +1127,109 @@ export const suppressFeatureHandler: CommandHandler = {
   },
 };
 
+/**
+ * `ReorderFeature` — move a feature to a new position in the timeline.
+ *
+ * The timeline is an ordered program: a fillet consumes the body an extrude
+ * produced, so order *is* the dependency. Two ways a move breaks that, and
+ * both are rejected rather than allowed to produce a broken rebuild:
+ *
+ *  - moving a feature **above** something it `dependsOn`, and
+ *  - moving a feature **below** something that depends on *it*.
+ *
+ * Only the second needs a scan — the first is the same check read the other
+ * way round, but a feature's own `dependsOn` is right there while its
+ * dependents are not, so both directions are checked explicitly.
+ *
+ * `dependsOn` is not populated by every builder (Fillet, Chamfer and Mirror
+ * deliberately leave it empty and rely on order alone), so this catches the
+ * declared cases and the rebuild still reports the rest. Rejecting here is
+ * worth it anyway: a declared dependency is one we can explain, and
+ * "Fillet 1 must stay after Extrude 1" beats "Target body not in build
+ * context" after the fact.
+ *
+ * Marking the rebuild dirty needs no code — splicing the array produces
+ * patches under `parts/*\/timeline`, and `detectDirty` already takes the
+ * lowest index it sees, which is exactly `min(oldIndex, newIndex)`.
+ */
+export const reorderFeatureHandler: CommandHandler = {
+  validate(command: CadCommand, state: Readonly<CadProject>): Result<void, ValidationError> {
+    if (command.type !== 'ReorderFeature') {
+      return err({ code: 'WRONG_TYPE', message: 'Expected ReorderFeature command' });
+    }
+    const partCheck = findPart(state, command.partId);
+    if (!partCheck.ok) return partCheck;
+
+    const timeline = state.parts[command.partId]!.timeline;
+    const oldIndex = timeline.findIndex(f => f.id === command.featureId);
+    if (oldIndex === -1) {
+      return err({
+        code: 'NOT_FOUND',
+        message: `Feature ${command.featureId} is not in this part`,
+        field: 'featureId',
+      });
+    }
+    if (!Number.isInteger(command.newIndex)
+      || command.newIndex < 0
+      || command.newIndex >= timeline.length) {
+      return err({
+        code: 'INVALID_INPUT',
+        message: `newIndex must be between 0 and ${timeline.length - 1}`,
+        field: 'newIndex',
+      });
+    }
+    if (command.newIndex === oldIndex) return ok(undefined);
+
+    const moved = timeline[oldIndex]!;
+    // Where everything ends up once the move is applied.
+    const after = [...timeline];
+    after.splice(oldIndex, 1);
+    after.splice(command.newIndex, 0, moved);
+    const positionOf = new Map(after.map((f, i) => [String(f.id), i]));
+    const movedPos = positionOf.get(String(moved.id))!;
+
+    for (const depId of moved.dependsOn) {
+      const depPos = positionOf.get(String(depId));
+      if (depPos !== undefined && depPos > movedPos) {
+        const dep = timeline.find(f => String(f.id) === String(depId));
+        return err({
+          code: 'INVALID_INPUT',
+          message: `"${moved.name}" uses "${dep?.name ?? depId}", so it must stay after it`,
+          field: 'newIndex',
+        });
+      }
+    }
+
+    for (const other of timeline) {
+      if (String(other.id) === String(moved.id)) continue;
+      if (!other.dependsOn.some(d => String(d) === String(moved.id))) continue;
+      const otherPos = positionOf.get(String(other.id));
+      if (otherPos !== undefined && otherPos < movedPos) {
+        return err({
+          code: 'INVALID_INPUT',
+          message: `"${other.name}" uses "${moved.name}", so it must stay after it`,
+          field: 'newIndex',
+        });
+      }
+    }
+
+    return ok(undefined);
+  },
+
+  execute(draft: CadProject, command: CadCommand): void {
+    if (command.type !== 'ReorderFeature') return;
+    const part = draft.parts[command.partId];
+    if (!part) return;
+    const oldIndex = part.timeline.findIndex(f => f.id === command.featureId);
+    if (oldIndex === -1 || oldIndex === command.newIndex) return;
+
+    const [moved] = part.timeline.splice(oldIndex, 1);
+    if (!moved) return;
+    part.timeline.splice(command.newIndex, 0, moved);
+    draft.metadata.updatedAt = new Date().toISOString();
+  },
+};
+
 export const deleteFeatureHandler: CommandHandler = {
   validate(command: CadCommand, state: Readonly<CadProject>): Result<void, ValidationError> {
     if (command.type !== 'DeleteFeature') {

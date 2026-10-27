@@ -37,6 +37,7 @@ import {
   suppressFeatureHandler,
   setFeatureVisibilityHandler,
   deleteFeatureHandler,
+  reorderFeatureHandler,
   updateFeatureInputHandler,
   replaceFeatureInputsHandler,
 } from '@tweakcad/core/src/commands/handlers/featureCommands.ts';
@@ -156,6 +157,7 @@ export function initializeApp(): AppState {
   commandBus.register('SuppressFeature', suppressFeatureHandler);
   commandBus.register('SetFeatureVisibility', setFeatureVisibilityHandler);
   commandBus.register('DeleteFeature', deleteFeatureHandler);
+  commandBus.register('ReorderFeature', reorderFeatureHandler);
   commandBus.register('UpdateFeatureInput', updateFeatureInputHandler);
   commandBus.register('ReplaceFeatureInputs', replaceFeatureInputsHandler);
   commandBus.register('SetParameter', setParameterHandler);
