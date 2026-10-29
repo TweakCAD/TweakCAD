@@ -411,6 +411,24 @@ export function extendAt(
  * if either input isn't a line / corner can't be resolved / fillet
  * would be degenerate.
  *
+ * The corner arrives in one of two shapes and both have to work:
+ *
+ *  - **One shared point.** `findOrCreatePoint` merged the endpoints when
+ *    the second line was drawn at the first one's end. A single point
+ *    can't sit at both tangent points, so the corner is split and line
+ *    B is repointed at a fresh endpoint.
+ *  - **Two points plus a `coincident`.** Chain mode (`SketchDrawLine`
+ *    with `chainFrom`) keeps the endpoints distinct and ties them
+ *    together with a removable constraint. The fillet separates them by
+ *    design, so that constraint goes — left in place, the next solve
+ *    pulls them back together and the corner closes over the arc.
+ *
+ * The arc keeps the lines' own endpoint ids rather than fresh points at
+ * the same coordinates, so dragging a leg carries the fillet with it.
+ * Tangency is geometric only: no `tangent` constraint is added, so a
+ * later drag of the far end slides the leg off the arc. Making the
+ * fillet parametric is a separate piece of work.
+ *
  * Default radius (when caller passes undefined): `min(10, shorter-leg / 5)`.
  */
 export function filletBetweenLines(
@@ -429,11 +447,31 @@ export function filletBetweenLines(
   const bEnd = state.points.get(b.endId);
   if (!aStart || !aEnd || !bStart || !bEnd) return null;
 
-  type EndRef = { pt: SketchPoint; otherPt: SketchPoint; pointId: SketchPointId };
-  const aS: EndRef = { pt: aStart, otherPt: aEnd, pointId: a.startId };
-  const aE: EndRef = { pt: aEnd, otherPt: aStart, pointId: a.endId };
-  const bS: EndRef = { pt: bStart, otherPt: bEnd, pointId: b.startId };
-  const bE: EndRef = { pt: bEnd, otherPt: bStart, pointId: b.endId };
+  type EndRef = {
+    pt: SketchPoint;
+    otherPt: SketchPoint;
+    pointId: SketchPointId;
+    /** Which field of the line holds `pointId` — needed to repoint it. */
+    which: 'start' | 'end';
+  };
+  const aS: EndRef = { pt: aStart, otherPt: aEnd, pointId: a.startId, which: 'start' };
+  const aE: EndRef = { pt: aEnd, otherPt: aStart, pointId: a.endId, which: 'end' };
+  const bS: EndRef = { pt: bStart, otherPt: bEnd, pointId: b.startId, which: 'start' };
+  const bE: EndRef = { pt: bEnd, otherPt: bStart, pointId: b.endId, which: 'end' };
+
+  // Parallel legs have no corner to round. Tested on the lines' own
+  // directions, because the apex-angle check further down can't see it:
+  // for two disjoint parallels the closest-pair midpoint lands off both
+  // lines, and the vectors from there to the far ends do form an angle
+  // (~28° for two 10 mm lines 5 mm apart), which yields a fillet in
+  // mid-air instead of a rejection.
+  const dirA = { x: aEnd.x - aStart.x, y: aEnd.y - aStart.y };
+  const dirB = { x: bEnd.x - bStart.x, y: bEnd.y - bStart.y };
+  const dirALen = Math.hypot(dirA.x, dirA.y);
+  const dirBLen = Math.hypot(dirB.x, dirB.y);
+  if (dirALen < 1e-9 || dirBLen < 1e-9) return null;
+  const sinBetween = (dirA.x * dirB.y - dirA.y * dirB.x) / (dirALen * dirBLen);
+  if (Math.abs(sinBetween) < 0.01) return null;
 
   let best: { aRef: EndRef; bRef: EndRef; dist: number } | null = null;
   for (const ar of [aS, aE]) {
@@ -481,18 +519,50 @@ export function filletBetweenLines(
   const bEx = next.points.get(best.bRef.pointId);
   if (!aEx || !bEx) return null;
   next.points.set(best.aRef.pointId, { ...aEx, x: t1x, y: t1y });
-  next.points.set(best.bRef.pointId, { ...bEx, x: t2x, y: t2y });
+
+  // Line A keeps the corner point id. Line B needs one of its own when
+  // the corner is a single merged point — the two tangent points are in
+  // different places, and the second write would otherwise just drag
+  // line A's endpoint to line B's tangent point and tilt it.
+  let bPointId = best.bRef.pointId;
+  if (bPointId === best.aRef.pointId) {
+    bPointId = addPointMut(next.points, t2x, t2y);
+    const bLine = next.geometries.get(geomBId);
+    if (!bLine || bLine.type !== 'line') return null;
+    next.geometries.set(geomBId, best.bRef.which === 'start'
+      ? { ...bLine, startId: bPointId }
+      : { ...bLine, endId: bPointId });
+  } else {
+    next.points.set(bPointId, { ...bEx, x: t2x, y: t2y });
+  }
 
   const centerId = addPointMut(next.points, cx, cy);
-  const arcStartId = addPointMut(next.points, t1x, t1y);
-  const arcEndId = addPointMut(next.points, t2x, t2y);
+  // Arcs always wind CCW from start to end, so the tangent points can't
+  // go out in pick order: half the time that spans the reflex arc and
+  // the user gets a 270° gouge instead of the 90° round.
+  let sweep = Math.atan2(t2y - cy, t2x - cx) - Math.atan2(t1y - cy, t1x - cx);
+  while (sweep <= 0) sweep += 2 * Math.PI;
+  const aFirst = sweep <= Math.PI;
   addGeometryMut(next.geometries, {
     type: 'arc',
-    centerId, startId: arcStartId, endId: arcEndId,
+    centerId,
+    startId: aFirst ? best.aRef.pointId : bPointId,
+    endId: aFirst ? bPointId : best.aRef.pointId,
     radius: r,
     construction: false,
   });
-  return { ...state, points: next.points, geometries: next.geometries };
+
+  // The chain coincident that held the corner together describes a
+  // corner that no longer exists.
+  const constraints = new Map(state.constraints);
+  for (const [cid, c] of constraints) {
+    if (c.type !== 'coincident') continue;
+    const joinsCorner =
+      (c.pointA === best.aRef.pointId && c.pointB === best.bRef.pointId) ||
+      (c.pointB === best.aRef.pointId && c.pointA === best.bRef.pointId);
+    if (joinsCorner) constraints.delete(cid);
+  }
+  return { ...state, points: next.points, geometries: next.geometries, constraints };
 }
 
 // ---- Offset --------------------------------------------------------------
