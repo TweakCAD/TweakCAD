@@ -13,9 +13,11 @@
  * **Modify-vs-create semantics:** modify operations DELETE one or more
  * geometries and ADD their replacement pieces atomically (one undo
  * entry via the bus). The deleted points get garbage-collected if no
- * surviving geometry references them. Constraints touching deleted
- * geometries fall to the existing cascade cleanup (handler's
- * responsibility — same pattern as `RemoveSketchEntity`).
+ * surviving geometry references them, and constraints that named the
+ * deleted geometry are cascaded by `reapDanglingReferences` — the op
+ * returns solver-ready state, the handler doesn't clean up after it.
+ * `trimAt` is the only op here that deletes; extend, fillet, offset and
+ * mirror add or move geometry.
  */
 
 import type {
@@ -27,6 +29,7 @@ import type {
 } from './types.ts';
 import { sketchGeometryId, sketchPointId } from './types.ts';
 import type { EditorState } from './operations.ts';
+import { reapDanglingReferences } from './operations.ts';
 import { generateId } from '../ids.ts';
 import {
   lineLineIntersect,
@@ -122,6 +125,19 @@ function geomPointIds(geom: SketchGeometry): SketchPointId[] {
  * cursor can't be projected onto the curve.
  */
 export function trimAt(
+  state: EditorState,
+  targetId: SketchGeometryId,
+  cursor: readonly [number, number],
+): EditorState | null {
+  const trimmed = trimGeometry(state, targetId, cursor);
+  // The per-kind helpers below delete geometry across ten early-return
+  // paths and none of them touch `state.constraints`. Cascading once
+  // here, off the before/after diff, is what keeps a constraint from
+  // outliving the geometry it names.
+  return trimmed === null ? null : reapDanglingReferences(state, trimmed);
+}
+
+function trimGeometry(
   state: EditorState,
   targetId: SketchGeometryId,
   cursor: readonly [number, number],

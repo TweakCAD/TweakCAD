@@ -17,8 +17,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   emptyEditorState,
+  addConstraint,
   drawLine,
+  drawCircle,
   makeCounterIdFactory,
+  type EditorState,
 } from './operations.ts';
 import {
   trimAt,
@@ -27,7 +30,45 @@ import {
   offsetCurveAt,
   mirrorSelection,
 } from './modifyOps.ts';
-import type { SketchArc, SketchLineSegment } from './types.ts';
+import type {
+  SketchArc,
+  SketchGeometryId,
+  SketchLineSegment,
+  SketchPointId,
+} from './types.ts';
+
+/**
+ * Every constraint reference in the state that names a point or geometry
+ * the state no longer holds. planegcs resolves each reference by id when
+ * it builds the system and throws `sketch object <id> not found` on a
+ * miss, so a non-empty result here is a crash on the next solve.
+ *
+ * Hand-rolled over the field names rather than reusing
+ * `constraintReferencesGeometry`: a test that shares the production
+ * predicate can't see a reference the predicate itself forgot (which is
+ * exactly how `concentric` and `midpoint` went unnoticed).
+ */
+function danglingRefs(state: EditorState): string[] {
+  const bad: string[] = [];
+  const geomKeys = ['geometryId', 'geometryA', 'geometryB', 'lineId', 'circleId', 'secondCircleId'];
+  const pointKeys = ['pointId', 'pointA', 'pointB'];
+  for (const c of state.constraints.values()) {
+    const rec = c as unknown as Record<string, unknown>;
+    for (const key of geomKeys) {
+      const v = rec[key];
+      if (typeof v === 'string' && !state.geometries.has(v as SketchGeometryId)) {
+        bad.push(`${c.type}.${key} → missing geometry ${v}`);
+      }
+    }
+    for (const key of pointKeys) {
+      const v = rec[key];
+      if (typeof v === 'string' && !state.points.has(v as SketchPointId)) {
+        bad.push(`${c.type}.${key} → missing point ${v}`);
+      }
+    }
+  }
+  return bad;
+}
 
 describe('modify ops — happy paths', () => {
   it('trimAt on a line crossed by another line removes the clicked segment', () => {
@@ -162,5 +203,77 @@ describe('modify ops — edge cases', () => {
     const factory = makeCounterIdFactory();
     const line = drawLine(emptyEditorState(), [0, 1], [10, 1], { idFactory: factory });
     expect(mirrorSelection(line.state, [line.lineId], [0, 0], [0, 0])).toBeNull();
+  });
+});
+
+describe('trimAt — constraint cascade', () => {
+  it('drops a geometry constraint on the line it split', () => {
+    const factory = makeCounterIdFactory();
+    let s = emptyEditorState();
+    const horiz = drawLine(s, [0, 0], [20, 0], { idFactory: factory }); s = horiz.state;
+    s = addConstraint(s, { type: 'horizontal', geometryId: horiz.lineId }, { idFactory: factory }).state;
+    s = drawLine(s, [10, -5], [10, 5], { idFactory: factory }).state;
+
+    const trimmed = trimAt(s, horiz.lineId, [15, 0]);
+    expect(trimmed).not.toBeNull();
+    expect(trimmed!.geometries.has(horiz.lineId)).toBe(false);
+    expect(danglingRefs(trimmed!)).toEqual([]);
+  });
+
+  it('drops a geometry constraint when the trim is a whole-delete', () => {
+    const factory = makeCounterIdFactory();
+    let s = emptyEditorState();
+    const lone = drawLine(s, [0, 0], [10, 0], { idFactory: factory }); s = lone.state;
+    s = addConstraint(s, { type: 'length', geometryId: lone.lineId, value: 10 }, { idFactory: factory }).state;
+
+    // Nothing crosses it, so trim removes the whole line.
+    const trimmed = trimAt(s, lone.lineId, [5, 0]);
+    expect(trimmed!.geometries.size).toBe(0);
+    expect(danglingRefs(trimmed!)).toEqual([]);
+  });
+
+  it('drops a radius constraint when a trimmed circle becomes an arc', () => {
+    const factory = makeCounterIdFactory();
+    let s = emptyEditorState();
+    const circle = drawCircle(s, { center: [0, 0], radius: 5 }, { idFactory: factory }); s = circle.state;
+    s = addConstraint(s, { type: 'radius', geometryId: circle.circleId, value: 5 }, { idFactory: factory }).state;
+    s = drawLine(s, [-10, 0], [10, 0], { idFactory: factory }).state;
+
+    const trimmed = trimAt(s, circle.circleId, [0, 5]);
+    expect(trimmed).not.toBeNull();
+    expect(trimmed!.geometries.has(circle.circleId)).toBe(false);
+    expect(danglingRefs(trimmed!)).toEqual([]);
+  });
+
+  it('keeps constraints on the geometry it did not touch', () => {
+    const factory = makeCounterIdFactory();
+    let s = emptyEditorState();
+    const horiz = drawLine(s, [0, 0], [20, 0], { idFactory: factory }); s = horiz.state;
+    const vert = drawLine(s, [10, -5], [10, 5], { idFactory: factory }); s = vert.state;
+    const keep = addConstraint(s, { type: 'vertical', geometryId: vert.lineId }, { idFactory: factory });
+    s = keep.state;
+
+    const trimmed = trimAt(s, horiz.lineId, [15, 0]);
+    expect(trimmed!.constraints.has(keep.id)).toBe(true);
+    expect(danglingRefs(trimmed!)).toEqual([]);
+  });
+
+  it('drops a point constraint whose point the trim orphaned', () => {
+    const factory = makeCounterIdFactory();
+    let s = emptyEditorState();
+    const lone = drawLine(s, [0, 0], [10, 0], { idFactory: factory }); s = lone.state;
+    const other = drawLine(s, [0, 8], [10, 8], { idFactory: factory }); s = other.state;
+    s = addConstraint(
+      s,
+      { type: 'coincident', pointA: lone.startId, pointB: other.startId },
+      { idFactory: factory },
+    ).state;
+
+    // `lone` has no intersections → whole-delete. Its endpoints are then
+    // referenced by nothing but the coincident, which goes with them.
+    const trimmed = trimAt(s, lone.lineId, [5, 0]);
+    expect(trimmed!.geometries.has(lone.lineId)).toBe(false);
+    expect(trimmed!.points.has(lone.startId)).toBe(false);
+    expect(danglingRefs(trimmed!)).toEqual([]);
   });
 });

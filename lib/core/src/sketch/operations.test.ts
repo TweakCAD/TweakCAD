@@ -38,7 +38,9 @@ import {
   fromSnapshot,
   toSnapshot,
   makeCounterIdFactory,
+  removeGeometry,
   COINCIDENT_TOLERANCE_MM,
+  type EditorState,
 } from './operations.ts';
 import type {
   SketchLineSegment,
@@ -1139,5 +1141,109 @@ describe('movePoint', () => {
 
     const result = movePoint(state, free, [40, 25]);
     expect(result.state.points.get(free)).toMatchObject({ x: 40, y: 25 });
+  });
+});
+
+/**
+ * Every constraint reference in the state that names a point or geometry
+ * the state no longer holds. planegcs resolves each reference by id when
+ * it builds the system and throws `sketch object <id> not found` on a
+ * miss, so a non-empty result here is a crash on the next solve.
+ *
+ * Hand-rolled over the field names rather than reusing the module's own
+ * `constraintReferencesGeometry`: a test that shares the production
+ * predicate can't see a reference the predicate itself forgot, which is
+ * exactly how `concentric` and `midpoint` went unnoticed.
+ */
+function danglingRefs(state: EditorState): string[] {
+  const bad: string[] = [];
+  const geomKeys = ['geometryId', 'geometryA', 'geometryB', 'lineId', 'circleId', 'secondCircleId'];
+  const pointKeys = ['pointId', 'pointA', 'pointB'];
+  for (const c of state.constraints.values()) {
+    const rec = c as unknown as Record<string, unknown>;
+    for (const key of geomKeys) {
+      const v = rec[key];
+      if (typeof v === 'string' && !state.geometries.has(v as never)) {
+        bad.push(`${c.type}.${key} → missing geometry ${v}`);
+      }
+    }
+    for (const key of pointKeys) {
+      const v = rec[key];
+      if (typeof v === 'string' && !state.points.has(v as never)) {
+        bad.push(`${c.type}.${key} → missing point ${v}`);
+      }
+    }
+  }
+  return bad;
+}
+
+describe('removeGeometry — constraint cascade', () => {
+  it('drops a concentric constraint when one of its circles goes', () => {
+    const factory = makeCounterIdFactory();
+    let s = emptyEditorState();
+    const inner = drawCircle(s, { center: [0, 0], radius: 2 }, { idFactory: factory }); s = inner.state;
+    const outer = drawCircle(s, { center: [0, 0], radius: 8 }, { idFactory: factory }); s = outer.state;
+    const con = addConstraint(
+      s,
+      { type: 'concentric', geometryA: inner.circleId, geometryB: outer.circleId },
+      { idFactory: factory },
+    );
+    s = con.state;
+
+    const { state } = removeGeometry(s, outer.circleId);
+    expect(state.constraints.has(con.id)).toBe(false);
+    expect(danglingRefs(state)).toEqual([]);
+  });
+
+  it('drops a midpoint constraint when its line goes', () => {
+    const factory = makeCounterIdFactory();
+    let s = emptyEditorState();
+    const line = drawLine(s, [0, 0], [10, 0], { idFactory: factory }); s = line.state;
+    const mid = drawPoint(s, [5, 0], { idFactory: factory }); s = mid.state;
+    const con = addConstraint(
+      s,
+      { type: 'midpoint', pointId: mid.pointId, geometryId: line.lineId },
+      { idFactory: factory },
+    );
+    s = con.state;
+
+    const { state } = removeGeometry(s, line.lineId);
+    expect(state.constraints.has(con.id)).toBe(false);
+    expect(danglingRefs(state)).toEqual([]);
+  });
+
+  it('drops a constraint left pointing at a point the removal orphaned', () => {
+    const factory = makeCounterIdFactory();
+    let s = emptyEditorState();
+    // `wall` survives; `probe` is deleted and owns the constrained point.
+    const wall = drawLine(s, [0, 0], [0, 10], { idFactory: factory }); s = wall.state;
+    const probe = drawLine(s, [5, 5], [9, 5], { idFactory: factory }); s = probe.state;
+    const con = addConstraint(
+      s,
+      { type: 'pointOnLine', pointId: probe.endId, geometryId: wall.lineId },
+      { idFactory: factory },
+    );
+    s = con.state;
+
+    const { state } = removeGeometry(s, probe.lineId);
+    expect(state.geometries.has(wall.lineId)).toBe(true);
+    expect(state.points.has(probe.endId)).toBe(false);
+    expect(state.constraints.has(con.id)).toBe(false);
+    expect(danglingRefs(state)).toEqual([]);
+  });
+
+  it('keeps a shared corner and the constraints on the surviving edge', () => {
+    const factory = makeCounterIdFactory();
+    let s = emptyEditorState();
+    const bottom = drawLine(s, [0, 0], [10, 0], { idFactory: factory }); s = bottom.state;
+    const right = drawLine(s, [10, 0], [10, 10], { idFactory: factory }); s = right.state;
+    const keep = addConstraint(s, { type: 'vertical', geometryId: right.lineId }, { idFactory: factory });
+    s = keep.state;
+
+    const { state } = removeGeometry(s, bottom.lineId);
+    // The corner is still an endpoint of `right`, so it must not be GC'd.
+    expect(state.points.has(bottom.endId)).toBe(true);
+    expect(state.constraints.has(keep.id)).toBe(true);
+    expect(danglingRefs(state)).toEqual([]);
   });
 });

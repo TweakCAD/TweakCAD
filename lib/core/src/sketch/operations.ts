@@ -1312,6 +1312,12 @@ export function getGeometryPointIds(geom: SketchGeometry): SketchPointId[] {
  * geometry deletion and only get removed if the point GC reaps their
  * referenced point (a separate concern handled at the point-removal
  * boundary).
+ *
+ * The switch is exhaustive on purpose — no `default` arm. A new
+ * constraint kind that carries a geometry id is then a compile error
+ * here instead of silently reporting "references nothing", which is how
+ * `concentric` and `midpoint` ended up surviving the geometry they
+ * pointed at until the next solve threw `sketch object … not found`.
  */
 function constraintReferencesGeometry(
   constraint: SketchConstraint,
@@ -1325,11 +1331,13 @@ function constraintReferencesGeometry(
     case 'pointOnLine':
     case 'pointOnCircle':
     case 'symmetric':
+    case 'midpoint':
       return constraint.geometryId === geomId;
     case 'parallel':
     case 'perpendicular':
     case 'angle':
     case 'equal':
+    case 'concentric':
       return constraint.geometryA === geomId || constraint.geometryB === geomId;
     case 'tangent':
       return (
@@ -1337,8 +1345,45 @@ function constraintReferencesGeometry(
         constraint.lineId === geomId ||
         constraint.secondCircleId === geomId
       );
-    default:
+    case 'coincident':
+    case 'fixed':
+    case 'distance':
+    case 'distanceX':
+    case 'distanceY':
       return false;
+  }
+}
+
+/**
+ * Every point a constraint references. Exhaustive for the same reason as
+ * {@link constraintReferencesGeometry}: a constraint left pointing at a
+ * garbage-collected point fails the same way one left pointing at
+ * deleted geometry does.
+ */
+function constraintPointIds(constraint: SketchConstraint): SketchPointId[] {
+  switch (constraint.type) {
+    case 'coincident':
+    case 'distance':
+    case 'distanceX':
+    case 'distanceY':
+    case 'symmetric':
+      return [constraint.pointA, constraint.pointB];
+    case 'fixed':
+    case 'pointOnLine':
+    case 'pointOnCircle':
+    case 'midpoint':
+      return [constraint.pointId];
+    case 'horizontal':
+    case 'vertical':
+    case 'radius':
+    case 'length':
+    case 'parallel':
+    case 'perpendicular':
+    case 'angle':
+    case 'equal':
+    case 'concentric':
+    case 'tangent':
+      return [];
   }
 }
 
@@ -1390,34 +1435,89 @@ export function removeGeometry(
     }
   }
 
-  // Drop constraints that reference the geometry directly, plus
-  // point-only constraints whose referenced points were orphaned above.
+  // Drop constraints that reference the geometry directly, plus any
+  // constraint left pointing at a point orphaned above.
   const constraints = new Map(state.constraints);
   for (const [cid, c] of constraints) {
-    if (constraintReferencesGeometry(c, geomId)) {
+    if (
+      constraintReferencesGeometry(c, geomId) ||
+      constraintPointIds(c).some((pid) => orphanedPoints.has(pid))
+    ) {
       constraints.delete(cid);
-      continue;
     }
-    // Point-only constraints: reap if a referenced point is gone.
-    let touchesOrphan = false;
-    switch (c.type) {
-      case 'coincident':
-        if (orphanedPoints.has(c.pointA) || orphanedPoints.has(c.pointB)) touchesOrphan = true;
-        break;
-      case 'fixed':
-        if (orphanedPoints.has(c.pointId)) touchesOrphan = true;
-        break;
-      case 'distance':
-      case 'distanceX':
-      case 'distanceY':
-        if (orphanedPoints.has(c.pointA) || orphanedPoints.has(c.pointB)) touchesOrphan = true;
-        break;
-    }
-    if (touchesOrphan) constraints.delete(cid);
   }
 
   return {
     state: { points, geometries, constraints },
     removedGeometry: geom,
   };
+}
+
+/**
+ * Cascade whatever a modify operation deleted through the constraint and
+ * point maps, given the state before and after it ran.
+ *
+ * `trimAt` deletes geometry inside its per-kind helpers and returns the
+ * surviving pieces, but it never looks at the constraint map — a
+ * `horizontal` on a trimmed line survived naming an id that was gone,
+ * and the next solve threw `sketch object … not found` (planegcs
+ * resolves every reference by id when it builds the system). Rather than
+ * patching each of the ten delete sites, the op applies this once on the
+ * way out, which is also why it works off a diff instead of a list of
+ * removed ids.
+ *
+ * Applies {@link removeGeometry}'s cascade, in this order:
+ *
+ *  1. Constraints that reference a geometry which disappeared.
+ *  2. Points the removed geometry owned that no surviving geometry
+ *     references — re-checked after step 1, because the modify op's own
+ *     point GC deliberately keeps a point that any constraint names,
+ *     including the constraints step 1 just dropped.
+ *  3. Constraints left pointing at a point step 2 reaped.
+ *
+ * Returns `after` untouched when the operation removed no geometry, so
+ * ops that only add or move geometry pay a map walk and nothing else.
+ */
+export function reapDanglingReferences(
+  before: EditorState,
+  after: EditorState,
+): EditorState {
+  const removed: SketchGeometry[] = [];
+  for (const [id, geom] of before.geometries) {
+    if (!after.geometries.has(id)) removed.push(geom);
+  }
+  if (removed.length === 0) return after;
+
+  const constraints = new Map(after.constraints);
+  for (const [cid, c] of constraints) {
+    if (removed.some((geom) => constraintReferencesGeometry(c, geom.id))) {
+      constraints.delete(cid);
+    }
+  }
+
+  const stillReferenced = new Set<SketchPointId>();
+  for (const geom of after.geometries.values()) {
+    for (const pid of getGeometryPointIds(geom)) stillReferenced.add(pid);
+  }
+
+  const points = new Map(after.points);
+  const orphanedPoints = new Set<SketchPointId>();
+  for (const geom of removed) {
+    for (const pid of getGeometryPointIds(geom)) {
+      if (points.has(pid) && !stillReferenced.has(pid)) {
+        points.delete(pid);
+        orphanedPoints.add(pid);
+      }
+    }
+  }
+
+  if (orphanedPoints.size > 0) {
+    for (const [cid, c] of constraints) {
+      if (constraintPointIds(c).some((pid) => orphanedPoints.has(pid))) {
+        constraints.delete(cid);
+      }
+    }
+  }
+
+  return { ...after, points, geometries: after.geometries, constraints };
 }

@@ -387,7 +387,8 @@ export function dispatchSetConstruction(
 // commit through one of these helpers. Each lands one undo entry — the
 // modify primitive in core does the splitting / mirroring / etc.
 // atomically. Hydration rebuilds the editor store from
-// the post-dispatch editorModel, including any GC'd orphan points.
+// the post-dispatch editorModel, including any GC'd orphan points and
+// the constraints cascaded with the geometry a trim removed.
 
 /** Trim the picked geometry at the cursor location. */
 export function dispatchTrim(
