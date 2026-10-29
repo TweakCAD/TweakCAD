@@ -24,7 +24,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { zipSync, strToU8 } from 'fflate';
-import { importFcstd, importFcstdFromXml, parseDocumentXml } from '../src/index.ts';
+import { importFcstd, importFcstdFromXml, parseDocumentXml } from './index.ts';
 import type {
   SketchFeatureInputs,
   ExtrudeFeatureInputs,

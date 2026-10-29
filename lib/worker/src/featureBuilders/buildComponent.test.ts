@@ -232,10 +232,12 @@ describe('buildComponent', () => {
     project.embeddedComponents = { 'hash-pdowel': def };
 
     // Without override → broken expression at project scope fails build.
+    // Matched on the cause, not on "it threw": a bare toThrow() here
+    // would also accept a missing component ref or a kernel error.
     const featureNoOverride = makeFeature('hash-pdowel', 'newBody');
     await expect(
       buildComponent(featureNoOverride, {} as ResolvedParams, ctx, kernel, project, new Set()),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/Parameter resolution failed.*NONEXISTENT/);
 
     // With override for D (project-scope param) → succeeds. Builder
     // must route the override into source.parameters because that's
@@ -304,11 +306,12 @@ describe('buildComponent', () => {
     const project: CadProject = emptyProject('Host');
     project.embeddedComponents = { 'hash-cyl': def };
 
-    // Without the override → fails.
+    // Without the override → fails, and on the broken expression
+    // specifically rather than on anything that happens to throw.
     const featureNoOverride = makeFeature('hash-cyl', 'newBody');
     await expect(
       buildComponent(featureNoOverride, {} as ResolvedParams, ctx, kernel, project, new Set()),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/Parameter resolution failed.*NONEXISTENT/);
 
     // With the override that replaces D's expression → succeeds.
     const featureOverridden = makeFeature('hash-cyl', 'newBody');

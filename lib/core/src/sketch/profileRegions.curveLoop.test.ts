@@ -107,15 +107,22 @@ describe('detectSketchRegions — curve-loop walker', () => {
     const loop = regions.find(r => r.entityIds.length === 2);
     expect(loop).toBeDefined();
     const bez = loop!.segments.find(s => s.kind === 'bezier')!;
-    // Whichever traversal won, start→end and the poles must stay a
-    // consistent chain: cp1 sits near `start`, cp2 near `end`.
-    expect(bez.start).toBeDefined();
-    expect(bez.end).toBeDefined();
-    // Reversed authored bezier: poles swap, so cp1 is the authored cp2.
-    // The segment is head-to-tail with the line, so its endpoints are the
-    // two shared junctions (0,0) and (0,10) in some order.
-    const endpoints = [bez.start, bez.end].map(p => `${p![0]},${p![1]}`).sort();
-    expect(endpoints).toEqual(['0,0', '0,10']);
+    // Either traversal is a valid answer, but the poles have to travel
+    // with the endpoints: cp1 stays next to `start`, cp2 next to `end`.
+    // Asserting the four together is the point — checking only that the
+    // endpoint *set* is {(0,0), (0,10)} passes for a reversal that
+    // forgot to swap the poles, which is the regression this guards.
+    const at = (p?: readonly [number, number]) => `${p![0]},${p![1]}`;
+    const oriented = {
+      start: at(bez.start),
+      cp1: at(bez.bezierCp1),
+      cp2: at(bez.bezierCp2),
+      end: at(bez.end),
+    };
+    expect([
+      { start: '0,0', cp1: '10,0', cp2: '10,10', end: '0,10' },   // as authored
+      { start: '0,10', cp1: '10,10', cp2: '10,0', end: '0,0' },   // reversed
+    ]).toContainEqual(oriented);
   });
 
   it('detects an open spline + line as a loop (spline boundary edge)', () => {
