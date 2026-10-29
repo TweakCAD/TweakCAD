@@ -219,7 +219,6 @@ export function ParametersDialog({ open, onClose }: DialogProps) {
               param={param}
               pendingValue={pending[param.name]}
               isDirty={pending[param.name] !== undefined}
-              existingNames={Object.keys(activeTable.values)}
               resolved={resolved}
               stage={stage}
               dispatch={dispatch}
@@ -307,7 +306,6 @@ type ExistingRowProps = {
   pendingValue?: ParameterValue | undefined;
   /** True iff this row has staged-but-unapplied edits. */
   isDirty: boolean;
-  existingNames: string[];
   resolved: Record<string, number>;
   /** Stage a value into pending (does NOT dispatch). */
   stage: (name: string, value: ParameterValue) => void;
@@ -315,7 +313,7 @@ type ExistingRowProps = {
   dispatch: RowDispatch;
 };
 
-function ParameterRow({ scope, param, pendingValue, isDirty, existingNames, resolved, stage, dispatch }: ExistingRowProps) {
+function ParameterRow({ scope, param, pendingValue, isDirty, resolved, stage, dispatch }: ExistingRowProps) {
   // Seed from the staged pending value if present (so re-opening the dialog
   // mid-edit shows the staged content), else from the doc-state param.
   const seed = pendingValue ?? param;
@@ -382,19 +380,14 @@ function ParameterRow({ scope, param, pendingValue, isDirty, existingNames, reso
     // eslint-disable-next-line react-hooks/exhaustive-deps -- buildValue depends on every local state field
   }, [expr, unit, pub, desc, kind, optsCsv, param.name, stage]);
 
+  // The handler refuses a delete that would leave another row referencing
+  // this name, and its message lists them, so the dependent check lives
+  // there rather than being re-derived here against the wrong row's text.
   const onDelete = useCallback(() => {
-    const refsToMe = existingNames.filter(n => {
-      if (n === param.name) return false;
-      const re = new RegExp(`\\b${param.name}\\b`);
-      return re.test(expr);
-    });
-    const msg = refsToMe.length > 0
-      ? `Delete "${param.name}"? Referenced by: ${refsToMe.join(', ')}. Dependent expressions will fail until updated.`
-      : `Delete "${param.name}"?`;
-     
-    if (!confirm(msg)) return;
-    dispatch({ type: 'DeleteParameter', scope, name: param.name });
-  }, [param, scope, existingNames, expr, dispatch]);
+    if (!confirm(`Delete "${param.name}"?`)) return;
+    const result = dispatch({ type: 'DeleteParameter', scope, name: param.name });
+    if (!result.ok) setError(result.error.message);
+  }, [param, scope, dispatch]);
 
   function onKindChange(next: Kind) {
     setKind(next);

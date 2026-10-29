@@ -67,12 +67,19 @@ async function ensureMainThreadFallback(): Promise<typeof mainThreadFallback & o
  * Spawns the WorkerPool, connects document store dirty detection,
  * and triggers initial builds for all parts.
  */
-export async function initRebuildScheduler(appState: AppState): Promise<void> {
+export async function initRebuildScheduler(
+  appState: AppState,
+  // Tests substitute a pool whose worker they control. Spawning a real
+  // one needs a browser `Worker` plus a WASM load, and the paths worth
+  // pinning here (stale results, a rebuild that throws) are about what
+  // the scheduler does with the answer, not how it got one.
+  opts: { pool?: WorkerPool } = {},
+): Promise<void> {
   const { documentStore, viewportStore } = appState;
 
   // Try to create the worker pool
   try {
-    pool = new WorkerPool();
+    pool = opts.pool ?? new WorkerPool();
     useWorker = true;
   } catch (error) {
     console.warn('[RebuildScheduler] Worker creation failed, using main thread:', error);
@@ -97,6 +104,15 @@ export async function initRebuildScheduler(appState: AppState): Promise<void> {
  * Schedule a rebuild for a specific part.
  * Routes to WorkerPool or main-thread fallback.
  * Discards stale results if document changed during rebuild.
+ *
+ * The `rebuilding` flag is cleared in a `finally`, not on each exit
+ * path. `setRebuildResult` / `setRebuildError` clear it as part of
+ * publishing, but the early returns don't publish anything — and the
+ * stale-result guard can't assume a follow-up rebuild is coming to clear
+ * it, because `revision` is also bumped by mutations that dirty no
+ * feature (a visibility toggle, a rename, an undo of either). Left set,
+ * the toolbar indicator never goes out and `waitForRebuildIdle` — which
+ * the AI tool path awaits after every dispatch — times out.
  */
 async function scheduleRebuild(
   documentStore: DocumentStore,
@@ -110,10 +126,7 @@ async function scheduleRebuild(
   try {
     const project = documentStore.getState();
     const part = project.parts[partId];
-    if (!part) {
-      viewportStore.getState().setRebuilding(false);
-      return;
-    }
+    if (!part) return;
 
     let result: WorkerRebuildResult;
 
@@ -182,6 +195,8 @@ async function scheduleRebuild(
     viewportStore.getState().setRebuildError(
       error instanceof Error ? error.message : String(error),
     );
+  } finally {
+    viewportStore.getState().setRebuilding(false);
   }
 }
 

@@ -374,4 +374,102 @@ describe('deleteParameterHandler', () => {
     expect(p.parts[id]?.parameters.values['length']).toBeUndefined();
     expect(p.parameters.values['length']?.expression).toBe('50');
   });
+
+  // Deleting a parameter another row references used to be accepted:
+  // `resolveAllParameters` then fails for the whole table, so every
+  // feature in the part reports 'blocked' with nothing naming the cause.
+  it('rejects deleting a parameter another project row references', () => {
+    const p = makeProject();
+    p.parameters.values['a'] = valueOf('a', '10');
+    p.parameters.values['b'] = valueOf('b', 'a * 2');
+    const r = deleteParameterHandler.validate(
+      { type: 'DeleteParameter', scope: 'project', name: 'a' },
+      p,
+    );
+    expect(r.ok).toBe(false);
+    expect(r.ok ? '' : r.error.code).toBe('HAS_DEPENDENTS');
+    expect(r.ok ? '' : r.error.message).toContain('b');
+  });
+
+  it('rejects deleting a project parameter a part row references', () => {
+    const p = makeProject();
+    const id = firstPartId(p);
+    p.parameters.values['wall'] = valueOf('wall', '2');
+    p.parts[id]!.parameters.values['rib'] = valueOf('rib', 'wall * 3');
+    const r = deleteParameterHandler.validate(
+      { type: 'DeleteParameter', scope: 'project', name: 'wall' },
+      p,
+    );
+    expect(r.ok).toBe(false);
+    expect(r.ok ? '' : r.error.code).toBe('HAS_DEPENDENTS');
+    expect(r.ok ? '' : r.error.message).toContain('rib');
+  });
+
+  it('allows deleting a project parameter a part shadows', () => {
+    const p = makeProject();
+    const id = firstPartId(p);
+    p.parameters.values['wall'] = valueOf('wall', '2');
+    // The part defines its own `wall`, so `rib` never resolved against
+    // the project row and deleting it changes nothing.
+    p.parts[id]!.parameters.values['wall'] = valueOf('wall', '5');
+    p.parts[id]!.parameters.values['rib'] = valueOf('rib', 'wall * 3');
+    const r = deleteParameterHandler.validate(
+      { type: 'DeleteParameter', scope: 'project', name: 'wall' },
+      p,
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('rejects deleting a part parameter a sibling part row references', () => {
+    const p = makeProject();
+    const id = firstPartId(p);
+    p.parts[id]!.parameters.values['bore'] = valueOf('bore', '8');
+    p.parts[id]!.parameters.values['clearance'] = valueOf('clearance', 'bore + 1');
+    const r = deleteParameterHandler.validate(
+      { type: 'DeleteParameter', scope: id, name: 'bore' },
+      p,
+    );
+    expect(r.ok).toBe(false);
+    expect(r.ok ? '' : r.error.code).toBe('HAS_DEPENDENTS');
+  });
+
+  it('allows deleting a part parameter that only shadowed a project row', () => {
+    const p = makeProject();
+    const id = firstPartId(p);
+    p.parameters.values['bore'] = valueOf('bore', '6');
+    p.parts[id]!.parameters.values['bore'] = valueOf('bore', '8');
+    p.parts[id]!.parameters.values['clearance'] = valueOf('clearance', 'bore + 1');
+    const r = deleteParameterHandler.validate(
+      { type: 'DeleteParameter', scope: id, name: 'bore' },
+      p,
+    );
+    // `clearance` still resolves — against the project's 6 instead of 8.
+    expect(r.ok).toBe(true);
+  });
+
+  it('allows deleting a parameter nothing references', () => {
+    const p = makeProject();
+    p.parameters.values['a'] = valueOf('a', '10');
+    p.parameters.values['b'] = valueOf('b', '20');
+    const r = deleteParameterHandler.validate(
+      { type: 'DeleteParameter', scope: 'project', name: 'a' },
+      p,
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('does not count the deleted row\'s own expression as a dependent', () => {
+    const p = makeProject();
+    // A self-referencing row can't exist (the cycle check rejects it on
+    // write), but a row whose name appears in its own expression text
+    // must not block its own deletion.
+    p.parameters.values['a'] = valueOf('a', '10');
+    p.parameters.values['scale_a'] = valueOf('scale_a', '2');
+    const r = deleteParameterHandler.validate(
+      { type: 'DeleteParameter', scope: 'project', name: 'a' },
+      p,
+    );
+    // `scale_a` contains "a" as a substring but not as an identifier.
+    expect(r.ok).toBe(true);
+  });
 });

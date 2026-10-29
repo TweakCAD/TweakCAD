@@ -12,7 +12,7 @@ import { ok, err } from '../../result.ts';
 import type { CadProject, ParameterTable, ParameterValue } from '../../document/schema.ts';
 import type { PartId } from '../../ids.ts';
 import type { ParameterUnit } from '../../units.ts';
-import { evaluateExpression } from '../../expressions.ts';
+import { evaluateExpression, extractParameterRefs } from '../../expressions.ts';
 import { resolveAllParameters } from '../../parameters/evaluator.ts';
 import type { CadCommand } from '../types.ts';
 import type { CommandHandler, ValidationError } from '../bus.ts';
@@ -186,6 +186,51 @@ export const setParameterHandler: CommandHandler = {
   },
 };
 
+/**
+ * Parameters whose expression would be left referencing `name` after it
+ * is deleted from `scope`, as `"scope label: param"` strings.
+ *
+ * Covers the parameter graph only. A *feature* input referencing the
+ * deleted name still fails, but it fails at that feature's build with
+ * the feature named in its diagnostic — whereas an unresolvable
+ * parameter table fails `resolveAllParameters` and blocks the whole
+ * part with nothing pointing at the cause.
+ */
+function findParameterDependents(
+  state: Readonly<CadProject>,
+  scope: 'project' | PartId,
+  name: string,
+): string[] {
+  const dependents: string[] = [];
+  const scan = (table: Readonly<ParameterTable>, label: string, skipSelf: boolean): void => {
+    for (const [rowName, row] of Object.entries(table.values)) {
+      if (skipSelf && rowName === name) continue;
+      if (row.kind === 'choice') continue;
+      if (extractParameterRefs(row.expression).has(name)) {
+        dependents.push(`${label}${rowName}`);
+      }
+    }
+  };
+
+  if (scope === 'project') {
+    scan(state.parameters, '', true);
+    for (const [partId, part] of Object.entries(state.parts)) {
+      // A part that defines its own `name` shadows the project row, so
+      // deleting the project row changes nothing it resolves against.
+      if (part.parameters.values[name]) continue;
+      scan(part.parameters, `${part.name || partId}: `, false);
+    }
+  } else {
+    const part = state.parts[scope];
+    // Deleting a part row that shadows a project row only un-shadows it —
+    // every reference still resolves, against the project value.
+    if (part && !state.parameters.values[name]) {
+      scan(part.parameters, '', true);
+    }
+  }
+  return dependents;
+}
+
 export const deleteParameterHandler: CommandHandler = {
   validate(command: CadCommand, state: Readonly<CadProject>): Result<void, ValidationError> {
     if (command.type !== 'DeleteParameter') {
@@ -197,6 +242,17 @@ export const deleteParameterHandler: CommandHandler = {
       return err({
         code: 'NOT_FOUND',
         message: `Parameter not found in scope: ${command.name}`,
+        field: 'name',
+      });
+    }
+
+    const dependents = findParameterDependents(state, command.scope, command.name);
+    if (dependents.length > 0) {
+      return err({
+        code: 'HAS_DEPENDENTS',
+        message:
+          `Parameter "${command.name}" is referenced by ${dependents.join(', ')}. ` +
+          'Update or delete those first.',
         field: 'name',
       });
     }
