@@ -48,6 +48,14 @@ function tokenize(expr: string): Result<Token[], string> {
         num += input[i]!;
         i++;
       }
+      // Reject a second decimal point rather than letting parseFloat take the
+      // leading part of it. `1.2.3` used to tokenize whole and evaluate to
+      // 1.2, and `2..5` to 2 — a mistyped dimension became a wrong number
+      // instead of an error, which is the one outcome this module is supposed
+      // to prevent.
+      if ((num.match(/\./g)?.length ?? 0) > 1 || num === '.') {
+        return err(`Malformed number: '${num}'`);
+      }
       tokens.push({ type: 'number', value: num });
       continue;
     }

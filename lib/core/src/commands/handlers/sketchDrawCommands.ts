@@ -488,6 +488,45 @@ export const sketchRemoveConstraintHandler: CommandHandler = {
   },
 };
 
+// ---- SketchSetConstruction -------------------------------------------------
+
+/**
+ * Toggle a geometry between construction and real.
+ *
+ * The Sketch Browser used to call `setGeometryConstruction` on the editor
+ * store, which writes `state.geometries` and dispatches nothing — so the flag
+ * never reached `editorModel`, never persisted, and was reverted by the next
+ * hydration. The writer rule in sketch-editor-architecture.md says only a
+ * command may touch the geometry slice; this is that command.
+ */
+export const sketchSetConstructionHandler: CommandHandler = {
+  validate(command: CadCommand, state: Readonly<CadProject>): Result<void, ValidationError> {
+    if (command.type !== 'SketchSetConstruction') {
+      return err({ code: 'WRONG_TYPE', message: 'Expected SketchSetConstruction command' });
+    }
+    const found = findSketch(state, command.sketchId);
+    if (!found.ok) return err(found.error);
+    if (typeof command.geometryId !== 'string' || command.geometryId.length === 0) {
+      return err({ code: 'INVALID_INPUT', message: '`geometryId` must be a non-empty string', field: 'geometryId' });
+    }
+    if (typeof command.construction !== 'boolean') {
+      return err({ code: 'INVALID_INPUT', message: '`construction` must be a boolean', field: 'construction' });
+    }
+    return ok(undefined);
+  },
+
+  execute(draft: CadProject, command: CadCommand): void {
+    if (command.type !== 'SketchSetConstruction') return;
+    const current = loadEditorState(draft, command.sketchId);
+    const geom = current.geometries.get(command.geometryId);
+    if (!geom) return; // idempotent no-op, same as remove-constraint
+    if (geom.construction === command.construction) return;
+    const geometries = new Map(current.geometries);
+    geometries.set(command.geometryId, { ...geom, construction: command.construction });
+    applyEditorStateUpdate(draft, command.sketchId, { ...current, geometries });
+  },
+};
+
 // ---- SketchDrawArc ---------------------------------------------------------
 
 export const sketchDrawArcHandler: CommandHandler = {

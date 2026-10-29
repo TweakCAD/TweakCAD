@@ -18,7 +18,11 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { consoleLog } from '@tweakcad/core/src/store/consoleStore.ts';
-import { dispatchRemoveConstraint, dispatchRemoveSketchEntity } from './sketchDispatch.ts';
+import {
+  dispatchRemoveConstraint,
+  dispatchRemoveSketchEntity,
+  dispatchSetConstruction,
+} from './sketchDispatch.ts';
 import { ChevronDown, ChevronRight, X, AlertTriangle, Lock, LockOpen } from 'lucide-react';
 import { useSketchEditorStore } from './SketchEditorStore.ts';
 import type {
@@ -109,7 +113,6 @@ export function SketchBrowser() {
     }
   }, [dof, unsatisfied, geometries, constraints]);
 
-  const setGeometryConstruction = useSketchEditorStore(s => s.setGeometryConstruction);
   const setHoveredTarget = useSketchEditorStore(s => s.setHoveredTarget);
   const setHoveredConstraint = useSketchEditorStore(s => s.setHoveredConstraint);
   // Browser is read-only for selection — selection is driven from the viewport.
@@ -224,7 +227,7 @@ export function SketchBrowser() {
                 onHover={(on) => setHoveredTarget(on ? { type: 'geometry', id: row.id } : null)}
                 onDelete={() => dispatchRemoveSketchEntity(String(row.id))}
                 isConstruction={row.construction}
-                onToggleConstruction={() => setGeometryConstruction(row.id, !row.construction)}
+                onToggleConstruction={() => dispatchSetConstruction(String(row.id), !row.construction)}
               />
             ))
           )}

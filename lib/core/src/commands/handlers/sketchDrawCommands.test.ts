@@ -32,6 +32,7 @@ import {
   sketchDrawPolygonHandler,
   sketchApplyConstraintHandler,
   sketchRemoveConstraintHandler,
+  sketchSetConstructionHandler,
 } from './sketchDrawCommands.ts';
 import { detectSketchRegions } from '../../sketch/profileRegions.ts';
 import type { SketchFeatureInputs } from '../../document/schema.ts';
@@ -56,6 +57,7 @@ function newHarness(): {
   bus.register('SketchDrawPolygon', sketchDrawPolygonHandler);
   bus.register('SketchApplyConstraint', sketchApplyConstraintHandler);
   bus.register('SketchRemoveConstraint', sketchRemoveConstraintHandler);
+  bus.register('SketchSetConstruction', sketchSetConstructionHandler);
   const partId = Object.keys(project.parts)[0] as PartId;
   return { bus, store, partId };
 }
@@ -902,5 +904,78 @@ describe('SketchRemoveConstraint', () => {
       constraintId: 'never_existed' as never,
     });
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('SketchSetConstruction', () => {
+  // The bug this replaces: the Sketch Browser toggle wrote the editor store
+  // directly and dispatched nothing, so the flag never reached `editorModel`
+  // and the next hydration reverted it. Persistence is the point, so these
+  // assert the *document*, not the store.
+  function lineFixture() {
+    const { bus, store, partId } = newHarness();
+    const sketchId = createSketch(bus, store, partId);
+    bus.dispatch({ type: 'SketchDrawLine', sketchId, from: [0, 0], to: [10, 3] });
+    const inputs = getSketchInputs(store, partId, sketchId);
+    const geometryId = (inputs.editorModel!.geometries[0]! as { id: string }).id;
+    return { bus, store, partId, sketchId, geometryId };
+  }
+
+  function constructionOf(
+    store: DocumentStore,
+    partId: PartId,
+    sketchId: FeatureId,
+    geometryId: string,
+  ): boolean | undefined {
+    const geoms = getSketchInputs(store, partId, sketchId).editorModel!.geometries;
+    const found = geoms.find((g) => (g as { id: string }).id === geometryId);
+    return (found as { construction?: boolean } | undefined)?.construction;
+  }
+
+  it('writes the flag into editorModel', () => {
+    const { bus, store, partId, sketchId, geometryId } = lineFixture();
+
+    const res = bus.dispatch({
+      type: 'SketchSetConstruction',
+      sketchId,
+      geometryId: geometryId as never,
+      construction: true,
+    });
+
+    expect(res.ok).toBe(true);
+    expect(constructionOf(store, partId, sketchId, geometryId)).toBe(true);
+  });
+
+  it('toggles back to real', () => {
+    const { bus, store, partId, sketchId, geometryId } = lineFixture();
+    bus.dispatch({
+      type: 'SketchSetConstruction', sketchId, geometryId: geometryId as never, construction: true,
+    });
+    bus.dispatch({
+      type: 'SketchSetConstruction', sketchId, geometryId: geometryId as never, construction: false,
+    });
+    expect(constructionOf(store, partId, sketchId, geometryId)).toBe(false);
+  });
+
+  it('is idempotent on a missing geometry', () => {
+    const { bus, sketchId } = lineFixture();
+    const res = bus.dispatch({
+      type: 'SketchSetConstruction',
+      sketchId,
+      geometryId: 'geo_nope' as never,
+      construction: true,
+    });
+    expect(res.ok).toBe(true);
+  });
+
+  it('rejects a non-boolean construction value', () => {
+    const { bus, sketchId, geometryId } = lineFixture();
+    const res = bus.dispatch({
+      type: 'SketchSetConstruction',
+      sketchId,
+      geometryId: geometryId as never,
+      construction: 'yes' as never,
+    });
+    expect(res.ok).toBe(false);
   });
 });

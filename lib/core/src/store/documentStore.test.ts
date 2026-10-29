@@ -586,23 +586,23 @@ describe('DocumentStore — detectDirty patch classification', () => {
     expect(dirty).toEqual([]);
   });
 
-  it('does not run dirty detection on undo or redo', () => {
-    // Shipped behaviour: `undo()`/`redo()` apply patches and notify state
-    // subscribers, but never call `detectDirty`, so the rebuild scheduler is
-    // not woken by an undo. Pinned here so an Immer upgrade can't silently
-    // change which side effects fire.
+  it('runs dirty detection on undo and on redo', () => {
+    // This used to assert the opposite, describing "never calls detectDirty"
+    // as shipped behaviour. It was shipped, and it was a bug: `detectDirty`
+    // is the only thing that wakes the rebuild scheduler, so undoing an edit
+    // left the viewport showing geometry the timeline no longer described.
+    // The test pinned the defect in place.
     const { store, partId } = newStore();
     store.mutate('Edit extrude', draft => {
       const inputs = draft.parts[partId]!.timeline[1]!.inputs as unknown as ExtrudeFeatureInputs;
       inputs.extent = { type: 'distance', value: '25' };
     });
 
-    const dirty = recordDirty(store, () => {
-      store.undo();
-      store.redo();
-    });
+    const undone = recordDirty(store, () => store.undo());
+    expect(undone.length).toBeGreaterThan(0);
 
-    expect(dirty).toEqual([]);
+    const redone = recordDirty(store, () => store.redo());
+    expect(redone.length).toBeGreaterThan(0);
   });
 });
 

@@ -70,21 +70,35 @@ export class DocumentStore {
     this.detectDirty(patches);
   }
 
-  /** Undo the last mutation */
+  /**
+   * Undo the last mutation.
+   *
+   * `detectDirty` runs on the inverse patches for the same reason `mutate`
+   * runs it on the forward ones: undoing a feature changes the geometry the
+   * timeline describes, and nothing else triggers a rebuild. Without it,
+   * Ctrl+Z after an extrude removed the feature from the timeline and left
+   * the body in the viewport, with a `bodyToFeatureMap` still pointing at a
+   * feature that no longer existed.
+   *
+   * Inverse patches carry the same path shape as the forward ones, so the
+   * classifier reads them identically.
+   */
   undo(): void {
     this.undoManager.undo(p => {
       this.state = applyPatches(this.state, p);
       this.revision++;
       this.notify();
+      this.detectDirty(p);
     });
   }
 
-  /** Redo the last undone mutation */
+  /** Redo the last undone mutation. Dirties the same way — see {@link undo}. */
   redo(): void {
     this.undoManager.redo(p => {
       this.state = applyPatches(this.state, p);
       this.revision++;
       this.notify();
+      this.detectDirty(p);
     });
   }
 

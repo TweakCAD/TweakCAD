@@ -58,6 +58,7 @@ import {
   sketchSetRadiusHandler,
   sketchApplyConstraintHandler,
   sketchRemoveConstraintHandler,
+  sketchSetConstructionHandler,
   sketchTrimHandler,
   sketchExtendHandler,
   sketchFilletHandler,
@@ -134,6 +135,7 @@ export function initializeApp(): AppState {
   commandBus.register('SketchSetRadius', sketchSetRadiusHandler);
   commandBus.register('SketchApplyConstraint', sketchApplyConstraintHandler);
   commandBus.register('SketchRemoveConstraint', sketchRemoveConstraintHandler);
+  commandBus.register('SketchSetConstruction', sketchSetConstructionHandler);
   // Modify-tool handlers
   commandBus.register('SketchTrim', sketchTrimHandler);
   commandBus.register('SketchExtend', sketchExtendHandler);

@@ -146,3 +146,31 @@ describe('extractParameterRefs', () => {
     });
   });
 });
+
+describe('malformed numbers are rejected, not silently truncated', () => {
+  // The tokenizer consumed any run of digits and dots and handed the result
+  // to parseFloat, so a typo became a plausible wrong number rather than an
+  // error — the one failure mode a parameter expression must not have.
+  it.each(['1.2.3', '2..5', '1.2.3.4', '.'])('rejects %s', (expr) => {
+    const result = evaluateExpression(expr, {});
+    expect(result.ok).toBe(false);
+  });
+
+  it('names the offending token', () => {
+    const result = evaluateExpression('1.2.3', {});
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/Malformed number/);
+  });
+
+  it('still accepts the forms that are genuinely numbers', () => {
+    expect(evaluateExpression('1.5', {})).toEqual({ ok: true, value: 1.5 });
+    expect(evaluateExpression('.5', {})).toEqual({ ok: true, value: 0.5 });
+    expect(evaluateExpression('42', {})).toEqual({ ok: true, value: 42 });
+    expect(evaluateExpression('2.0 * 3.5', {})).toEqual({ ok: true, value: 7 });
+  });
+
+  it('rejects a malformed number nested in a larger expression', () => {
+    // Where it would actually bite: a dimension typed into a dialog.
+    expect(evaluateExpression('width * 1.2.3', { width: 10 }).ok).toBe(false);
+  });
+});

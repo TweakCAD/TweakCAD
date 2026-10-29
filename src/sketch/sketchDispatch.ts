@@ -363,6 +363,24 @@ export function dispatchRemoveSketchEntity(
   })).ok;
 }
 
+/**
+ * Toggle a geometry between construction and real.
+ *
+ * Through the bus, not the editor store: construction lives in
+ * `editorModel`, and writing `state.geometries` directly never persisted it.
+ */
+export function dispatchSetConstruction(
+  geometryId: string,
+  construction: boolean,
+): boolean {
+  return dispatchInSketch((sketchId) => ({
+    type: 'SketchSetConstruction',
+    sketchId,
+    geometryId: geometryId as never,
+    construction,
+  })).ok;
+}
+
 // ---- Modify-tool helpers -------------------------------------------------
 //
 // The UI tool sessions collect screen clicks (sketchToolsExt.ts) then

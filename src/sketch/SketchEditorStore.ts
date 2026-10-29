@@ -280,7 +280,6 @@ export interface SketchEditorState {
   setConstructionMode: (on: boolean) => void;
   toggleConstructionMode: () => void;
   /** Toggle the construction flag on a single existing geometry. */
-  setGeometryConstruction: (id: SketchGeometryId, construction: boolean) => void;
 
   // Dimension tool: when set, the editor renders an input near (screenX, screenY)
   pendingDimension: PendingDimension | null;
@@ -487,15 +486,6 @@ export const useSketchEditorStore = create<SketchEditorState>((set, get) => ({
   constructionMode: false,
   setConstructionMode: (on: boolean): void => { set({ constructionMode: on }); },
   toggleConstructionMode: (): void => { set((s) => ({ constructionMode: !s.constructionMode })); },
-  setGeometryConstruction: (id: SketchGeometryId, construction: boolean): void => {
-    set((state) => {
-      const geom = state.geometries.get(id);
-      if (!geom) return state;
-      const geometries = new Map(state.geometries);
-      geometries.set(id, { ...geom, construction });
-      return { geometries };
-    });
-  },
 
   // ---- Entity CRUD ----
 

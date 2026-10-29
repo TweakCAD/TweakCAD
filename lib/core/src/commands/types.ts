@@ -64,6 +64,7 @@ export type CadCommand =
   | SketchSetRadiusCommand
   | SketchApplyConstraintCommand
   | SketchRemoveConstraintCommand
+  | SketchSetConstructionCommand
   // Modify-tool sketch commands
   | SketchTrimCommand
   | SketchExtendCommand
@@ -332,6 +333,21 @@ export type SketchApplyConstraintCommand = {
   sketchId: FeatureId;
   /** The constraint to apply. `id` may be omitted; the handler allocates one. */
   constraint: SketchConstraintInput;
+};
+
+
+/**
+ * Flip a sketch geometry between construction and real.
+ *
+ * A command rather than a store edit: construction lives in `editorModel`,
+ * and the Sketch Browser toggle used to mutate the editor store directly, so
+ * it never reached the document and was lost on the next hydration.
+ */
+export type SketchSetConstructionCommand = {
+  type: 'SketchSetConstruction';
+  sketchId: FeatureId;
+  geometryId: SketchGeometryId;
+  construction: boolean;
 };
 
 /** Remove a constraint from a sketch by id. Idempotent (no-op on missing). */
@@ -844,6 +860,8 @@ export function commandLabel(command: CadCommand): string {
       return `Apply ${command.constraint.type} constraint`;
     case 'SketchRemoveConstraint':
       return 'Remove Constraint';
+    case 'SketchSetConstruction':
+      return command.construction ? 'To Construction' : 'To Real';
     case 'CreateExtrude':
       return `Create Extrude (${command.inputs.operation})`;
     case 'CreateRevolve':
