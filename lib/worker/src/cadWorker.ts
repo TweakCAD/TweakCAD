@@ -44,9 +44,12 @@ let ready = false;
 let initPromise: Promise<void> | null = null;
 
 /**
- * Initialize the OcctKernel WASM module. Singleton — only runs once per
- * worker lifetime. Init errors propagate to the caller (WorkerPool surfaces
- * them via its `init failed` log).
+ * Initialize the OcctKernel WASM module. One load per worker lifetime —
+ * concurrent callers await the same promise. Init errors propagate to the
+ * caller (WorkerPool surfaces them via its `init failed` log) and clear
+ * the cached promise: re-awaiting a rejected one would rethrow the
+ * original failure for the rest of the worker's life, so a retry would
+ * never reach the kernel even if the cause was transient.
  */
 async function ensureKernel(): Promise<CadKernel> {
   if (kernel && ready) return kernel;
@@ -56,7 +59,7 @@ async function ensureKernel(): Promise<CadKernel> {
     return kernel!;
   }
 
-  initPromise = (async () => {
+  const loading = (async () => {
     const startTime = performance.now();
     kernel = new OcctKernel();
     await kernel.init();
@@ -64,8 +67,17 @@ async function ensureKernel(): Promise<CadKernel> {
     console.log(`[CadWorker] OcctKernel (occt-wasm@5) loaded in ${elapsed}ms`);
     ready = true;
   })();
+  initPromise = loading;
 
-  await initPromise;
+  try {
+    await loading;
+  } catch (error) {
+    if (initPromise === loading) {
+      initPromise = null;
+      kernel = null;
+    }
+    throw error;
+  }
   return kernel!;
 }
 

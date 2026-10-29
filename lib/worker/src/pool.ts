@@ -37,6 +37,10 @@ export class WorkerPool {
   private rebuildStatus: WorkerStatus = 'idle';
   private exportStatus: WorkerStatus = 'idle';
 
+  /** In-flight `init()` per lane, so concurrent callers share one spawn. */
+  private rebuildInit: Promise<Comlink.Remote<CadWorkerApi>> | null = null;
+  private exportInit: Promise<Comlink.Remote<CadWorkerApi>> | null = null;
+
   /** Current pending rebuild - used for cancellation */
   private currentRebuildId = 0;
 
@@ -44,8 +48,13 @@ export class WorkerPool {
    * Spawn a new worker and wrap it with Comlink.
    * The worker URL uses Vite's `new URL('./cadWorker.ts', import.meta.url)` pattern
    * which Vite transforms into a proper worker bundle during build.
+   *
+   * `protected` so tests can substitute a worker whose `init()` they
+   * control — the lane lifecycle (what happens to a worker whose kernel
+   * failed to load) is the part worth pinning, and it can't be reached
+   * through a real WASM boot.
    */
-  private spawn(): { raw: Worker; wrapped: Comlink.Remote<CadWorkerApi> } {
+  protected spawn(): { raw: Worker; wrapped: Comlink.Remote<CadWorkerApi> } {
     const raw = new Worker(
       new URL('./cadWorker.ts', import.meta.url),
       { type: 'module' },
@@ -55,52 +64,80 @@ export class WorkerPool {
   }
 
   /**
-   * Ensure the rebuild worker is spawned and initialized.
+   * Spawn and initialize one lane's worker, or hand back the one that is
+   * already running. Lazy — the export lane costs a second WASM instance,
+   * so it waits for the first export request.
+   *
+   * A failed `init()` must leave nothing behind. Inside the worker,
+   * `ensureKernel` caches its init promise and re-awaits it, so a cached
+   * handle to a worker whose kernel never loaded rejects every later call
+   * for the lifetime of the page: the rebuild lane survives that on the
+   * scheduler's main-thread fallback, but export has no fallback, so one
+   * failed boot used to kill every export for the session. On rejection
+   * the raw worker is terminated (not just dropped — otherwise the dead
+   * thread and its half-loaded WASM instance stay resident) and the next
+   * request starts clean.
    */
-  private async ensureRebuildWorker(): Promise<Comlink.Remote<CadWorkerApi>> {
-    if (this.rebuildWorker) return this.rebuildWorker;
+  private ensureWorker(lane: 'rebuild' | 'export'): Promise<Comlink.Remote<CadWorkerApi>> {
+    const ready = lane === 'rebuild' ? this.rebuildWorker : this.exportWorker;
+    if (ready) return Promise.resolve(ready);
+    // Two exports racing on first use would otherwise spawn two workers
+    // and leak whichever lost.
+    const pending = lane === 'rebuild' ? this.rebuildInit : this.exportInit;
+    if (pending) return pending;
 
-    this.rebuildStatus = 'initializing';
     const { raw, wrapped } = this.spawn();
-    this.rebuildRaw = raw;
-    this.rebuildWorker = wrapped;
+    this.setStatus(lane, 'initializing');
+    // Tracked before the await so `dispose()` can terminate a worker
+    // that is still booting.
+    if (lane === 'rebuild') this.rebuildRaw = raw; else this.exportRaw = raw;
 
-    try {
-      const info = await wrapped.init();
-      console.log(`[WorkerPool] Rebuild worker ready: kernel=${info.kernelType}, load=${info.loadTimeMs}ms`);
-      this.rebuildStatus = 'idle';
-    } catch (error) {
-      this.rebuildStatus = 'error';
-      console.error('[WorkerPool] Rebuild worker init failed:', error);
-      throw error;
-    }
+    const booting = (async (): Promise<Comlink.Remote<CadWorkerApi>> => {
+      try {
+        const info = await wrapped.init();
+        const stillOurs = lane === 'rebuild' ? this.rebuildRaw === raw : this.exportRaw === raw;
+        if (!stillOurs) {
+          // Disposed mid-boot. The pool is being torn down, so don't
+          // publish a handle to a worker nobody is tracking.
+          raw.terminate();
+          throw new Error(`[WorkerPool] ${lane} worker disposed during init`);
+        }
+        console.log(`[WorkerPool] ${lane} worker ready: kernel=${info.kernelType}, load=${info.loadTimeMs}ms`);
+        if (lane === 'rebuild') this.rebuildWorker = wrapped; else this.exportWorker = wrapped;
+        this.setStatus(lane, 'idle');
+        return wrapped;
+      } catch (error) {
+        this.setStatus(lane, 'error');
+        console.error(`[WorkerPool] ${lane} worker init failed:`, error);
+        raw.terminate();
+        if (lane === 'rebuild') {
+          if (this.rebuildRaw === raw) this.rebuildRaw = null;
+          this.rebuildWorker = null;
+        } else {
+          if (this.exportRaw === raw) this.exportRaw = null;
+          this.exportWorker = null;
+        }
+        throw error;
+      } finally {
+        if (lane === 'rebuild') this.rebuildInit = null; else this.exportInit = null;
+      }
+    })();
 
-    return this.rebuildWorker;
+    if (lane === 'rebuild') this.rebuildInit = booting; else this.exportInit = booting;
+    return booting;
   }
 
-  /**
-   * Ensure the export worker is spawned and initialized.
-   * Only spawned on first export request (lazy).
-   */
-  private async ensureExportWorker(): Promise<Comlink.Remote<CadWorkerApi>> {
-    if (this.exportWorker) return this.exportWorker;
+  private setStatus(lane: 'rebuild' | 'export', status: WorkerStatus): void {
+    if (lane === 'rebuild') this.rebuildStatus = status;
+    else this.exportStatus = status;
+  }
 
-    this.exportStatus = 'initializing';
-    const { raw, wrapped } = this.spawn();
-    this.exportRaw = raw;
-    this.exportWorker = wrapped;
+  private ensureRebuildWorker(): Promise<Comlink.Remote<CadWorkerApi>> {
+    return this.ensureWorker('rebuild');
+  }
 
-    try {
-      const info = await wrapped.init();
-      console.log(`[WorkerPool] Export worker ready: kernel=${info.kernelType}, load=${info.loadTimeMs}ms`);
-      this.exportStatus = 'idle';
-    } catch (error) {
-      this.exportStatus = 'error';
-      console.error('[WorkerPool] Export worker init failed:', error);
-      throw error;
-    }
-
-    return this.exportWorker;
+  private ensureExportWorker(): Promise<Comlink.Remote<CadWorkerApi>> {
+    return this.ensureWorker('export');
   }
 
   /**
