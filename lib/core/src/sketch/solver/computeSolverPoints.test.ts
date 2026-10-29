@@ -1,9 +1,11 @@
 /**
  * Unit test for `computeSolverPoints` — the pre-pass that keeps the planegcs
- * system to the constrained skeleton. The solver itself can't be unit-tested
- * (no WASM in vitest), but this pure helper is the part that prevents dense
+ * system to the constrained skeleton. This is the part that prevents dense
  * imported sketches (thousands of free spline/bezier control points) from
- * blowing the solver's heap.
+ * blowing the solver's heap, and it is pure, so it is tested directly on
+ * maps rather than through a solve. (The solver itself does run under
+ * vitest — `testSetup.ts` attaches the WASM wrapper for the `core`
+ * project — so tests that need a real solve can call `getSolver()`.)
  */
 
 import { describe, it, expect } from 'vitest';

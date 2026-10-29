@@ -30,6 +30,7 @@ import {
   offsetCurveAt,
   mirrorSelection,
 } from './modifyOps.ts';
+import { getSolver } from './solver/index.ts';
 import type {
   SketchArc,
   SketchGeometryId,
@@ -376,6 +377,26 @@ describe('trimAt — constraint cascade', () => {
     const trimmed = trimAt(s, horiz.lineId, [15, 0]);
     expect(trimmed!.constraints.has(keep.id)).toBe(true);
     expect(danglingRefs(trimmed!)).toEqual([]);
+  });
+
+  it('leaves state the real solver accepts', () => {
+    const factory = makeCounterIdFactory();
+    let s = emptyEditorState();
+    const horiz = drawLine(s, [0, 0], [20, 0], { idFactory: factory }); s = horiz.state;
+    s = addConstraint(s, { type: 'horizontal', geometryId: horiz.lineId }, { idFactory: factory }).state;
+    s = drawLine(s, [10, -5], [10, 5], { idFactory: factory }).state;
+
+    const trimmed = trimAt(s, horiz.lineId, [15, 0])!;
+    // The reported crash, end to end: planegcs resolved the surviving
+    // `horizontal` to the trimmed line's id and threw
+    // `sketch object g:geo_1 not found`, which in the app is the next
+    // drag preview or constraint add dying.
+    expect(() => getSolver().solve(
+      trimmed.points,
+      trimmed.geometries,
+      trimmed.constraints,
+      new Set(),
+    )).not.toThrow();
   });
 
   it('drops a point constraint whose point the trim orphaned', () => {
