@@ -5,6 +5,7 @@
 
 import { useSyncExternalStore } from 'react';
 import type { DisplayContext } from '@tweakcad/core/src/store/displayContextStore.ts';
+import type { PartId } from '@tweakcad/core/src/ids.ts';
 
 // ---- Store reference ----
 
@@ -42,6 +43,20 @@ export function useDisplayMode(): DisplayContext['mode'] {
   );
 }
 
+/**
+ * The raw active part id — `null` until the user picks one. Resolve it
+ * against the document with `resolveActivePartId` before using it; this
+ * hook deliberately doesn't, so it can't go stale against a project the
+ * caller hasn't re-read.
+ */
+export function useActivePartId(): PartId | null {
+  const store = getStore();
+  return useSyncExternalStore(
+    store.subscribe,
+    () => store.getState().activePartId,
+  );
+}
+
 // ---- Action hooks ----
 
 /** Get the display context actions (stable references from the store) */
@@ -54,5 +69,6 @@ export function useDisplayContextActions() {
     setSelectingProfile: state.setSelectingProfile,
     setSelectingFace: state.setSelectingFace,
     setSelectingEdge: state.setSelectingEdge,
+    setActivePart: state.setActivePart,
   };
 }

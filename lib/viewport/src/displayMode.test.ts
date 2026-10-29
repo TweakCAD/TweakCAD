@@ -4,8 +4,8 @@
  *
  * Priority rules (in order) we pin down here:
  *   1. hidden  — explicit per-body hide OR feature suppressed/hidden
- *   2. ghosted — sketch / profile-pick context (global), OR (future)
- *                body's part != activePartId
+ *   2. ghosted — sketch / profile-pick context (global), OR the body's
+ *                part != activePartId (non-active parts, Fusion-style)
  *   3. normal  — default
  */
 import { describe, expect, it } from 'vitest';
@@ -179,7 +179,7 @@ describe('computeAllBodyDisplayModes', () => {
     });
   });
 
-  describe('future: activePartId (non-active ghosting)', () => {
+  describe('activePartId (non-active part ghosting)', () => {
     it('ghosts bodies in non-active parts when activePartId set', () => {
       const f1 = feat('ex_p1');
       const f2 = feat('ex_p2');
@@ -196,7 +196,7 @@ describe('computeAllBodyDisplayModes', () => {
       expect(m.get(bodyId('b2'))).toBe('ghosted');
     });
 
-    it('does nothing when activePartId is undefined (current behavior)', () => {
+    it('does nothing when activePartId is undefined', () => {
       const f1 = feat('ex_p1');
       const f2 = feat('ex_p2');
       const project = makeProject([f1], { p2: [f2] });

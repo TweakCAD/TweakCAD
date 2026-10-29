@@ -44,6 +44,9 @@ import {
   ArrowDownToLine,
   Download,
   Pause,
+  Plus,
+  Circle,
+  CircleDot,
 } from 'lucide-react';
 import {
   getFeatureIcon,
@@ -126,6 +129,15 @@ interface ContextMenuEvent {
 
 interface ProjectTreeProps {
   parts: TreePart[];
+  /**
+   * The part new features go into. Its row is marked, and the other
+   * parts' bodies render ghosted in the viewport.
+   */
+  activePartId?: string | null;
+  /** Make a part the active one. */
+  onActivatePart?: ((partId: string) => void) | undefined;
+  /** Add a part to the document. */
+  onCreatePart?: (() => void) | undefined;
   parameters: Record<string, { name: string; expression: string; unit: string }>;
   /** Actual bodies from the build result (not features) */
   bodies?: TreeBody[] | undefined;
@@ -200,6 +212,9 @@ function groupBodiesByFeature(bodies: TreeBody[]): { featureId: string; type: st
 
 export function ProjectTree({
   parts,
+  activePartId,
+  onActivatePart,
+  onCreatePart,
   parameters,
   bodies: treeBodies,
   selectedFeatureId,
@@ -291,6 +306,19 @@ export function ProjectTree({
       <div style={styles.header}>
         <Layers size={12} style={{ color: '#888' }} />
         <span style={styles.headerTitle}>Browser</span>
+        {onCreatePart && (
+          <button
+            type="button"
+            style={styles.headerActionBtn}
+            onClick={onCreatePart}
+            aria-label="New part"
+            title="New part"
+            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#e6e6e6'; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+          >
+            <Plus size={12} color="#666" />
+          </button>
+        )}
       </div>
 
       <div style={styles.content}>
@@ -335,8 +363,12 @@ export function ProjectTree({
         {/* Components (Parts) */}
         {parts.map((part, partIndex) => {
           const { sketches, construction, components } = categorizeFeatures(part.timeline);
-          const actualBodies = treeBodies ?? [];
+          // Bodies belong to the part whose timeline produced them. Shown
+          // unfiltered, every part listed every body in the document.
+          const featureIds = new Set(part.timeline.map(f => f.id));
+          const actualBodies = (treeBodies ?? []).filter(b => featureIds.has(b.sourceFeatureId));
           const isRoot = partIndex === 0;
+          const isActive = parts.length > 1 && part.id === activePartId;
           const componentLabel = isRoot ? `${part.name} (root)` : part.name;
           const partNodeId = `part_${part.id}`;
 
@@ -346,8 +378,19 @@ export function ProjectTree({
               <TreeNode
                 nodeId={partNodeId}
                 label={componentLabel}
-                icon={<Box size={13} color="#ff9800" />}
+                icon={<Box size={13} color={isActive ? '#1a6fd1' : '#ff9800'} />}
                 expanded={isExpanded(partNodeId)}
+                {...(parts.length > 1 && onActivatePart
+                  ? {
+                      trailingAction: {
+                        icon: isActive
+                          ? <CircleDot size={12} color="#1a6fd1" />
+                          : <Circle size={12} color="#999" />,
+                        onClick: () => onActivatePart(part.id),
+                        ariaLabel: isActive ? `${part.name} is active` : `Activate ${part.name}`,
+                      },
+                    }
+                  : {})}
                 onToggle={() => {
                   toggleNode(partNodeId);
                   onPartClick?.(part.id);
@@ -1014,6 +1057,19 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: 6,
+  },
+  headerActionBtn: {
+    marginLeft: 'auto',
+    width: 20,
+    height: 20,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'transparent',
+    border: 'none',
+    cursor: 'pointer',
+    borderRadius: 3,
+    padding: 0,
   },
   headerTitle: {
     fontSize: 11,

@@ -17,6 +17,7 @@ import type { DocumentStore } from '@tweakcad/core/src/store/documentStore.ts';
 import type { CadPart, FeatureNode } from '@tweakcad/core/src/document/schema.ts';
 import { consoleLog } from '@tweakcad/core/src/store/consoleStore.ts';
 import { WorkerPool } from '@tweakcad/worker/src/pool.ts';
+import { resolveActivePartId } from '@tweakcad/core/src/document/featureLookup.ts';
 import type { MeasureTarget, MeasureResult } from '@tweakcad/worker/src/protocol.ts';
 import type { WorkerRebuildResult } from '@tweakcad/worker/src/cadWorker.ts';
 import type { AppState } from './appInit.ts';
@@ -90,6 +91,12 @@ export async function initRebuildScheduler(
   // all bodies are accumulated in the build context correctly.
   // TODO: implement context caching for true incremental rebuilds.
   documentStore.onDirtyFeature(async (_fromIndex, partId) => {
+    // A part can also *leave* the document (undo of `CreatePart`), and
+    // nothing schedules a rebuild for a part that no longer exists — so
+    // sweep the published results before building.
+    viewportStore.getState().retainParts(
+      Object.keys(documentStore.getState().parts) as PartId[],
+    );
     await scheduleRebuild(documentStore, viewportStore, partId, 0);
   });
 
@@ -165,11 +172,14 @@ async function scheduleRebuild(
     console.log('[RebuildScheduler] bodyToFeature map:', JSON.stringify(bodyToFeature));
 
     // Push meshes + construction planes + per-feature results to viewport
-    // store. The CP layer in ViewportController re-renders translucent
+    // store, under this part's key: parts rebuild one at a time, and the
+    // store merges them so republishing one doesn't blank the others.
+    // The CP layer in ViewportController re-renders translucent
     // rectangles when constructionPlanes changes; the ProjectTree uses
     // featureResults to surface failed/blocked badges on each feature
     // so build errors are visible without reading the console.
     viewportStore.getState().setRebuildResult(
+      partId,
       result.meshes,
       result.topologyMaps,
       result.constructionPlanes,
@@ -298,21 +308,26 @@ export function disposeRebuildScheduler(): void {
 // ---- Export helpers ----
 
 /**
- * Export the active part of the document to the requested format.
+ * Export one part of the document to the requested format.
  *
  * Runs on the dedicated export worker (does not block rebuilds). Falls
  * back to the main-thread kernel if workers are unavailable. Returns the
  * raw bytes as an ArrayBuffer so the caller can produce a Blob with the
  * right MIME type or PUT it directly to the SaaS attachment endpoint.
+ *
+ * `partId` is the user's active part; omitting it exports the first part,
+ * which is what the load-time cloud auto-export wants (it runs before
+ * the user has activated anything). Exporting *all* parts as one
+ * compound, with per-part SubObject metadata, is still a future
+ * enhancement — this exports exactly one.
  */
 export async function exportActivePart(
   documentStore: DocumentStore,
   format: 'stl' | 'step' | 'brep' | '3mf',
+  activePartId?: PartId | null,
 ): Promise<ArrayBuffer> {
   const project = documentStore.getState();
-  // Export the first / only part. Multi-part export is a future
-  // enhancement (compound + per-part SubObject metadata).
-  const partId = (Object.keys(project.parts) as PartId[])[0];
+  const partId = resolveActivePartId(project, activePartId);
   if (!partId) throw new Error('No part to export.');
   const part = project.parts[partId];
   if (!part) throw new Error('No part to export.');

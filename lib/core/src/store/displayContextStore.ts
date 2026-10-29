@@ -11,7 +11,7 @@
  */
 
 import { createStore } from 'zustand/vanilla';
-import type { FeatureId } from '../ids.ts';
+import type { FeatureId, PartId } from '../ids.ts';
 
 /**
  * The current display context — what the user is doing right now.
@@ -27,6 +27,22 @@ export type DisplayContext =
 export type DisplayContextState = {
   /** Current display context */
   context: DisplayContext;
+
+  /**
+   * The part the user is working in. New features are created here, the
+   * export toolbar exports it, and every other part's bodies render
+   * ghosted (`computeAllBodyDisplayModes`).
+   *
+   * Session state, not document state: activating a part must not dirty
+   * the document or land in the undo stack. `null` means "not chosen
+   * yet" — callers resolve that to the first part via
+   * `resolveActivePartId`, which is also how a single-part document
+   * keeps behaving exactly as it did before parts could be switched.
+   */
+  activePartId: PartId | null;
+
+  /** Activate a part. Pass `null` to fall back to the first part. */
+  setActivePart: (partId: PartId | null) => void;
 
   /** Transition to normal 3D viewing */
   setViewing: () => void;
@@ -47,6 +63,9 @@ export type DisplayContextState = {
 export function createDisplayContextStore() {
   return createStore<DisplayContextState>(set => ({
     context: { mode: 'viewing' },
+    activePartId: null,
+
+    setActivePart: (partId: PartId | null) => set({ activePartId: partId }),
 
     setViewing: () =>
       set({ context: { mode: 'viewing' } }),

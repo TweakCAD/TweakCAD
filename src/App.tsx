@@ -446,7 +446,11 @@ export function App() {
   const onFileExport = useCallback(
     async (format: 'stl' | 'step' | 'brep' | '3mf') => {
       try {
-        const ab = await exportActivePart(appState.documentStore, format);
+        const ab = await exportActivePart(
+          appState.documentStore,
+          format,
+          appState.displayContextStore.getState().activePartId,
+        );
         if (ab.byteLength === 0) {
           console.warn('[App] Export produced empty output; no bodies?');
           return;

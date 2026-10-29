@@ -80,10 +80,10 @@ export type AllBodyModesInputs = {
   /** What the user is currently doing — drives the global ghost trigger. */
   context: DisplayContext;
   /**
-   * Optional future hook: when set, bodies belonging to parts other
-   * than this one render `'ghosted'` in viewing mode too (the
-   * "non-active component is dim" convention). Not wired up to UI yet — leaving
-   * the slot here so the compute function is forward-compatible.
+   * The part the user is working in. Bodies belonging to any other part
+   * render `'ghosted'` in viewing mode too — the "non-active component
+   * is dim" convention. Shell passes it only when the document has more
+   * than one part, since with one part every body is in it anyway.
    */
   activePartId?: PartId;
 };
@@ -91,13 +91,13 @@ export type AllBodyModesInputs = {
 /**
  * The ONE function that decides what each body in the scene should
  * look like. Single source of truth: collapses (feature visibility,
- * per-body hide, sketch-edit context, future active-part scoping)
+ * per-body hide, sketch-edit context, active-part scoping)
  * into a single mode per body. Pure — same inputs always produce the
  * same map; safe to call inside a useEffect / useMemo.
  *
  * Priority (first match wins):
  *   1. `hidden`   — feature suppressed/hidden, or body in hiddenBodies
- *   2. `ghosted`  — sketch edit context OR (future) body not in active part
+ *   2. `ghosted`  — sketch edit context OR body not in the active part
  *   3. `normal`   — default
  *
  * Why centralized: before this existed, ghost mode was driven by TWO
@@ -149,9 +149,11 @@ export function computeAllBodyDisplayModes(
       continue;
     }
 
-    // 2. Ghosted: sketch context applies to everything; multi-part
+    // 2. Ghosted: sketch context applies to everything; the multi-part
     //    "non-active component" ghosting kicks in only when an active
-    //    part is set AND the body belongs to a different part.
+    //    part is set AND the body belongs to a different part. Note
+    //    ghosted bodies stay pickable — which is why the features built
+    //    from a pick resolve their part from the body, not from here.
     if (
       isGhostContext
       || (activePartId !== undefined && partId !== undefined && partId !== activePartId)

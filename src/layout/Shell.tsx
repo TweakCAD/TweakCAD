@@ -24,6 +24,8 @@ import { detectSketchRegions } from '@tweakcad/core/src/sketch/profileRegions.ts
 import { useDisplayMeshes, useTopologyMaps, useRebuilding, useBodyToFeatureMap, useConstructionPlanes, useFeatureResults } from '../hooks/useViewportStore.ts';
 import { computeAllBodyDisplayModes } from '@tweakcad/viewport/src/displayMode.ts';
 import type { DisplayContext } from '@tweakcad/core/src/store/displayContextStore.ts';
+import { useActivePartId, useDisplayContextActions } from '../hooks/useDisplayContext.ts';
+import { findFeaturePartId, resolveActivePartId } from '@tweakcad/core/src/document/featureLookup.ts';
 import {
   useSketchActive,
   useSketchActions,
@@ -254,6 +256,62 @@ export function Shell({
   const rebuilding = useRebuilding();
   const bodyToFeatureMap = useBodyToFeatureMap();
 
+  /**
+   * The part every creation command targets. Resolved against the live
+   * document so it survives the active part going away (an undo of
+   * `CreatePart`), and so a single-part project needs no activation at
+   * all — it resolves to that part.
+   *
+   * Commands that act on an *existing* feature use the feature's owner
+   * part instead (`findFeaturePartId`), which is not the same thing: the
+   * tree shows every part's features, so the user can right-click a
+   * feature that isn't in the active part.
+   */
+  const rawActivePartId = useActivePartId();
+  const activePartId = useMemo(
+    () => resolveActivePartId(project, rawActivePartId),
+    [project, rawActivePartId],
+  );
+
+  /**
+   * The part a new feature belongs in, given the feature it is built
+   * from: an extrude goes where its sketch lives, a fillet where the
+   * body it rounds lives. Falls back to the active part when the new
+   * feature references nothing yet (a primitive from numbers, a sketch
+   * on a default plane).
+   *
+   * This matters because a non-active part's bodies are ghosted but
+   * still pickable, so "what the user clicked" and "what is active" can
+   * disagree — and the same id is written into the feature's own body
+   * refs, so getting it from the pick keeps both ends consistent.
+   */
+  const partForFeature = useCallback(
+    (anchorFeatureId?: string | null): PartId | null =>
+      (anchorFeatureId ? findFeaturePartId(project, anchorFeatureId) : null) ?? activePartId,
+    [project, activePartId],
+  );
+
+  /** Same, anchored on a body — resolved through the rebuild's body→feature map. */
+  /**
+   * Construction planes the active part can actually be sketched on.
+   * A `constructionPlane` PlaneRef is resolved from the owning part's
+   * build context, so a plane from another part would fail the rebuild
+   * with "has no resolved plane output" — the picker must not offer it.
+   */
+  const activePartPlanes = useMemo(
+    () => constructionPlanes.filter(
+      cp => findFeaturePartId(project, cp.featureId) === activePartId,
+    ),
+    [constructionPlanes, project, activePartId],
+  );
+
+  const partForBody = useCallback(
+    (bodyId?: string | null): PartId | null =>
+      partForFeature(bodyId ? bodyToFeatureMap[bodyId as BodyId] : null),
+    [partForFeature, bodyToFeatureMap],
+  );
+
+
   // Sketch mode state (old store for mode tracking + camera save/restore)
   const sketchActive = useSketchActive();
   const sketchActions = useSketchActions();
@@ -275,6 +333,40 @@ export function Shell({
   const consoleClear = useConsoleStore(s => s.clear);
 
   const commandBus = useCommandBus();
+
+  const { setActivePart } = useDisplayContextActions();
+
+  const handleActivatePart = useCallback((partId: string) => {
+    setActivePart(partId as PartId);
+    const name = project.parts[partId as PartId]?.name ?? partId;
+    consoleLog('info', `Active part: ${name}`, 'command');
+  }, [setActivePart, project.parts]);
+
+  /**
+   * Add a part and activate it, so the next feature lands there — adding
+   * one and then drawing into the old part is never what the user meant.
+   *
+   * `CreatePart` mints the id inside the handler, so the new part is
+   * found by diffing the key set. `parts` is insertion-ordered, which is
+   * also what makes the first part the implicit root everywhere else.
+   */
+  const handleCreatePart = useCallback(() => {
+    const before = new Set(Object.keys(project.parts));
+    const taken = new Set(Object.values(project.parts).map(p => p.name));
+    let n = before.size + 1;
+    while (taken.has(`Part ${n}`)) n++;
+    const name = `Part ${n}`;
+
+    const result = commandBus.dispatch({ type: 'CreatePart', name });
+    if (!result.ok) {
+      consoleLog('error', `Create part failed: ${result.error.message}`, 'command');
+      return;
+    }
+    const created = (Object.keys(getAppState().documentStore.getState().parts) as PartId[])
+      .find(id => !before.has(id));
+    if (created) setActivePart(created);
+    consoleLog('success', `Created ${name}`, 'command');
+  }, [project.parts, commandBus, setActivePart]);
 
   // Selection state.
   //
@@ -973,10 +1065,12 @@ export function Shell({
   const handlePlanePicked = useCallback((pick: SketchPlanePick) => {
     setSketchPickingPlane(false);
 
-    const partsList = Object.values(project.parts);
-    if (partsList.length === 0) return;
-
-    const partId = partsList[0]!.id as PartId;
+    // A sketch on a default plane anchors on nothing, so it lands in
+    // the active part; on a construction plane it joins that plane's part.
+    const partId = pick.kind === 'construction'
+      ? partForFeature(pick.featureId)
+      : activePartId;
+    if (!partId) return;
 
     // Map the picker's discriminated pick into the corresponding PlaneRef
     // variant the document schema accepts. The downstream sketch builder's
@@ -1048,7 +1142,7 @@ export function Shell({
     setSketchTool(null);
     const label = pick.kind === 'default' ? pick.name : `${pick.name} (${editorPlaneName})`;
     consoleLog('info', `Created sketch on ${label}: ${newSketch.name}`, 'sketch');
-  }, [project.parts, commandBus, sketchActions, constructionPlanes]);
+  }, [partForFeature, activePartId, commandBus, constructionPlanes, sketchActions]);
 
   // There is no exit-time sketch sync. Every sketch mutation goes
   // through the bus, and every handler rebuilds `inputs.buildGeometry` via
@@ -1267,9 +1361,8 @@ export function Shell({
 
     if (!extrudeState.sketchId) return;
 
-    const parts = Object.values(project.parts);
-    if (parts.length === 0) return;
-    const partId = parts[0]!.id as PartId;
+    const partId = partForFeature(extrudeState.sketchId);
+    if (!partId) return;
     const profiles = extrudeState.profiles;
 
     if (profiles.length === 0) {
@@ -1344,7 +1437,7 @@ export function Shell({
     }
 
     setExtrudeState({ visible: false, sketchId: null, sketchName: '', profiles: [], editingFeatureId: null });
-  }, [extrudeState, project.parts, commandBus]);
+  }, [extrudeState.sketchId, extrudeState.profiles, extrudeState.editingFeatureId, partForFeature, commandBus]);
 
   const handleExtrudeCancel = useCallback(() => {
     useSketchEditorStore.getState().setSelectionIntent('editGeometry');
@@ -1564,11 +1657,11 @@ export function Shell({
         handleExportSketch(featureId, 'svg');
         break;
       case 'delete': {
-        const parts = Object.values(project.parts);
-        if (parts.length > 0) {
+        const owner = findFeaturePartId(project, featureId);
+        if (owner) {
           commandBus.dispatch({
             type: 'DeleteFeature',
-            partId: parts[0]!.id as PartId,
+            partId: owner,
             featureId: featureId as FeatureId,
           });
           consoleLog('info', `Deleted feature: ${featureId}`, 'command');
@@ -1576,11 +1669,11 @@ export function Shell({
         break;
       }
       case 'suppress': {
-        const parts = Object.values(project.parts);
-        if (parts.length > 0) {
+        const owner = findFeaturePartId(project, featureId);
+        if (owner) {
           commandBus.dispatch({
             type: 'SuppressFeature',
-            partId: parts[0]!.id as PartId,
+            partId: owner,
             featureId: featureId as FeatureId,
             enabled: false,
           });
@@ -1589,11 +1682,11 @@ export function Shell({
         break;
       }
       case 'enable': {
-        const parts = Object.values(project.parts);
-        if (parts.length > 0) {
+        const owner = findFeaturePartId(project, featureId);
+        if (owner) {
           commandBus.dispatch({
             type: 'SuppressFeature',
-            partId: parts[0]!.id as PartId,
+            partId: owner,
             featureId: featureId as FeatureId,
             enabled: true,
           });
@@ -1885,9 +1978,8 @@ export function Shell({
     useSketchEditorStore.getState().setSelectionIntent('editGeometry');
 
     if (!revolveState.sketchId) return;
-    const parts = Object.values(project.parts);
-    if (parts.length === 0) return;
-    const partId = parts[0]!.id as PartId;
+    const partId = partForFeature(revolveState.sketchId);
+    if (!partId) return;
 
     const profile = revolveState.profiles[0];
     if (!profile) {
@@ -1914,7 +2006,7 @@ export function Shell({
     }
 
     setRevolveState({ visible: false, sketchId: null, sketchName: '', profiles: [] });
-  }, [revolveState, project.parts, commandBus]);
+  }, [revolveState.sketchId, revolveState.profiles, partForFeature, commandBus]);
 
   const handleRevolveCancel = useCallback(() => {
     useSketchEditorStore.getState().setSelectionIntent('editGeometry');
@@ -2009,9 +2101,8 @@ export function Shell({
       return;
     }
 
-    const partsList = Object.values(project.parts);
-    if (partsList.length === 0) return;
-    const partId = partsList[0]!.id as PartId;
+    const partId = partForFeature(profiles[0]?.sketchId);
+    if (!partId) return;
 
     const inputs: import('@tweakcad/core/src/document/schema.ts').LoftFeatureInputs = {
       profiles,
@@ -2032,7 +2123,7 @@ export function Shell({
     }
 
     setLoftState({ visible: false, picksBySketch: {}, profiles: [] });
-  }, [loftState.profiles, project.parts, commandBus]);
+  }, [loftState.profiles, partForFeature, commandBus]);
 
   const handleLoftCancel = useCallback(() => {
     useSketchEditorStore.getState().setSelectionIntent('editGeometry');
@@ -2145,9 +2236,9 @@ export function Shell({
   }, []);
 
   const handleFilletConfirm = useCallback((result: FilletDialogResult) => {
-    const partsList = Object.values(project.parts);
-    if (partsList.length === 0) return;
-    const partId = partsList[0]!.id as PartId;
+    const firstEdge = filletState.edges[0];
+    const partId = (firstEdge?.type === 'stableTopology' ? firstEdge.bodyRef.partId : null) ?? activePartId;
+    if (!partId) return;
 
     if (filletState.edges.length === 0) {
       consoleLog('error', 'No edges picked for fillet', 'fillet');
@@ -2169,7 +2260,7 @@ export function Shell({
     }
 
     setFilletState({ visible: false, edges: [] });
-  }, [filletState.edges, project.parts, commandBus]);
+  }, [filletState.edges, activePartId, commandBus]);
 
   const handleFilletCancel = useCallback(() => {
     setFilletState({ visible: false, edges: [] });
@@ -2249,9 +2340,9 @@ export function Shell({
   }, []);
 
   const handleChamferConfirm = useCallback((result: ChamferDialogResult) => {
-    const partsList = Object.values(project.parts);
-    if (partsList.length === 0) return;
-    const partId = partsList[0]!.id as PartId;
+    const firstEdge = chamferState.edges[0];
+    const partId = (firstEdge?.type === 'stableTopology' ? firstEdge.bodyRef.partId : null) ?? activePartId;
+    if (!partId) return;
 
     if (chamferState.edges.length === 0) {
       consoleLog('error', 'No edges picked for chamfer', 'chamfer');
@@ -2273,7 +2364,7 @@ export function Shell({
     }
 
     setChamferState({ visible: false, edges: [] });
-  }, [chamferState.edges, project.parts, commandBus]);
+  }, [chamferState.edges, activePartId, commandBus]);
 
   const handleChamferCancel = useCallback(() => {
     setChamferState({ visible: false, edges: [] });
@@ -2337,9 +2428,8 @@ export function Shell({
   }, []);
 
   const handleMirrorConfirm = useCallback((result: MirrorDialogResult) => {
-    const partsList = Object.values(project.parts);
-    if (partsList.length === 0) return;
-    const partId = partsList[0]!.id as PartId;
+    const partId = partForBody(mirrorState.pickedBody?.bodyId);
+    if (!partId) return;
 
     if (!mirrorState.pickedBody) {
       consoleLog('error', 'No body picked for mirror', 'mirror');
@@ -2365,7 +2455,7 @@ export function Shell({
     }
 
     setMirrorState({ visible: false, pickedBody: null });
-  }, [mirrorState.pickedBody, project.parts, commandBus]);
+  }, [partForBody, mirrorState.pickedBody, commandBus]);
 
   const handleMirrorCancel = useCallback(() => {
     setMirrorState({ visible: false, pickedBody: null });
@@ -2456,22 +2546,20 @@ export function Shell({
   }, []);
 
   const handleShellConfirm = useCallback((result: ShellDialogResult) => {
-    const partsList = Object.values(project.parts);
-    if (partsList.length === 0) return;
-    const partId = partsList[0]!.id as PartId;
-
     if (shellState.faces.length === 0) {
       consoleLog('error', 'No faces picked for shell', 'shell');
       return;
     }
     // First-face's body is the source body — the subscription above
-    // already guarantees every face lives on it.
+    // already guarantees every face lives on it — and its part is where
+    // the shell feature belongs.
     const first = shellState.faces[0]!;
     if (first.type !== 'stableTopology') {
       consoleLog('error', 'Shell faces must be stable-topology refs', 'shell');
       return;
     }
     const sourceBody = first.bodyRef;
+    const partId = sourceBody.partId;
 
     const r = commandBus.dispatch({
       type: 'CreateShell',
@@ -2539,9 +2627,8 @@ export function Shell({
   }, []);
 
   const handlePatternConfirm = useCallback((result: PatternDialogResult) => {
-    const partsList = Object.values(project.parts);
-    if (partsList.length === 0) return;
-    const partId = partsList[0]!.id as PartId;
+    const partId = partForBody(patternState.pickedBody?.bodyId);
+    if (!partId) return;
 
     if (!patternState.pickedBody) {
       consoleLog('error', 'No body picked for pattern', 'pattern');
@@ -2588,7 +2675,7 @@ export function Shell({
     }
 
     setPatternState({ visible: false, pickedBody: null });
-  }, [patternState.pickedBody, project.parts, commandBus]);
+  }, [partForBody, patternState.pickedBody, commandBus]);
 
   const handlePatternCancel = useCallback(() => {
     setPatternState({ visible: false, pickedBody: null });
@@ -2615,9 +2702,8 @@ export function Shell({
   }, [project.parts, sketchActive, sketchActions]);
 
   const handleSweepConfirm = useCallback((result: SweepDialogResult) => {
-    const partsList = Object.values(project.parts);
-    if (partsList.length === 0) return;
-    const partId = partsList[0]!.id as PartId;
+    const partId = partForFeature(result.profileSketchId);
+    if (!partId) return;
 
     const r = commandBus.dispatch({
       type: 'CreateSweep',
@@ -2634,7 +2720,7 @@ export function Shell({
       consoleLog('error', `Sweep failed: ${r.error.message}`, 'sweep');
     }
     setSweepState({ visible: false });
-  }, [project.parts, commandBus]);
+  }, [partForFeature, commandBus]);
 
   const handleSweepCancel = useCallback(() => {
     setSweepState({ visible: false });
@@ -2777,9 +2863,8 @@ export function Shell({
   }, []);
 
   const handlePlaneConfirm = useCallback((result: ConstructionPlaneDialogResult) => {
-    const partsList = Object.values(project.parts);
-    if (partsList.length === 0) return;
-    const partId = partsList[0]!.id as PartId;
+    const partId = partForFeature(planeState.editingFeatureId);
+    if (!partId) return;
 
     const closed = {
       visible: false, kind: 'offsetFromPlane' as const,
@@ -2836,10 +2921,10 @@ export function Shell({
     const { selectionStore } = getAppState();
     selectionStore.getState().select(null);
     setPlaneState(closed);
-  }, [project.parts, commandBus, planeState.editingFeatureId, planeState.offset]);
+  }, [partForFeature, planeState.editingFeatureId, planeState.offset, planeState.committedOffset, commandBus]);
 
   const handlePlaneCancel = useCallback(() => {
-    const partId = Object.values(project.parts)[0]?.id as PartId | undefined;
+    const partId = partForFeature(planeState.editingFeatureId);
     if (planeState.draftCreated && planeState.editingFeatureId && partId) {
       // create-ahead draft → discard it entirely.
       commandBus.dispatch({
@@ -2857,7 +2942,7 @@ export function Shell({
       editingFeatureId: null, draftCreated: false, offset: 10, committedOffset: 10,
     });
     consoleLog('info', 'Plane cancelled', 'plane');
-  }, [planeState.draftCreated, planeState.editingFeatureId, project.parts, commandBus, viewportCtrl, constructionPlanes]);
+  }, [partForFeature, planeState.editingFeatureId, planeState.draftCreated, commandBus, viewportCtrl, constructionPlanes]);
 
   // Create-ahead: once a base is picked in CREATE mode, materialize the
   // construction plane immediately as a draft so the dialog previews it with
@@ -2871,9 +2956,15 @@ export function Shell({
       : !!planeState.pickedFace;
     if (!hasBase) return;
 
-    const partsList = Object.values(project.parts);
-    if (partsList.length === 0) return;
-    const partId = partsList[0]!.id as PartId;
+    const base = planeState.kind === 'offsetFromPlane'
+      ? planeState.pickedPlane!.planeRef
+      : planeState.pickedFace!.faceRef;
+    const partId = base.type === 'stableTopology'
+      ? base.bodyRef.partId
+      : base.type === 'constructionPlane'
+        ? partForFeature(base.planeId)
+        : activePartId;
+    if (!partId) return;
 
     const inputs = planeState.kind === 'offsetFromPlane'
       ? { kind: 'offsetFromPlane' as const, basePlane: planeState.pickedPlane!.planeRef, offset: String(planeState.offset) }
@@ -2895,11 +2986,7 @@ export function Shell({
         committedOffset: s.offset,
       }));
     }
-  }, [
-    planeState.visible, planeState.editingFeatureId, planeState.kind,
-    planeState.pickedPlane, planeState.pickedFace, planeState.offset,
-    project.parts, commandBus,
-  ]);
+  }, [planeState.visible, planeState.editingFeatureId, planeState.kind, planeState.pickedPlane, planeState.pickedFace, planeState.offset, project.parts, commandBus, partForFeature, activePartId]);
 
   // ---- Hole flow ----
 
@@ -2980,9 +3067,8 @@ export function Shell({
   }, [sketchActive, sketchActions]);
 
   const handleBooleanConfirm = useCallback((result: BooleanDialogResult) => {
-    const partsList = Object.values(project.parts);
-    if (partsList.length === 0) return;
-    const partId = partsList[0]!.id as PartId;
+    const partId = partForBody(result.targetBodyId);
+    if (!partId) return;
     const r = commandBus.dispatch({
       type: 'CreateBoolean',
       partId,
@@ -2998,7 +3084,7 @@ export function Shell({
       consoleLog('error', `Boolean failed: ${r.error.message}`, 'boolean');
     }
     setBooleanState(s => ({ ...s, visible: false }));
-  }, [project.parts, commandBus]);
+  }, [partForBody, commandBus]);
 
   const handleToolbarPrimitiveClick = useCallback((kind: PrimitiveKind) => {
     // A primitive needs no sketch and no body, so unlike Hole there is
@@ -3012,9 +3098,8 @@ export function Shell({
   }, [sketchActive, sketchActions]);
 
   const handlePrimitiveConfirm = useCallback((result: PrimitiveDialogResult) => {
-    const partsList = Object.values(project.parts);
-    if (partsList.length === 0) return;
-    const partId = partsList[0]!.id as PartId;
+    const partId = partForBody(result.targetBodyId);
+    if (!partId) return;
 
     // The dialog edits numbers; the feature stores expressions, so that a
     // primitive can later be driven by the parameter table.
@@ -3040,16 +3125,17 @@ export function Shell({
       consoleLog('error', `${result.kind} creation failed: ${r.error.message}`, 'primitive');
     }
     setPrimitiveState({ visible: false, kind: result.kind });
-  }, [project.parts, commandBus]);
+  }, [partForBody, commandBus]);
 
   const handlePrimitiveCancel = useCallback(() => {
     setPrimitiveState(prev => ({ ...prev, visible: false }));
   }, []);
 
   const handleHoleConfirm = useCallback((result: HoleDialogResult) => {
-    const partsList = Object.values(project.parts);
-    if (partsList.length === 0) return;
-    const partId = partsList[0]!.id as PartId;
+    const partId = result.faceRef.type === 'stableTopology'
+      ? result.faceRef.bodyRef.partId
+      : activePartId;
+    if (!partId) return;
 
     // The builder always emits center [0, 0] in face-local (u, v) for
     // v1 (face-center-auto placement). Stored as Expression strings so
@@ -3089,7 +3175,7 @@ export function Shell({
     const { selectionStore } = getAppState();
     selectionStore.getState().select(null);
     setHoleState({ visible: false, pickedFace: null });
-  }, [project.parts, commandBus]);
+  }, [activePartId, commandBus]);
 
   const handleHoleCancel = useCallback(() => {
     setHoleState({ visible: false, pickedFace: null });
@@ -3179,16 +3265,15 @@ export function Shell({
     const { selectionStore } = getAppState();
 
     // Convert PickedTopology (bodyId-only) → Selection (with partId).
-    // The active partId is whichever part owns the body that was picked.
-    const project = getAppState().documentStore.getState();
-    function resolvePartIdForBody(_bodyId: string): PartId | null {
-      for (const part of Object.values(project.parts)) {
-        // Bodies aren't on the part directly; we don't keep a body→part
-        // index. Until we do, assume the single-part case (which is the
-        // current app reality) and return the first part.
-        return part.id as PartId;
-      }
-      return null;
+    // The part is the one owning the feature that produced the body, via
+    // the rebuild's body→feature map. Read fresh on every pick: the
+    // document and the map both move under this callback.
+    function resolvePartIdForBody(bodyId: string): PartId | null {
+      const doc = getAppState().documentStore.getState();
+      const featureId = getAppState().viewportStore.getState()
+        .bodyToFeatureMap[bodyId as BodyId];
+      return findFeaturePartId(doc, featureId ?? '')
+        ?? resolveActivePartId(doc, rawActivePartId);
     }
 
     viewportCtrl.setPickCallback(picked => {
@@ -3428,6 +3513,10 @@ export function Shell({
         bodyToFeatureMap: viewportStore.getState().bodyToFeatureMap as Readonly<Record<string, import('@tweakcad/core/src/ids.ts').FeatureId>>,
         hiddenBodies,
         context,
+        // Fusion-style: everything outside the active part ghosts, so the
+        // part being worked on reads clearly against the rest. With one
+        // part every body is in it, so nothing changes.
+        ...(Object.keys(doc.parts).length > 1 && activePartId ? { activePartId } : {}),
       });
       ctrl!.applyDisplayModes(modes);
     }
@@ -3442,7 +3531,7 @@ export function Shell({
       unsubDoc();
       unsubViewport();
     };
-  }, [displayMeshes, sketchActive, hiddenBodies]);
+  }, [displayMeshes, sketchActive, hiddenBodies, activePartId]);
 
   // Resize handler
   useEffect(() => {
@@ -3599,10 +3688,14 @@ export function Shell({
     }
   }
 
-  // Flatten all features for the timeline. The TimelineBar consumes
-  // `status` to pick its row icon/border, and `blockedByLabel` for
-  // the hover tooltip when status === 'blocked'.
-  const timelineFeatures = parts.flatMap(part =>
+  // The timeline shows the active part's features. Feature order is
+  // meaningful only within a part — the rebuilder walks each part's
+  // timeline independently — so interleaving two parts into one strip
+  // would show an order that doesn't exist. `status` picks each row's
+  // icon/border, and `blockedByLabel` is the hover tooltip when
+  // status === 'blocked'.
+  const timelineParts = parts.filter(part => parts.length === 1 || part.id === activePartId);
+  const timelineFeatures = timelineParts.flatMap(part =>
     part.timeline.map(feature => {
       const upstream = feature.status === 'blocked' && feature.blockedBy !== undefined
         ? featureNameById.get(String(feature.blockedBy))
@@ -3733,6 +3826,9 @@ export function Shell({
         >
           <ProjectTree
             parts={parts}
+            activePartId={activePartId}
+            onActivatePart={handleActivatePart}
+            onCreatePart={handleCreatePart}
             parameters={project.parameters.values}
             bodies={treeBodies}
             selectedFeatureId={selectedFeatureId}
@@ -3761,11 +3857,11 @@ export function Shell({
               });
             }}
             onVisibilityToggle={(featureId, visible) => {
-              const partsList = Object.values(project.parts);
-              if (partsList.length > 0) {
+              const owner = findFeaturePartId(project, featureId);
+              if (owner) {
                 commandBus.dispatch({
                   type: 'SetFeatureVisibility',
-                  partId: partsList[0]!.id as PartId,
+                  partId: owner,
                   featureId: featureId as FeatureId,
                   visible,
                 });
@@ -3894,7 +3990,7 @@ export function Shell({
           {sketchPickingPlane && !sketchActive && viewportCtrl && (
             <SketchPlanePicker
               viewportCtrl={viewportCtrl}
-              constructionPlanes={constructionPlanes}
+              constructionPlanes={activePartPlanes}
               onPick={handlePlanePicked}
               onCancel={handleCancelPlanePick}
             />
@@ -4136,7 +4232,7 @@ export function Shell({
           {planeState.visible && planeState.kind === 'offsetFromPlane' && !planeState.pickedPlane && viewportCtrl && (
             <SketchPlanePicker
               viewportCtrl={viewportCtrl}
-              constructionPlanes={constructionPlanes}
+              constructionPlanes={activePartPlanes}
               onPick={handlePlaneDialogPlanePicked}
               onCancel={handlePlaneCancel}
             />
@@ -4183,7 +4279,7 @@ export function Shell({
           )}
 
           {booleanState.visible && (() => {
-            const partFor = Object.values(project.parts)[0];
+            const partFor = activePartId ? project.parts[activePartId] : undefined;
             const availableBodies = partFor
               ? Object.entries(bodyToFeatureMap)
                   .filter(([bid]) => partFor.timeline.some(f => f.id === bodyToFeatureMap[bid as never]))
@@ -4206,7 +4302,7 @@ export function Shell({
               stands alone. The target-body picker is built the same way as
               Extrude's. */}
           {primitiveState.visible && (() => {
-            const partFor = Object.values(project.parts)[0];
+            const partFor = activePartId ? project.parts[activePartId] : undefined;
             const availableBodies = partFor
               ? Object.entries(bodyToFeatureMap)
                   .filter(([bid]) => partFor.timeline.some(f => f.id === bodyToFeatureMap[bid as never]))

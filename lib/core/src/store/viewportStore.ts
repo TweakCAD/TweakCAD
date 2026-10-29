@@ -8,6 +8,15 @@ import { createStore } from 'zustand/vanilla';
 import type { DisplayMesh, TopologyMap, PartBuildArtifact, ConstructionPlaneDisplay, FeatureBuildResult } from '../document/schema.ts';
 import type { PartId, BodyId, FeatureId } from '../ids.ts';
 
+/** One part's slice of a rebuild, kept so the others survive its republish. */
+export type PartRebuildResult = {
+  meshes: DisplayMesh[];
+  topoMaps: TopologyMap[];
+  constructionPlanes: ConstructionPlaneDisplay[];
+  featureResults: FeatureBuildResult[];
+  bodyToFeature: Record<BodyId, FeatureId>;
+};
+
 export type ViewportState = {
   /** Current display meshes for rendering */
   displayMeshes: DisplayMesh[];
@@ -23,6 +32,17 @@ export type ViewportState = {
    */
   constructionPlanes: ConstructionPlaneDisplay[];
   /**
+   * The last rebuild result per part. The flat fields above are the
+   * concatenation of these, which is what the viewport, the tree and
+   * the pickers all read.
+   *
+   * Parts rebuild one at a time — the scheduler walks them, and a
+   * dirty feature only re-runs its own part — so a publish that
+   * replaced the flat lists wholesale showed the part that happened to
+   * finish last and nothing else.
+   */
+  resultsByPart: Record<PartId, PartRebuildResult>;
+  /**
    * Per-feature build status from the last rebuild, keyed by featureId.
    * The ProjectTree consumes this to surface failed/blocked/suppressed
    * indicators so the user can see at a glance when a feature's build
@@ -35,14 +55,21 @@ export type ViewportState = {
   /** Error message if last rebuild failed */
   rebuildError: string | null;
 
-  /** Set the latest rebuild result */
+  /** Publish one part's rebuild result, merging it with the others. */
   setRebuildResult: (
+    partId: PartId,
     meshes: DisplayMesh[],
     topoMaps: TopologyMap[],
     constructionPlanes: ConstructionPlaneDisplay[],
     featureResults: FeatureBuildResult[],
     bodyToFeature?: Record<BodyId, FeatureId>,
   ) => void;
+  /**
+   * Drop results for parts that are no longer in the document — an undo
+   * of `CreatePart`, say. Without it their bodies would stay on screen
+   * with no feature behind them.
+   */
+  retainParts: (partIds: readonly PartId[]) => void;
   /** Set rebuilding status */
   setRebuilding: (rebuilding: boolean) => void;
   /** Set rebuild error */
@@ -51,6 +78,23 @@ export type ViewportState = {
   clear: () => void;
 };
 
+/** Flatten the per-part results into the fields every consumer reads. */
+function flatten(resultsByPart: Record<PartId, PartRebuildResult>) {
+  const displayMeshes: DisplayMesh[] = [];
+  const topologyMaps: TopologyMap[] = [];
+  const constructionPlanes: ConstructionPlaneDisplay[] = [];
+  const featureResults = {} as Record<FeatureId, FeatureBuildResult>;
+  const bodyToFeatureMap = {} as Record<BodyId, FeatureId>;
+  for (const part of Object.values(resultsByPart)) {
+    displayMeshes.push(...part.meshes);
+    topologyMaps.push(...part.topoMaps);
+    constructionPlanes.push(...part.constructionPlanes);
+    for (const r of part.featureResults) featureResults[r.featureId] = r;
+    Object.assign(bodyToFeatureMap, part.bodyToFeature);
+  }
+  return { displayMeshes, topologyMaps, constructionPlanes, featureResults, bodyToFeatureMap };
+}
+
 export function createViewportStore() {
   return createStore<ViewportState>(set => ({
     displayMeshes: [],
@@ -58,27 +102,50 @@ export function createViewportStore() {
     partArtifacts: {} as Record<PartId, PartBuildArtifact>,
     bodyToFeatureMap: {} as Record<BodyId, FeatureId>,
     constructionPlanes: [],
+    resultsByPart: {} as Record<PartId, PartRebuildResult>,
     featureResults: {} as Record<FeatureId, FeatureBuildResult>,
     rebuilding: false,
     rebuildError: null,
 
     setRebuildResult: (
+      partId: PartId,
       meshes: DisplayMesh[],
       topoMaps: TopologyMap[],
       constructionPlanes: ConstructionPlaneDisplay[],
       featureResults: FeatureBuildResult[],
       bodyToFeature?: Record<BodyId, FeatureId>,
     ) => {
-      const fr = {} as Record<FeatureId, FeatureBuildResult>;
-      for (const r of featureResults) fr[r.featureId] = r;
-      set({
-        displayMeshes: meshes,
-        topologyMaps: topoMaps,
-        constructionPlanes,
-        featureResults: fr,
-        bodyToFeatureMap: bodyToFeature ?? {} as Record<BodyId, FeatureId>,
-        rebuilding: false,
-        rebuildError: null,
+      set(state => {
+        const resultsByPart = {
+          ...state.resultsByPart,
+          [partId]: {
+            meshes,
+            topoMaps,
+            constructionPlanes,
+            featureResults,
+            bodyToFeature: bodyToFeature ?? {},
+          },
+        };
+        return {
+          resultsByPart,
+          ...flatten(resultsByPart),
+          rebuilding: false,
+          rebuildError: null,
+        };
+      });
+    },
+
+    retainParts: (partIds: readonly PartId[]) => {
+      set(state => {
+        const keep = new Set<string>(partIds);
+        const resultsByPart = {} as Record<PartId, PartRebuildResult>;
+        let dropped = false;
+        for (const [id, result] of Object.entries(state.resultsByPart) as [PartId, PartRebuildResult][]) {
+          if (keep.has(id)) resultsByPart[id] = result;
+          else dropped = true;
+        }
+        if (!dropped) return state;
+        return { resultsByPart, ...flatten(resultsByPart) };
       });
     },
 
@@ -89,6 +156,7 @@ export function createViewportStore() {
 
     clear: () =>
       set({
+        resultsByPart: {} as Record<PartId, PartRebuildResult>,
         displayMeshes: [],
         topologyMaps: [],
         partArtifacts: {} as Record<PartId, PartBuildArtifact>,
