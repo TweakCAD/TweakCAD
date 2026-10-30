@@ -28,6 +28,23 @@ function provider(): BetterAuthIdentityProvider {
   return cachedProvider;
 }
 
+/**
+ * Where a social sign-in should land the user afterwards.
+ *
+ * **The query string has to come along.** It carries which document this
+ * window has open — `?project=` today, `?local=` once local documents get an
+ * id — and a provider round trip is a full page load. Returning only the
+ * pathname meant signing in with Google silently unbound the open project
+ * and dropped the user into an empty editor.
+ *
+ * Deliberately a *path*, never an absolute URL: Better Auth resolves it
+ * against its own baseURL, so it cannot be turned into an open redirect by
+ * anything that can influence `location`.
+ */
+export function returnPath(loc: Pick<Location, 'pathname' | 'search'>): string {
+  return `${loc.pathname}${loc.search}`;
+}
+
 export function SignInModal({
   open,
   onClose,
@@ -105,15 +122,9 @@ export function SignInModal({
       // should know their last edits may not have made it to disk.
       console.warn('[signin] autosave flush before redirect failed', err);
     }
-    // `callbackURL` is a path, resolved by Better Auth against ITS OWN
-    // baseURL — not against this page's origin. In prod that's the same host
-    // (the editor is served at /cad by the site) so the user lands back in
-    // the editor. In dev the CAD app is on :5173 while the SaaS is on :3000,
-    // so the round trip ends on the site rather than back here. That's a
-    // dev-only artifact of the split ports, not a bug to route around.
     const result = await provider().signInSocial({
       provider: providerId,
-      callbackURL: window.location.pathname,
+      callbackURL: returnPath(window.location),
     });
     // `redirected: true` means the navigation is under way — leave the
     // spinner up and let the page unload.

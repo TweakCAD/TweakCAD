@@ -4,6 +4,7 @@ import { newProjectWithPart } from '@tweakcad/core/src/document/factory.ts';
 import { Shell } from './layout/Shell.tsx';
 import { initializeApp } from './appInit.ts';
 import { initRebuildScheduler, exportActivePart } from './rebuildScheduler.ts';
+import { generateProjectName } from './storage/projectName.ts';
 import {
   runAutoExport,
   shouldAutoExport,
@@ -269,7 +270,7 @@ export function App() {
         setStorage((prev) => (prev ? { ...prev, context: next } : prev));
         storage.scheduler.setContext(next);
       },
-      blankDoc: () => newProjectWithPart('New Project', 'Part 1'),
+      blankDoc: () => newProjectWithPart(generateProjectName(), 'Part 1'),
       confirm,
     };
   }, [appState, storage, confirm]);

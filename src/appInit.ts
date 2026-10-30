@@ -7,6 +7,7 @@
 import { DocumentStore } from '@tweakcad/core/src/store/documentStore.ts';
 import { CommandBus } from '@tweakcad/core/src/commands/bus.ts';
 import { newProjectWithPart } from '@tweakcad/core/src/document/factory.ts';
+import { generateProjectName } from './storage/projectName.ts';
 import { createSelectionStore } from '@tweakcad/core/src/store/selectionStore.ts';
 import { createViewportStore } from '@tweakcad/core/src/store/viewportStore.ts';
 import { createSketchStore } from '@tweakcad/core/src/store/sketchStore.ts';
@@ -101,7 +102,7 @@ export function initializeApp(): AppState {
   // with no geometry — the user adds a sketch via the ribbon. Coverage
   // for feature/sketch scenarios lives in the targeted unit + e2e tests
   // rather than via the app's default project.
-  const project = newProjectWithPart('New Project', 'Part 1');
+  const project = newProjectWithPart(generateProjectName(), 'Part 1');
 
   // Create stores
   const documentStore = new DocumentStore(project);

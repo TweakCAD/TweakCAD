@@ -33,6 +33,7 @@ import {
   Wand2,
   ExternalLink,
   History,
+  Pencil,
 } from 'lucide-react';
 import {
   SketchIcon,
@@ -605,17 +606,26 @@ function ProjectNameField({
 
   if (!editing) {
     const editable = !!onRename;
+    if (!editable) {
+      return <span style={styles.projectName} title={name}>{name}</span>;
+    }
+    // A bordered field with a pencil, not bare text: the previous version's
+    // only affordance was a `title` tooltip saying "double-click to
+    // rename", which nobody hovers a label to discover. Single click —
+    // double-click was the undiscoverable half.
     return (
-      <span
-        style={{
-          ...styles.projectName,
-          cursor: editable ? 'text' : 'default',
-        }}
-        title={editable ? `${name} (double-click to rename)` : name}
-        onDoubleClick={editable ? () => setEditing(true) : undefined}
+      <button
+        type="button"
+        style={projectNameStyles.readButton}
+        title={`Rename "${name}"`}
+        aria-label={`Project name: ${name}. Click to rename.`}
+        onClick={() => setEditing(true)}
+        onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#a8cef0'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e2e2e2'; }}
       >
-        {name}
-      </span>
+        <span style={projectNameStyles.readLabel}>{name}</span>
+        <Pencil size={10} strokeWidth={1.75} color="#999" aria-hidden="true" />
+      </button>
     );
   }
 
@@ -651,6 +661,28 @@ function ProjectNameField({
 }
 
 const projectNameStyles: Record<string, React.CSSProperties> = {
+  /** Read mode. Matches the input's metrics so clicking doesn't shift the row. */
+  readButton: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 5,
+    maxWidth: 260,
+    fontSize: 12,
+    color: '#555',
+    background: 'transparent',
+    border: '1px solid #e2e2e2',
+    borderRadius: 4,
+    padding: '2px 6px',
+    marginRight: 4,
+    cursor: 'text',
+    font: 'inherit',
+    lineHeight: 'inherit',
+  },
+  readLabel: {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
   input: {
     fontSize: 12,
     color: '#222',
