@@ -7,6 +7,7 @@
  * Order of precedence:
  *   0. ?reset in URL → wipe local IDB and start blank (recovery escape
  *      hatch — see below). Takes priority over every other hint.
+ *   0b. ?local=ID in URL → that local document, and only that one
  *   1. ?project=ID in URL + SaaS available + signed in → load from cloud
  *   2. ?project=ID in URL + SaaS unavailable → fall back to local mirror if
  *      one exists; otherwise start blank with a warning surfaced to the UI
@@ -24,7 +25,7 @@ import type { CadProject } from '@tweakcad/core/src/document/schema.ts';
 import { localStore, inferStorage, type StorageSnapshot } from './localStore.ts';
 import { loadCloudProject } from './cloudAdapter.ts';
 import { probeSaas, isSignedIn } from './saasState.ts';
-import { projectIdFromUrl, type ProjectContext } from './context.ts';
+import { localIdFromUrl, projectIdFromUrl, type ProjectContext } from './context.ts';
 import type { DocumentStorage } from './documentStorage.ts';
 
 export type BootResolution = {
@@ -89,6 +90,37 @@ export async function resolveInitialProject(
 
   if (cloudProjectId) {
     return resolveCloudIdBoot(cloudProjectId, defaultDoc);
+  }
+
+  // A named local document. Checked before the most-recent fallback below,
+  // because a window that names its document must get *that* document —
+  // that is the whole point of putting the id in the URL.
+  const localId = localIdFromUrl();
+  if (localId) {
+    const stored = await localStore.get(localId).catch(() => undefined);
+    if (stored) {
+      const snap = inferStorage(stored);
+      const storage = snapshotToStorage(snap);
+      return {
+        doc: stored.doc,
+        context: contextFromStorage(storage, stored.id),
+        storage,
+        source: 'local-only',
+        ...(snap.kind === 'disk'
+          ? { recoveredFromAutosave: true, recoveredFilename: snap.filename }
+          : {}),
+      };
+    }
+    // Named but absent — an id from a window whose document was never
+    // written (opened, never drawn in), or one since deleted. Keep the id
+    // rather than minting a new one, so a reload of this URL stays put
+    // instead of walking the document along a trail of fresh ids.
+    return {
+      doc: defaultDoc,
+      context: { kind: 'local-stored', localId },
+      storage: { kind: 'unsaved' },
+      source: 'default',
+    };
   }
 
   // No URL hint — try most recent local IDB record (crash recovery).

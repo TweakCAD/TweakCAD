@@ -10,7 +10,7 @@ import type { DocumentStore } from '@tweakcad/core/src/store/documentStore.ts';
 import type { CadProject } from '@tweakcad/core/src/document/schema.ts';
 import { localStore, type LocalProjectRecord, type StorageSnapshot } from './localStore.ts';
 import { saveCloudProject, CloudConflictError } from './cloudAdapter.ts';
-import type { ProjectContext } from './context.ts';
+import { newLocalId, rememberLocalIdInUrl, type ProjectContext } from './context.ts';
 import type { DocumentStorage } from './documentStorage.ts';
 
 export type SaveStatus =
@@ -26,6 +26,33 @@ export type SaveStatus =
 export type AutosaveOptions = {
   debounceMs?: number;
 };
+
+/**
+ * The IndexedDB record a document writes to, and whether that identity had
+ * to be invented on the spot.
+ *
+ * A `local-fresh` document used to write to a single record literally
+ * called `unsaved`, shared by every window that had no `?project=`. Two
+ * windows drawing different things overwrote each other, and boot's
+ * "restore the most recent record" could hand either of them to a third.
+ *
+ * Minting on first write rather than at boot keeps `local-fresh` meaning
+ * what it says — no record yet — so opening the editor and closing it
+ * without drawing leaves nothing behind. `minted` is the caller's cue to
+ * put the id in the URL, which is what makes a reload (and the full page
+ * load at the end of a social sign-in) come back to *this* document rather
+ * than guess at one.
+ */
+export function localRecordId(
+  context: ProjectContext,
+  mintId: () => string = newLocalId,
+): { id: string; minted: boolean } {
+  if (context.kind === 'local-stored') return { id: context.localId, minted: false };
+  if (context.kind === 'cloud') {
+    return { id: `cloud-mirror-${context.cloudProjectId}`, minted: false };
+  }
+  return { id: mintId(), minted: true };
+}
 
 export class AutosaveScheduler {
   private context: ProjectContext;
@@ -53,6 +80,19 @@ export class AutosaveScheduler {
 
   setContext(next: ProjectContext): void {
     this.context = next;
+  }
+
+  /**
+   * Which IndexedDB record this document owns. Mints an identity on the
+   * first write if it doesn't have one, and tells the address bar.
+   */
+  private localIdForWrite(): string {
+    const { id, minted } = localRecordId(this.context);
+    if (minted) {
+      this.context = { kind: 'local-stored', localId: id };
+      rememberLocalIdInUrl(id);
+    }
+    return id;
   }
 
   /**
@@ -143,12 +183,7 @@ export class AutosaveScheduler {
   }
 
   private async saveLocal(doc: CadProject): Promise<void> {
-    const localId =
-      this.context.kind === 'local-stored'
-        ? this.context.localId
-        : this.context.kind === 'cloud'
-          ? `cloud-mirror-${this.context.cloudProjectId}`
-          : `unsaved`;
+    const localId = this.localIdForWrite();
 
     const record: LocalProjectRecord = {
       id: localId,
