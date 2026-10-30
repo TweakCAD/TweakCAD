@@ -37,12 +37,25 @@ function provider(): BetterAuthIdentityProvider {
  * pathname meant signing in with Google silently unbound the open project
  * and dropped the user into an empty editor.
  *
- * Deliberately a *path*, never an absolute URL: Better Auth resolves it
- * against its own baseURL, so it cannot be turned into an open redirect by
- * anything that can influence `location`.
+ * Deliberately a *path*, and a single-slash-rooted one.
+ *
+ * `location.pathname` is attacker-influenceable: send someone to
+ * `https://tweakcad.com//evil.com/cad` and the browser reports a pathname of
+ * `//evil.com/cad`. Handed on unchanged that is a **protocol-relative URL**,
+ * and a redirect to it leaves the origin entirely — an open redirect out of
+ * the sign-in flow, which is the worst place to have one. Backslashes get
+ * the same treatment because several URL parsers fold `\` into `/`.
+ *
+ * Better Auth also validates `callbackURL` against its trusted origins, so
+ * this is the second lock rather than the only one. It is worth having:
+ * depending on a downstream check means a library upgrade can quietly
+ * remove a control we never wrote down.
  */
 export function returnPath(loc: Pick<Location, 'pathname' | 'search'>): string {
-  return `${loc.pathname}${loc.search}`;
+  // Collapse any run of leading slashes/backslashes to exactly one, so the
+  // result can only ever be a path on this origin.
+  const path = loc.pathname.replace(/^[/\\]+/, '/');
+  return `${path.startsWith('/') ? path : `/${path}`}${loc.search}`;
 }
 
 export function SignInModal({

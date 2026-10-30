@@ -35,11 +35,56 @@ describe('returnPath', () => {
   });
 
   it('stays a path — never an absolute URL', () => {
-    // Better Auth resolves callbackURL against its own baseURL. Returning
-    // something with a scheme or a host would be an open-redirect hole.
     const out = returnPath({ pathname: '/cad', search: '?project=p1' });
     expect(out.startsWith('/')).toBe(true);
     expect(out).not.toMatch(/^[a-z]+:/i);
     expect(out).not.toMatch(/^\/\//);
+  });
+});
+
+/**
+ * Open redirect.
+ *
+ * `location.pathname` is attacker-influenceable: send someone to
+ * `https://tweakcad.com//evil.com/cad` and the browser reports
+ * `//evil.com/cad`. Passed on unchanged that is a protocol-relative URL and
+ * the post-sign-in redirect leaves the origin — handing an attacker a
+ * landing page that arrives straight out of an authentication flow, which
+ * is where a user is least likely to question it.
+ */
+describe('returnPath cannot leave the origin', () => {
+  const ESCAPES = [
+    ['protocol-relative', '//evil.com/cad'],
+    ['protocol-relative, many slashes', '////evil.com/cad'],
+    ['backslash-relative', '\\\\evil.com/cad'],
+    ['mixed slash and backslash', '/\\evil.com/cad'],
+    ['backslash then slash', '\\/evil.com/cad'],
+  ];
+
+  for (const [label, pathname] of ESCAPES) {
+    it(`neutralises ${label}`, () => {
+      const out = returnPath({ pathname, search: '' });
+      // Single-slash-rooted: the only shape that can only ever mean "a path
+      // on this origin".
+      expect(out.startsWith('/')).toBe(true);
+      expect(out.startsWith('//')).toBe(false);
+      expect(out.startsWith('/\\')).toBe(false);
+      // And the host it was trying to reach is no longer a host.
+      expect(new URL(out, 'https://tweakcad.com').origin).toBe('https://tweakcad.com');
+    });
+  }
+
+  it('resolves to this origin for every shape, including a query string', () => {
+    for (const [, pathname] of ESCAPES) {
+      const out = returnPath({ pathname, search: '?project=p1' });
+      expect(new URL(out, 'https://tweakcad.com').origin).toBe('https://tweakcad.com');
+    }
+  });
+
+  it('leaves an ordinary path untouched', () => {
+    // The guard must not mangle the normal case it exists to protect.
+    expect(returnPath({ pathname: '/cad', search: '?local=doc_1' }))
+      .toBe('/cad?local=doc_1');
+    expect(returnPath({ pathname: '/', search: '' })).toBe('/');
   });
 });
