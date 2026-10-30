@@ -45,13 +45,17 @@ the OCCT kernel lives entirely inside the worker.
 
 ## Quick start
 
-Requires Node ≥ 20 and [pnpm](https://pnpm.io/).
+Requires Node 24 (see `engines`) and [pnpm](https://pnpm.io/) — `corepack
+enable` picks up the pinned version from `packageManager`.
 
 ```bash
 pnpm install
-pnpm sync-planegcs-wasm   # copy the solver WASM into public/
-pnpm dev                  # Vite dev server — open the printed local URL
+pnpm dev     # Vite dev server — open the printed local URL
 ```
+
+Both WASM modules (the OCCT kernel and the planegcs solver) are imported
+from `node_modules` and emitted as hashed assets by Vite. There is no
+copy-into-`public/` step.
 
 Static build:
 
@@ -82,11 +86,17 @@ vite aliases.
 
 ```bash
 pnpm typecheck   # tsc --noEmit
+pnpm test:unit   # vitest — runs the real solver and kernel WASM, no browser
 pnpm lint        # eslint src/ lib/
-pnpm test:unit   # vitest
 ```
 
-Tests are co-located (`name.test.ts` next to the source they cover).
+Tests are co-located (`name.test.ts` next to the source they cover). CI runs
+typecheck, the unit suite and the build on every push; `lint` runs too but is
+advisory for now (see [CONTRIBUTING.md](./CONTRIBUTING.md)).
+
+Contributions welcome — start with [CONTRIBUTING.md](./CONTRIBUTING.md). To
+report a security issue, see [SECURITY.md](./SECURITY.md) rather than opening
+an issue.
 
 ## License
 

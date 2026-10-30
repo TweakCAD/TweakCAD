@@ -60,3 +60,6 @@ CLAUDE.md
 # Internal supply-chain allowlist — maintained outside this repo. Guard against
 # committing it here.
 mini-shai-hulud-packages.csv
+
+# Throwaway scripts and captured tool output; never part of a change.
+.scratch/

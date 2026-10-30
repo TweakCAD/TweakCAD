@@ -1,0 +1,67 @@
+name: Bug report
+description: Something in the editor does the wrong thing
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Found a security issue? Don't file it here — see
+        [SECURITY.md](../blob/main/SECURITY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+      placeholder: |
+        Drew a rectangle, trimmed the top edge, then tried to add a
+        horizontal constraint. The constraint button did nothing and the
+        console showed "sketch object g:geo_1 not found".
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: |
+        The shortest sequence that triggers it. If you can attach the
+        `.cadjson` (File → Save), that is worth more than any description —
+        the document is the whole state.
+      placeholder: |
+        1. New document, sketch on XY
+        2. …
+    validations:
+      required: true
+
+  - type: textarea
+    id: console
+    attributes:
+      label: Console output
+      description: |
+        Anything red in the browser devtools console, plus the app's own
+        Console panel at the bottom of the editor. Both are useful: the
+        second one carries rebuild diagnostics the first does not.
+      render: text
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and OS
+      placeholder: Firefox 142 on Linux / Chrome 141 on Windows 11
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: The commit you built from, or the deployed URL you were on.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I can reproduce this on a fresh document
+        - label: I searched existing issues

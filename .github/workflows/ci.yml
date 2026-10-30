@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# A second push to the same branch cancels the first: the WASM-heavy test
+# job is slow enough that queued duplicates are worth dropping.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm typecheck
+
+      # Runs the real planegcs and OCCT WASM modules out of node_modules —
+      # no browser, no fixtures to fetch. Behaviour that is known-unbuilt is
+      # marked `it.fails`, so anything red here is a real regression.
+      - run: pnpm test:unit
+
+      # `vite build` runs `tsc --noEmit` again first (see the `build`
+      # script); kept last so a type or test failure reports sooner.
+      - run: pnpm build
+
+  # Advisory, not a gate. `pnpm lint` currently reports 71 errors — 47 of
+  # them one rule (`consistent-type-imports`) — and making this blocking
+  # before they are cleared would mean every PR starts red, which teaches
+  # people to ignore the badge. Tracked in the Site's remaining-work queue;
+  # flip `continue-on-error` off in the same change that clears them.
+  lint:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
