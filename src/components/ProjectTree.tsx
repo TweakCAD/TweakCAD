@@ -361,15 +361,20 @@ export function ProjectTree({
         </TreeNode>
 
         {/* Components (Parts) */}
-        {parts.map((part, partIndex) => {
+        {parts.map((part) => {
           const { sketches, construction, components } = categorizeFeatures(part.timeline);
           // Bodies belong to the part whose timeline produced them. Shown
           // unfiltered, every part listed every body in the document.
           const featureIds = new Set(part.timeline.map(f => f.id));
           const actualBodies = (treeBodies ?? []).filter(b => featureIds.has(b.sourceFeatureId));
-          const isRoot = partIndex === 0;
+          // No "(root)" suffix on the first part. `project.parts` is a flat
+          // record with no parent/child links, so the first key is just the
+          // first key — the fallback when no part is active, which the
+          // active marker already shows. `root` is a real flag, but it
+          // lives on `CadAssembly`, where a tree would actually have an
+          // entry point; borrowing the word here named nothing.
           const isActive = parts.length > 1 && part.id === activePartId;
-          const componentLabel = isRoot ? `${part.name} (root)` : part.name;
+          const componentLabel = part.name;
           const partNodeId = `part_${part.id}`;
 
           return (
