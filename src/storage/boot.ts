@@ -25,10 +25,28 @@ import type { CadProject } from '@tweakcad/core/src/document/schema.ts';
 import { localStore, inferStorage, type StorageSnapshot } from './localStore.ts';
 import { loadCloudProject } from './cloudAdapter.ts';
 import { probeSaas, isSignedIn } from './saasState.ts';
+import { decideBoot, mayRecoverMostRecent, type BootIntent } from './bootIntent.ts';
+import { hasChosenOffline } from './offlineChoice.ts';
 import { localIdFromUrl, projectIdFromUrl, type ProjectContext } from './context.ts';
 import type { DocumentStorage } from './documentStorage.ts';
 
+/**
+ * A window that resolved to no document at all.
+ *
+ * Boot stops short of opening anything in two cases — signed in with a bare
+ * URL, and backend-up-but-signed-out — because the honest answer to "which
+ * document?" is "the one you pick". Returning a blank document instead
+ * would be the same guess the adoption bug made, just quieter.
+ */
+export type BootGate = {
+  kind: 'gate' | 'choose';
+  intent: BootIntent;
+};
+
 export type BootResolution = {
+  kind?: 'document';
+  /** What this window decided to do, before any storage was touched. */
+  intent?: BootIntent;
   doc: CadProject;
   context: ProjectContext;
   storage: DocumentStorage;
@@ -67,7 +85,7 @@ function clearResetHintFromUrl(): void {
 
 export async function resolveInitialProject(
   defaultDoc: CadProject,
-): Promise<BootResolution> {
+): Promise<BootResolution | BootGate> {
   // Escape hatch (precedence 0): `?reset` wipes local IDB and starts
   // blank. This is the DevTools-free recovery path for a persisted
   // document that's too heavy to rebuild — the worker OOMs on load and
@@ -87,15 +105,33 @@ export async function resolveInitialProject(
   }
 
   const cloudProjectId = projectIdFromUrl();
+  const namedLocalId = localIdFromUrl();
+
+  // Decide before touching storage. A window that should be asking the user
+  // which document to open must not read one on the way to asking.
+  const saas = await probeSaas();
+  const intent = decideBoot({
+    hasProjectId: !!cloudProjectId,
+    hasLocalId: !!namedLocalId,
+    saas: {
+      reachable: saas.kind === 'available',
+      signedIn: isSignedIn(saas),
+    },
+    offlineChosen: hasChosenOffline(),
+  });
+
+  if (intent.kind !== 'document') {
+    return { kind: intent.kind, intent };
+  }
 
   if (cloudProjectId) {
-    return resolveCloudIdBoot(cloudProjectId, defaultDoc);
+    return { ...(await resolveCloudIdBoot(cloudProjectId, defaultDoc)), intent };
   }
 
   // A named local document. Checked before the most-recent fallback below,
   // because a window that names its document must get *that* document —
   // that is the whole point of putting the id in the URL.
-  const localId = localIdFromUrl();
+  const localId = namedLocalId;
   if (localId) {
     const stored = await localStore.get(localId).catch(() => undefined);
     if (stored) {
@@ -123,8 +159,10 @@ export async function resolveInitialProject(
     };
   }
 
-  // No URL hint — try most recent local IDB record (crash recovery).
-  const recent = await localStore.mostRecent();
+  // No URL hint. Recovering "the last document" is only sound where it
+  // cannot be another window's cloud project — standalone, or a tab that
+  // chose to work offline. `decideBoot` has already ruled out the rest.
+  const recent = mayRecoverMostRecent(intent, false) ? await localStore.mostRecent() : undefined;
   if (recent) {
     const snap = inferStorage(recent);
     const storage = snapshotToStorage(snap);

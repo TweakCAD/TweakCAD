@@ -40,6 +40,8 @@ import { referenceId, generateId } from '@tweakcad/core/src/ids.ts';
 import { Toast } from './components/Toast.tsx';
 import { useToastStore } from './components/toastStore.ts';
 import { SignInModal } from './components/SignInModal.tsx';
+import { BootGate, type BootGateKind } from './components/BootGate.tsx';
+import { rememberOfflineChoice } from './storage/offlineChoice.ts';
 import { SaveAsPicker } from './components/SaveAsPicker.tsx';
 import { HistoryPanel } from './components/HistoryPanel.tsx';
 import {
@@ -210,6 +212,15 @@ export function App() {
       const defaultDoc = appState.documentStore.getState();
       const resolution = await resolveInitialProject(defaultDoc);
       if (cancelled) return;
+
+      // Boot deliberately opened nothing: signed in with a bare URL, or
+      // backend-up-and-signed-out. Show the gate and attach no autosave —
+      // there is no document to save, and minting a blank one here is the
+      // guess this whole change exists to stop making.
+      if (!('doc' in resolution)) {
+        setBootGate(resolution.kind);
+        return;
+      }
 
       if (resolution.doc !== defaultDoc) {
         appState.documentStore.replaceDocument(resolution.doc);
@@ -496,6 +507,44 @@ export function App() {
   // from the MainAppBar's account chip, and from the Save-to-cloud flow
   // when the user picks "Cloud" but isn't signed in yet.
   const [signInOpen, setSignInOpen] = useState(false);
+
+  /**
+   * Set when boot resolved to no document. Clearing it re-runs boot, which
+   * is how both answers take effect: "continue offline" writes the tab's
+   * choice first, and signing in changes what `decideBoot` sees.
+   */
+  const [bootGate, setBootGate] = useState<BootGateKind | null>(null);
+  const [bootGateBusy, setBootGateBusy] = useState(false);
+  const [bootGateError, setBootGateError] = useState<string | null>(null);
+
+  const onContinueOffline = useCallback(() => {
+    rememberOfflineChoice();
+    window.location.reload();
+  }, []);
+
+  /**
+   * New project, from the empty state. Creates it on the site first, then
+   * navigates to it — so the window's document exists in the account from
+   * the moment it exists at all, and the URL names it.
+   */
+  const onNewCloudProject = useCallback(async () => {
+    setBootGateBusy(true);
+    setBootGateError(null);
+    try {
+      const created = await createCloudProject(generateProjectName());
+      // A full navigation, not a state swap: boot reads the URL, so this
+      // is the one code path that makes the new project *this window's*.
+      window.location.search = `?project=${encodeURIComponent(created.id)}`;
+    } catch (err) {
+      // Do not fall back to a local document. The user asked for a project
+      // in their account; quietly giving them something else is how work
+      // ends up somewhere they never chose.
+      setBootGateError(
+        err instanceof Error ? err.message : 'Could not create the project.',
+      );
+      setBootGateBusy(false);
+    }
+  }, []);
   const onRequestSignIn = useCallback(() => setSignInOpen(true), []);
   const onSignOut = useCallback(async () => {
     try {
@@ -515,6 +564,31 @@ export function App() {
     }
     await refreshSaasState();
   }, []);
+
+  if (bootGate) {
+    return (
+      <>
+        <BootGate
+          kind={bootGate}
+          onSignIn={() => setSignInOpen(true)}
+          onContinueOffline={onContinueOffline}
+          onNewProject={() => void onNewCloudProject()}
+          projectsUrl="/dashboard"
+          busy={bootGateBusy}
+          error={bootGateError}
+        />
+        <SignInModal
+          open={signInOpen}
+          onClose={() => setSignInOpen(false)}
+          onSignedIn={() => {
+            // Boot's answer depended on there being no session. Re-run it.
+            window.location.reload();
+          }}
+        />
+        <GlobalToast />
+      </>
+    );
+  }
 
   return (
     <>
