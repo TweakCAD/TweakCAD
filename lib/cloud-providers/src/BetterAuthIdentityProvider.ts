@@ -42,6 +42,29 @@ const SocialProvider = z.object({
 const SocialProviderList = z.array(SocialProvider);
 export type SocialProvider = z.infer<typeof SocialProvider>;
 
+/**
+ * Whether social sign-in currently needs a captcha token, and the site key
+ * to render the widget with. Both come from the SaaS — the switch is an
+ * admin setting and the key is server env, so a bundle cannot know either.
+ *
+ * Defaults to "not required" when the field is missing or unparseable,
+ * which is what an older SaaS build returns. The server is the one that
+ * enforces; guessing `true` here would only break sign-in against a
+ * deployment that never wanted a captcha.
+ */
+const SocialCaptcha = z.object({
+  required: z.boolean(),
+  siteKey: z.string(),
+});
+export type SocialCaptcha = z.infer<typeof SocialCaptcha>;
+
+const NO_CAPTCHA: SocialCaptcha = { required: false, siteKey: '' };
+
+export type AuthConfig = {
+  providers: SocialProvider[];
+  captcha: SocialCaptcha;
+};
+
 export type IdentityConfig = {
   baseUrl: string;
   fetch?: typeof fetch;
@@ -138,16 +161,36 @@ export class BetterAuthIdentityProvider {
    * `probeSaas()`'s job.
    */
   async listSocialProviders(): Promise<SocialProvider[]> {
+    return (await this.getAuthConfig()).providers;
+  }
+
+  /**
+   * Providers plus the current captcha requirement, in one request.
+   *
+   * Together because they come from one endpoint and are needed at the same
+   * moment — the sign-in modal cannot render a correct set of buttons
+   * without both. Re-read when the modal opens rather than cached for the
+   * tab's lifetime: an admin turning the captcha on must not leave an editor
+   * that has been open all afternoon posting sign-ins without a token.
+   *
+   * Never rejects — an unreachable SaaS degrades to no social buttons and no
+   * captcha, which is the email/password modal that existed before either.
+   */
+  async getAuthConfig(): Promise<AuthConfig> {
     try {
       const res = await this.fetchImpl(`${this.baseUrl}/api/v1/auth-providers`, {
         credentials: 'include',
       });
-      if (!res.ok) return [];
-      const body = (await res.json()) as { items?: unknown };
-      const parsed = SocialProviderList.safeParse(body.items);
-      return parsed.success ? parsed.data : [];
+      if (!res.ok) return { providers: [], captcha: NO_CAPTCHA };
+      const body = (await res.json()) as { items?: unknown; captcha?: unknown };
+      const providers = SocialProviderList.safeParse(body.items);
+      const captcha = SocialCaptcha.safeParse(body.captcha);
+      return {
+        providers: providers.success ? providers.data : [],
+        captcha: captcha.success ? captcha.data : NO_CAPTCHA,
+      };
     } catch {
-      return [];
+      return { providers: [], captcha: NO_CAPTCHA };
     }
   }
 
@@ -170,13 +213,23 @@ export class BetterAuthIdentityProvider {
   async signInSocial(input: {
     provider: string;
     callbackURL: string;
+    /**
+     * Turnstile token, when `getAuthConfig().captcha.required`. Sent as the
+     * header Better Auth's captcha plugin reads. Omitted entirely when
+     * absent, so a deployment with the switch off is unaffected.
+     */
+    captchaToken?: string;
   }): Promise<{ redirected: true } | { redirected: false; message: string }> {
+    const { captchaToken, ...payload } = input;
     let res: Response;
     try {
       res = await this.fetchImpl(`${this.baseUrl}/api/v1/auth/sign-in/social`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(input),
+        headers: {
+          'Content-Type': 'application/json',
+          ...(captchaToken ? { 'x-captcha-response': captchaToken } : {}),
+        },
+        body: JSON.stringify(payload),
         credentials: 'include',
       });
     } catch (err) {

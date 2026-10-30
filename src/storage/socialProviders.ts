@@ -25,9 +25,13 @@
  * Timing works out because the user has to notice the toolbar and open the
  * modal before the list is needed, which is far longer than the request takes.
  */
-import { BetterAuthIdentityProvider, type SocialProvider } from '@tweakcad/cloud-providers';
+import {
+  BetterAuthIdentityProvider,
+  type SocialCaptcha,
+  type SocialProvider,
+} from '@tweakcad/cloud-providers';
 
-export type { SocialProvider };
+export type { SocialCaptcha, SocialProvider };
 
 let cachedProvider: BetterAuthIdentityProvider | null = null;
 function provider(): BetterAuthIdentityProvider {
@@ -37,24 +41,32 @@ function provider(): BetterAuthIdentityProvider {
   return cachedProvider;
 }
 
+const NO_CAPTCHA: SocialCaptcha = { required: false, siteKey: '' };
+
 let cached: SocialProvider[] = [];
+let cachedCaptcha: SocialCaptcha = NO_CAPTCHA;
 let inFlight: Promise<SocialProvider[]> | null = null;
 const listeners = new Set<(p: SocialProvider[]) => void>();
 
 /**
- * Fetch the provider list once and cache it. Safe to call repeatedly —
+ * Fetch the provider list and cache it. Safe to call repeatedly —
  * concurrent calls share the in-flight request, and a completed fetch is not
- * re-issued. Never rejects; see `listSocialProviders`.
+ * re-issued unless `force` is set. Never rejects; see `getAuthConfig`.
+ *
+ * The captcha requirement rides along on the same response and is refreshed
+ * on every actual fetch, including the forced ones — see `refreshAuthConfig`
+ * for why that matters.
  */
-export async function loadSocialProviders(): Promise<SocialProvider[]> {
-  if (cached.length > 0) return cached;
+export async function loadSocialProviders(force = false): Promise<SocialProvider[]> {
+  if (!force && cached.length > 0) return cached;
   if (inFlight) return inFlight;
   inFlight = (async () => {
     try {
-      const items = await provider().listSocialProviders();
-      cached = items;
-      for (const fn of listeners) fn(items);
-      return items;
+      const { providers, captcha } = await provider().getAuthConfig();
+      cached = providers;
+      cachedCaptcha = captcha;
+      for (const fn of listeners) fn(providers);
+      return providers;
     } finally {
       inFlight = null;
     }
@@ -62,9 +74,28 @@ export async function loadSocialProviders(): Promise<SocialProvider[]> {
   return inFlight;
 }
 
+/**
+ * Re-read the config, ignoring the cache.
+ *
+ * Called when the sign-in modal opens. The provider list is effectively
+ * static, but the captcha switch is an admin setting that can be flipped
+ * while an editor tab sits open for hours — and a tab holding a stale "not
+ * required" posts a sign-in with no token and gets a refusal the user can do
+ * nothing about. One small request per modal open is the cheaper side of
+ * that trade.
+ */
+export async function refreshAuthConfig(): Promise<void> {
+  await loadSocialProviders(true);
+}
+
 /** Synchronous snapshot — empty until `loadSocialProviders()` resolves. */
 export function getSocialProviders(): SocialProvider[] {
   return cached;
+}
+
+/** Synchronous snapshot of the captcha requirement. */
+export function getSocialCaptcha(): SocialCaptcha {
+  return cachedCaptcha;
 }
 
 /** Subscribe to the list arriving. Fires immediately with the current value. */
@@ -77,6 +108,7 @@ export function onSocialProvidersChange(fn: (p: SocialProvider[]) => void): () =
 /** Drop the cache so the next `loadSocialProviders()` re-fetches. */
 export function resetSocialProviders(): void {
   cached = [];
+  cachedCaptcha = NO_CAPTCHA;
   inFlight = null;
   for (const fn of listeners) fn(cached);
 }

@@ -12,14 +12,18 @@
  *
  * Uses inline styles to match the rest of the app (no Tailwind here).
  */
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { ExternalLink } from 'lucide-react';
 import { BetterAuthIdentityProvider } from '@tweakcad/cloud-providers';
 import { refreshSaasState } from '../storage/saasState.ts';
 import {
+  getSocialCaptcha,
   onSocialProvidersChange,
+  refreshAuthConfig,
+  type SocialCaptcha,
   type SocialProvider,
 } from '../storage/socialProviders.ts';
+import { Turnstile } from './Turnstile.tsx';
 
 let cachedProvider: BetterAuthIdentityProvider | null = null;
 function provider(): BetterAuthIdentityProvider {
@@ -84,6 +88,10 @@ export function SignInModal({
   const [error, setError] = useState<string | null>(null);
   const [socialProviders, setSocialProviders] = useState<SocialProvider[]>([]);
   const [redirecting, setRedirecting] = useState<string | null>(null);
+  const [captcha, setCaptcha] = useState<SocialCaptcha>({ required: false, siteKey: '' });
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaNonce, setCaptchaNonce] = useState(0);
+  const onCaptchaToken = useCallback((t: string | null) => setCaptchaToken(t), []);
 
   // Populated by the boot-time fetch in App.tsx; stays empty in standalone
   // mode and whenever the deployment has no provider credentials set.
@@ -98,6 +106,11 @@ export function SignInModal({
       setPassword('');
       setError(null);
       setSubmitting(false);
+      setCaptchaToken(null);
+      // Re-read on open rather than trusting the boot-time fetch: the
+      // captcha switch is an admin setting, and this tab may have been open
+      // since before it was flipped.
+      void refreshAuthConfig().then(() => setCaptcha(getSocialCaptcha()));
       el.showModal();
     } else if (!open && el.open) {
       el.close();
@@ -126,6 +139,10 @@ export function SignInModal({
    * on success this navigates away and nothing below runs.
    */
   async function onSocial(providerId: string, label: string) {
+    if (captcha.required && !captchaToken) {
+      setError('Please complete the verification check.');
+      return;
+    }
     setError(null);
     setRedirecting(label);
     try {
@@ -138,12 +155,15 @@ export function SignInModal({
     const result = await provider().signInSocial({
       provider: providerId,
       callbackURL: returnPath(window.location),
+      ...(captchaToken ? { captchaToken } : {}),
     });
     // `redirected: true` means the navigation is under way — leave the
     // spinner up and let the page unload.
     if (!result.redirected) {
       setError(result.message);
       setRedirecting(null);
+      // The token is spent whether or not the attempt succeeded.
+      setCaptchaNonce((n) => n + 1);
     }
   }
 
@@ -173,23 +193,34 @@ export function SignInModal({
 
         {socialProviders.length > 0 && (
           <div style={styles.socialGroup}>
-            {socialProviders.map((p) => (
+            {captcha.required && (
+              <Turnstile
+                siteKey={captcha.siteKey}
+                onToken={onCaptchaToken}
+                resetKey={captchaNonce}
+              />
+            )}
+            {socialProviders.map((p) => {
+              const blocked =
+                submitting || redirecting !== null || (captcha.required && !captchaToken);
+              return (
               <button
                 key={p.id}
                 type="button"
-                disabled={submitting || redirecting !== null}
+                disabled={blocked}
                 onClick={() => void onSocial(p.id, p.label)}
                 style={{
                   ...styles.socialBtn,
                   cursor: redirecting !== null ? 'wait' : 'pointer',
-                  opacity: submitting || redirecting !== null ? 0.6 : 1,
+                  opacity: blocked ? 0.6 : 1,
                 }}
               >
                 {redirecting === p.label
                   ? `Redirecting to ${p.label}...`
                   : `Continue with ${p.label}`}
               </button>
-            ))}
+              );
+            })}
             <div style={styles.divider}>
               <span style={styles.dividerLine} />
               <span style={styles.dividerText}>or</span>
