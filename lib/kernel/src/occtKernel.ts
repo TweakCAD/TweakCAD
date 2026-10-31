@@ -13,7 +13,7 @@ import { ok, err } from '@tweakcad/core/src/result.ts';
 import type { Vec3, Transform3D, BoundingBox3D, MassProperties } from '@tweakcad/core/src/math.ts';
 import type { DisplayMesh, TopologyMap, RepairHint } from '@tweakcad/core/src/document/schema.ts';
 import { bodyId as makeBodyId, faceId as makeFaceId, edgeId as makeEdgeId } from '@tweakcad/core/src/ids.ts';
-import type { StableFaceId, StableEdgeId } from '@tweakcad/core/src/ids.ts';
+import type { FaceId, StableFaceId, StableEdgeId } from '@tweakcad/core/src/ids.ts';
 import type { CadKernel } from './interface.ts';
 import { build3MF, EXPORT_MIME } from './occtExports.ts';
 import { dedupePointsForInterpolation } from './splineDedup.ts';
@@ -1281,9 +1281,25 @@ export class OcctKernel implements CadKernel {
     const cached = this.topologyCache.get(body.handle);
     const faceShapes = k.getSubShapes(shape, 'face');
     const faces: TopologyMap['faces'] = [];
+    // Edge hash (MESH_HASH_BOUND space) → ids of the faces bounded by that
+    // edge, in face order. An edge shared by two faces hashes identically
+    // from both sides (hashCode ignores orientation).
+    const edgeFaces = new Map<number, FaceId[]>();
     try {
       for (let i = 0; i < faceShapes.length; i++) {
         const fh = faceShapes[i]!;
+        const fid = makeFaceId(`f_${i}`);
+        const faceEdges = k.getSubShapes(fh, 'edge');
+        try {
+          for (const feh of faceEdges) {
+            const h = k.hashCode(feh, MESH_HASH_BOUND);
+            const list = edgeFaces.get(h);
+            if (!list) edgeFaces.set(h, [fid]);
+            else if (!list.includes(fid)) list.push(fid);
+          }
+        } finally {
+          for (const feh of faceEdges) k.release(feh);
+        }
         // Two hashes per face: one in the mesh-bridge space (matches what
         // the C++ mesher wrote into faceGroups[*+2]), one in the tracker
         // namespace (smaller modulus). They are NOT interchangeable.
@@ -1294,7 +1310,7 @@ export class OcctKernel implements CadKernel {
         const triStart = range?.triStart ?? 0;
         const triCount = range?.triCount ?? 0;
         faces.push({
-          faceId: makeFaceId(`f_${i}`),
+          faceId: fid,
           triStart,
           triEnd: triStart + triCount,
           semanticRef: `face_${i}`,
@@ -1321,12 +1337,15 @@ export class OcctKernel implements CadKernel {
       const trackerHash = k.hashCode(eh, HASH_UPPER_BOUND);
       const stable = this.tracker.getStableEdgeId(body.handle, trackerHash);
       const lineSegments = cached?.edgeSegments.get(meshHash) ?? new Float32Array(0);
+      // Seam edges and free (open-shell) edges border a single face; report
+      // it twice so the tuple shape holds.
+      const adj = edgeFaces.get(meshHash);
+      const faceA = adj?.[0] ?? firstFace;
+      const faceB = adj?.[1] ?? faceA;
       edges.push({
         edgeId: makeEdgeId(`e_${i}`),
         lineSegments,
-        // adjacentFaces wiring deferred to a follow-up. The picker + highlight
-        // don't need it; only consumers like Mirror-about-edge would.
-        adjacentFaces: [firstFace, firstFace],
+        adjacentFaces: [faceA, faceB],
         ...(stable !== undefined ? { stableEdgeId: stable } : {}),
       });
     }

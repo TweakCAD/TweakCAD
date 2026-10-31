@@ -223,11 +223,6 @@ These will bite. Read them.
   fields. Pick faces by stableFaceId convention (extrude origin XY
   produces top/bottom + 4 sides; the top is usually the last planar
   face) or use \`find_face({ adjacentToEdgeIds: [id] })\`.
-- **\`list_edges.adjacentFaceIds\` returns \`[f_0, f_0]\` for every
-  edge.** Known kernel stub. Do NOT use
-  \`find_edges({ betweenFaces: … })\` — its filter is unreliable.
-  Filter edges by length / start / end position until the kernel
-  patch ships.
 - **Tangent or near-tangent geometry can crash the kernel.** A
   rectangle + tangent circle that share an exact-edge contact point
   triggers a WebAssembly exception in \`makeArcEdge\`. Workaround:

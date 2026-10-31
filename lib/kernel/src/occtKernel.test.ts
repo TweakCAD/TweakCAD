@@ -221,6 +221,47 @@ describe('OcctKernel — topology naming (TN-f, edges)', () => {
     expect(new Set(ids).size).toBe(12);
   });
 
+  it('every edge of an extruded rectangle borders two distinct faces', async () => {
+    const k = await newKernel();
+    const face = await k.createSketchFace({
+      type: 'polygon',
+      origin: [0, 0, 0],
+      normal: [0, 0, 1],
+      vertices: [[-50, -25, 0], [50, -25, 0], [50, 25, 0], [-50, 25, 0]],
+    });
+    if (!face.ok) throw new Error('precondition failed');
+    const body = await k.extrudeFace(face.value, [0, 0, 25]);
+    if (!body.ok) throw new Error('precondition failed');
+    const mesh = await k.tessellate(body.value, FINE_TESSELLATION);
+    const topo = await k.getTopology(body.value);
+
+    expect(topo.faces).toHaveLength(6);
+    expect(topo.edges).toHaveLength(12);
+    const faceIds = new Set(topo.faces.map(f => f.faceId));
+    for (const e of topo.edges) {
+      expect(faceIds.has(e.adjacentFaces[0])).toBe(true);
+      expect(faceIds.has(e.adjacentFaces[1])).toBe(true);
+      expect(e.adjacentFaces[0]).not.toBe(e.adjacentFaces[1]);
+    }
+
+    // The four edges at max-Z share exactly one face: the +Z cap.
+    const topEdges = topo.edges.filter(e => {
+      const zs = e.lineSegments.filter((_, i) => i % 3 === 2);
+      return zs.length > 0 && zs.every(z => Math.abs(z - 25) < 1e-6);
+    });
+    expect(topEdges).toHaveLength(4);
+    const shared = topEdges
+      .map(e => new Set(e.adjacentFaces))
+      .reduce((a, b) => new Set([...a].filter(id => b.has(id))));
+    expect(shared.size).toBe(1);
+    const [topId] = shared;
+    const top = topo.faces.find(f => f.faceId === topId)!;
+    expect(top.triEnd).toBeGreaterThan(top.triStart);
+    for (let i = 3 * top.triStart; i < 3 * top.triEnd; i++) {
+      expect(mesh.positions[mesh.indices[i]! * 3 + 2]).toBeCloseTo(25, 6);
+    }
+  });
+
   it('resolveEdgeRef returns the runtime edge for a known stable ID', async () => {
     const k = await newKernel();
     const r = await k.makeBox({ origin: [0, 0, 0], width: 10, height: 10, depth: 10 });

@@ -1161,13 +1161,8 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
       '(preferred for fillet/chamfer — survives rebuilds), ' +
       '`adjacentFaceIds`, and segment start/end points. ' +
       'USE THIS before any tool that needs an edgeId (fillet, chamfer). ' +
-      'KNOWN BUG: `adjacentFaceIds` currently returns `[f_0, f_0]` (the ' +
-      'first face id, repeated) for every edge — the kernel stub at ' +
-      "`occtKernel.ts:1166` hasn't wired up TopExp::MapShapesAndAncestors " +
-      'yet. Until that lands, do NOT filter by `adjacentFaceIds` or use ' +
-      '`find_edges({ betweenFaces: … })` — both will be misleading. ' +
-      'Workaround: filter by length / position (start, end) until the ' +
-      'kernel patch ships.',
+      '`adjacentFaceIds` holds the two faces the edge bounds (the same ' +
+      'face twice for a seam or open-shell edge).',
     inputSchema: {
       type: 'object',
       properties: {
