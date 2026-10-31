@@ -229,7 +229,17 @@ export class BetterAuthIdentityProvider {
           'Content-Type': 'application/json',
           ...(captchaToken ? { 'x-captcha-response': captchaToken } : {}),
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          ...payload,
+          /**
+           * A first-time user goes to the username chooser, not back into
+           * the editor. The site creates `user_profile` there and nowhere
+           * else, and an account without one reads as signed-out
+           * everywhere — including here, where the editor would show the
+           * sign-in button again straight after a successful sign-in.
+           */
+          newUserCallbackURL: '/username',
+        }),
         credentials: 'include',
       });
     } catch (err) {
