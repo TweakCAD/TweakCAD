@@ -129,7 +129,9 @@ export const CreateProjectRequest = z
     /** Default 'model'. Reserved for future kind-specific create flows. */
     kind: ProjectKind.optional(),
     description: z.string().optional(),
-    tags: z.array(z.string()).default([]),
+    // Capped: an unbounded array of unbounded strings is the shape zod 3
+    // can exhaust memory validating, and 20 tags is already generous.
+    tags: z.array(z.string().min(1).max(50)).max(20).default([]),
     /** FK to a taxonomy category; validate it exists in the DAL. */
     categoryId: z.string().optional(),
   })

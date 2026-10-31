@@ -25,7 +25,7 @@ export const ComponentParameter = z.object({
   type: z.enum(['number', 'enum', 'boolean', 'string']),
   default: z.unknown(),
   range: z.tuple([z.number(), z.number()]).optional(),
-  values: z.array(z.string()).optional(),
+  values: z.array(z.string().max(200)).max(100).optional(),
 });
 export type ComponentParameter = z.infer<typeof ComponentParameter>;
 
@@ -35,7 +35,8 @@ export const ComponentManifest = z.object({
   kernel: z
     .object({ min: z.string().optional(), max: z.string().optional() })
     .optional(),
-  parameters: z.array(ComponentParameter),
+  // A component with more than 100 parameters is a mistake, not a design.
+  parameters: z.array(ComponentParameter).max(100),
   installHint: z.string().optional(),
 });
 export type ComponentManifest = z.infer<typeof ComponentManifest>;
