@@ -1593,6 +1593,11 @@ export class OcctKernel implements CadKernel {
     return { min: [bb.xmin, bb.ymin, bb.zmin], max: [bb.xmax, bb.ymax, bb.zmax] };
   }
 
+  async distanceBetween(a: KernelBody, b: KernelBody): Promise<number> {
+    const k = this.getKernel();
+    return k.distanceBetween(this.getBodyShape(a), this.getBodyShape(b));
+  }
+
   async getMassProperties(body: KernelBody): Promise<MassProperties> {
     const k = this.getKernel();
     const shape = this.getBodyShape(body);

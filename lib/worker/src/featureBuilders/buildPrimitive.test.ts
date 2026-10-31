@@ -252,21 +252,34 @@ describe('buildPrimitive — boolean operation', () => {
     expect(ctx.bodies.has(TARGET)).toBe(false);
   });
 
-  it('falls back to newBody when the picked target is gone', async () => {
+  it('join falls back to newBody when the picked target is gone', async () => {
     // The upstream feature that made the target may have failed or been
     // deleted. Producing the primitive on its own beats failing the feature.
     const k = await mockKernel();
     const ctx = emptyBuildContext(NO_PARAMS);
-    const cut = vi.spyOn(k, 'booleanCut');
+    const fuse = vi.spyOn(k, 'booleanFuse');
     const result = await buildPrimitive(
+      node({ kind: 'sphere', radius: '2' }, {
+        operation: 'join',
+        targetBodies: [{ partId: PART, bodyId: TARGET }],
+      }),
+      NO_PARAMS, ctx, k,
+    );
+    expect(fuse).not.toHaveBeenCalled();
+    expect(String(result.bodies[0]?.bodyId)).toBe('body_prim_1_0');
+  });
+
+  it('cut fails when the picked target is gone', async () => {
+    // A cut with nothing to cut must not publish the tool as new material.
+    const k = await mockKernel();
+    const ctx = emptyBuildContext(NO_PARAMS);
+    await expect(buildPrimitive(
       node({ kind: 'sphere', radius: '2' }, {
         operation: 'cut',
         targetBodies: [{ partId: PART, bodyId: TARGET }],
       }),
       NO_PARAMS, ctx, k,
-    );
-    expect(cut).not.toHaveBeenCalled();
-    expect(String(result.bodies[0]?.bodyId)).toBe('body_prim_1_0');
+    )).rejects.toThrow(/Cut removes nothing/);
   });
 
   it('surfaces a kernel failure as a build failure', async () => {

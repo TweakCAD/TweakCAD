@@ -44,8 +44,9 @@
  * These are the two cases that need stating or they drift again.
  *
  * - **Merge** (boolean union, mirror-join, extrude-join): the result carries
- *   the **primary target's** id — `targetBodies[0]`, or the source for
- *   mirror. The other inputs are consumed and their ids retire.
+ *   the **primary target's** id — `targetBodies[0]`, the first touched body
+ *   in build order when nothing is picked (see `bodyOperation.ts`), or the
+ *   source for mirror. The other inputs are consumed and their ids retire.
  * - **Split** (a boolean that disconnects a solid): the piece that inherits
  *   identity keeps the id; the rest are new bodies and mint fresh ids. The
  *   inheriting piece is chosen by {@link pickIdentityHeir} rather than by

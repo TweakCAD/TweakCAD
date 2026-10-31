@@ -243,6 +243,13 @@ export interface CadKernel {
   /** Get the bounding box of a body */
   getBoundingBox(body: KernelBody): Promise<BoundingBox3D>;
 
+  /**
+   * Minimum distance between two bodies, in mm. 0 when they touch, overlap,
+   * or one lies inside the other. Join and cut use it to find the bodies a
+   * new solid actually meets.
+   */
+  distanceBetween(a: KernelBody, b: KernelBody): Promise<number>;
+
   /** Get mass properties of a body (optional capability) */
   getMassProperties?(body: KernelBody): Promise<MassProperties>;
 

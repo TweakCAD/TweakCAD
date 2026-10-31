@@ -168,7 +168,7 @@ describe('buildExtrude — operation semantics (one extrude → 1..N bodies)', (
     ]);
   });
 
-  it('join fuses all targets + all profile-bodies into ONE body and consumes the targets', async () => {
+  it('join fuses the touched target + all profile-bodies into ONE body and consumes the target', async () => {
     const kernel = new MockKernel();
     await kernel.init();
     const context = await ctxWithSketch(twoCircleSketch(), kernel);
@@ -190,7 +190,7 @@ describe('buildExtrude — operation semantics (one extrude → 1..N bodies)', (
     });
     const result = await buildExtrude(extrude, {}, context, kernel);
 
-    // One feature → one body (even when the new geometry is disjoint).
+    // One feature → one body (the mock reports every body as touching).
     expect(result.bodies).toHaveLength(1);
 
     // Join is a MERGE: the result carries the primary target's id rather
@@ -211,7 +211,7 @@ describe('buildExtrude — operation semantics (one extrude → 1..N bodies)', (
     expect(fuseArgs).toHaveLength(3); // 1 target + 2 profiles
   });
 
-  it('cut subtracts the union of profile-bodies from the first context body and consumes it', async () => {
+  it('cut subtracts the profile-bodies from the body they overlap and consumes it', async () => {
     const kernel = new MockKernel();
     await kernel.init();
     const context = await ctxWithSketch(twoCircleSketch(), kernel);
@@ -508,13 +508,11 @@ describe('buildExtrude — extended behavior coverage', () => {
   });
 });
 
-// --- Target-body selectivity. `targetBodies` is now wired end-to-end
-// (UI picker → schema → builder via `selectTargetEntries`), so the first
-// two cases below pass: join consumes only the targeted body, and cut
-// directs at the user-picked target. The third case (disjoint join-result
-// stays its own body) is the tighter Fusion-style semantics we
-// deliberately deferred — it stays a real failing test (not `.skip`) so
-// the remaining gap is visible in CI.
+// --- Target-body selectivity: picked `targetBodies` are the bodies join/cut
+// act on. Without a pick, join/cut act on the bodies the solid touches; that
+// needs real geometry and lives in `buildExtrude.targets.test.ts`. The
+// ROADMAP case (a picked target the solid misses stays its own body) is
+// deliberately deferred and stays a failing test so the gap is visible.
 describe('buildExtrude — target-body selectivity', () => {
   it('join with two disjoint pre-existing bodies consumes ONLY the targeted body', async () => {
     const kernel = new MockKernel();

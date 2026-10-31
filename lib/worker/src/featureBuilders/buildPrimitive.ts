@@ -22,7 +22,6 @@ import type {
   FeatureNode,
   PrimitiveFeatureInputs,
   PrimitiveShape,
-  BodyRef,
 } from '@tweakcad/core/src/document/schema.ts';
 import type { ResolvedParams } from '@tweakcad/core/src/expressions.ts';
 import { evaluateExpression } from '@tweakcad/core/src/expressions.ts';
@@ -31,7 +30,9 @@ import type { Vec3, Transform3D } from '@tweakcad/core/src/math.ts';
 import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
 import type { KernelBody } from '@tweakcad/kernel/src/types.ts';
 import type { BuildContext, BuildResult } from '@tweakcad/core/src/features/contracts.ts';
-import { carryBodyId, mintBodyId } from './bodyIdentity.ts';
+import { mintBodyId } from './bodyIdentity.ts';
+import { selectTargetCandidates, joinTouchingBodies, cutTouchingBodies } from './bodyOperation.ts';
+import type { EmittedBody } from './bodyOperation.ts';
 
 /** Canonical axis of revolution in the primitive's local frame. */
 const LOCAL_AXIS: Vec3 = [0, 1, 0];
@@ -238,11 +239,11 @@ async function place(
 // --- Boolean composition ---
 
 /**
- * Same contract as Extrude's: `newBody` publishes the primitive on its own,
- * `join` fuses it into the primary target and carries that target's id,
- * `cut` removes it from the primary target. An operation with no resolvable
- * target falls back to `newBody` so the feature still produces geometry
- * instead of failing on a body the user deleted upstream.
+ * Same contract as Extrude's (see `bodyOperation.ts`): `newBody` publishes
+ * the primitive on its own, `join` fuses it with the picked targets (or
+ * without a pick the bodies it touches) and carries the first one's id,
+ * publishing it on its own when there is nothing to join; `cut` removes it
+ * from every candidate it overlaps.
  */
 async function applyOperation(
   featureId: string,
@@ -251,40 +252,28 @@ async function applyOperation(
   context: BuildContext,
   kernel: CadKernel,
 ): Promise<BuildResult> {
-  const targets = selectTargets(inputs, context);
-  const emit = (id: BodyId, handle: KernelBody): BuildResult => ({
-    bodies: [{ bodyId: id, handle }],
-    outputs: { bodies: { main: id } },
-  });
-
-  if (inputs.operation === 'newBody' || targets.length === 0) {
-    return emit(mintBodyId(featureId), primitive);
-  }
-
-  const [primary] = targets;
-  if (!primary) throw new Error('Primitive boolean reached with no target bodies');
-  const [primaryId] = primary;
-
+  const operands = {
+    tools: [primitive],
+    candidates: selectTargetCandidates(inputs.targetBodies, context),
+    context,
+    kernel,
+    explicitTargets: (inputs.targetBodies?.length ?? 0) > 0,
+  };
+  let bodies: EmittedBody[];
   if (inputs.operation === 'join') {
-    const fused = await kernel.booleanFuse([...targets.map(([, h]) => h), primitive]);
-    if (!fused.ok) throw new Error(`Join failed: ${fused.error.message}`);
-    for (const [id] of targets) context.bodies.delete(id);
-    return emit(carryBodyId(primaryId), fused.value);
+    bodies = await joinTouchingBodies({
+      ...operands,
+      newBodies: async ([tool]) => [{ bodyId: mintBodyId(featureId), handle: tool! }],
+    });
+  } else if (inputs.operation === 'cut') {
+    bodies = await cutTouchingBodies(operands);
+  } else {
+    bodies = [{ bodyId: mintBodyId(featureId), handle: primitive }];
   }
-
-  const cut = await kernel.booleanCut(primary[1], [primitive]);
-  if (!cut.ok) throw new Error(`Cut failed: ${cut.error.message}`);
-  context.bodies.delete(primaryId);
-  return emit(carryBodyId(primaryId), cut.value);
-}
-
-function selectTargets(
-  inputs: PrimitiveFeatureInputs,
-  context: BuildContext,
-): [BodyId, KernelBody][] {
-  const all = Array.from(context.bodies.entries()) as [BodyId, KernelBody][];
-  const refs = inputs.targetBodies;
-  if (!refs || refs.length === 0) return all;
-  const wanted = new Set(refs.map((r: BodyRef) => String(r.bodyId)));
-  return all.filter(([id]) => wanted.has(String(id)));
+  return {
+    bodies,
+    outputs: {
+      bodies: Object.fromEntries(bodies.map((b, i) => [i === 0 ? 'main' : `body_${i}`, b.bodyId])) as Record<string, BodyId>,
+    },
+  };
 }

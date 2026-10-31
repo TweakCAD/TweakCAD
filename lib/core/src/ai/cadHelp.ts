@@ -225,13 +225,6 @@ These will bite. Read them.
   \`sketch_draw_rectangle\` (between the end-cap centers) +
   \`sketch_draw_circle\` × 2 (at the end-cap centers). The planar
   graph walker merges them into one stadium region.
-- **\`feature_extrude\` with \`operation: 'cut'\` does NOT chain by
-  default.** After 3 sequential cut features you'll see 4 bodies
-  in \`list_bodies\` — one per cut, plus the original. The
-  most-recent body has the cumulative cuts; the others are stale
-  intermediate states. Pass \`targetBodies\` explicitly when you have
-  multiple bodies, and treat the highest-\`sourceFeatureId\` body as
-  current.
 - **\`list_faces\` doesn't return per-face metadata yet** — no kind /
   area / centroid / normal. The topology layer hasn't grown those
   fields. Pick faces by stableFaceId convention (extrude origin XY

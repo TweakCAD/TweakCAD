@@ -84,6 +84,8 @@ function createUnitCubeMesh(): DisplayMesh {
 
 export class MockKernel implements CadKernel {
   private nextId = 0;
+  /** Handles returned by `booleanCut`; they report less volume than a fresh body. */
+  private readonly cutResults = new Set<string>();
 
   /** @returns A new unique mock handle ID */
   private nextHandle(): string {
@@ -145,7 +147,9 @@ export class MockKernel implements CadKernel {
   }
 
   async booleanCut(_target: KernelBody, _tools: KernelBody[]): Promise<Result<KernelBody, KernelError>> {
-    return ok({ handle: this.nextHandle(), source: 'mock' });
+    const handle = this.nextHandle();
+    this.cutResults.add(handle);
+    return ok({ handle, source: 'mock' });
   }
 
   async booleanIntersect(_targets: KernelBody[]): Promise<Result<KernelBody, KernelError>> {
@@ -238,9 +242,14 @@ export class MockKernel implements CadKernel {
     };
   }
 
-  async getMassProperties(_body: KernelBody): Promise<MassProperties> {
+  /** Every mock body touches every other, so join and cut reach them all. */
+  async distanceBetween(_a: KernelBody, _b: KernelBody): Promise<number> {
+    return 0;
+  }
+
+  async getMassProperties(body: KernelBody): Promise<MassProperties> {
     return {
-      volume: 1.0,
+      volume: this.cutResults.has(String(body.handle)) ? 0.5 : 1.0,
       surfaceArea: 6.0,
       centerOfMass: [0, 0, 0],
     };

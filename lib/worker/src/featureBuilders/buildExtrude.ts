@@ -8,11 +8,12 @@
  * 3. If any profile fails to resolve, the entire feature fails
  */
 
-import type { FeatureNode, ExtrudeFeatureInputs, ProfileRef, PlaneRef, BodyRef } from '@tweakcad/core/src/document/schema.ts';
+import type { FeatureNode, ExtrudeFeatureInputs, ProfileRef, PlaneRef } from '@tweakcad/core/src/document/schema.ts';
 import type { ResolvedParams } from '@tweakcad/core/src/expressions.ts';
 import { evaluateExpression } from '@tweakcad/core/src/expressions.ts';
-import { bodyId } from '@tweakcad/core/src/ids.ts';
-import { carryBodyId } from './bodyIdentity.ts';
+import { mintBodyId } from './bodyIdentity.ts';
+import { selectTargetCandidates, joinTouchingBodies, cutTouchingBodies } from './bodyOperation.ts';
+import type { EmittedBody } from './bodyOperation.ts';
 import type { FeatureId, BodyId } from '@tweakcad/core/src/ids.ts';
 import type { Vec3 } from '@tweakcad/core/src/math.ts';
 import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
@@ -79,11 +80,10 @@ export async function buildExtrude(
 
   const startOffset = resolveStartOffset(inputs, params);
 
-  // Select the bodies join/cut/throughAll operate against. When
-  // `targetBodies` is set, only those participate. Empty / undefined
-  // falls back to the whole context — preserves behavior for
-  // documents saved before the picker shipped.
-  const targetEntries = selectTargetEntries(inputs, context);
+  // The bodies join/cut may act on (and throughAll measures against):
+  // `targetBodies` when set, else every body in the build. Join and cut then
+  // act only on the candidates the new solid actually meets.
+  const targetEntries = selectTargetCandidates(inputs.targetBodies, context);
 
   const isSymmetric = inputs.extent.type === 'symmetric';
   // Offset is applied along the extrusion direction, not raw +normal.
@@ -190,63 +190,38 @@ export async function buildExtrude(
   }
 
   // Step 2: apply the feature operation once.
-  //  - newBody (or no resolved targets) → fuse profile-bodies, split
-  //    into one body per connected solid.
-  //  - join → fuse selected target bodies + profile-bodies; targets
-  //    consumed; emit one body.
-  //  - cut → cut the first selected target with the union of
-  //    profile-bodies; target consumed.
-  // `targetEntries` is the set of bodies actually in scope for
-  // join/cut — filtered by `inputs.targetBodies` if set, else the
-  // whole context (back-compat). Empty selection drops back to
-  // newBody so the feature still produces geometry instead of failing.
-  const allBodies: { bodyId: BodyId; handle: unknown }[] = [];
-
-  if (inputs.operation === 'newBody' || targetEntries.length === 0) {
-    let combined = profileBodies[0]!;
-    if (profileBodies.length > 1) {
-      const fuseResult = await kernel.booleanFuse(profileBodies);
+  //  - newBody → fuse profile-bodies, one body per connected solid.
+  //  - join → fuse the profile-bodies with the picked targets, or without a
+  //    pick with the bodies they touch; one that touches none is a new body.
+  //  - cut → remove the profile-bodies from every candidate they overlap;
+  //    fails when that removes nothing.
+  const newBodies = async (tools: KernelBody[]) => {
+    let combined = tools[0]!;
+    if (tools.length > 1) {
+      const fuseResult = await kernel.booleanFuse(tools);
       if (!fuseResult.ok) {
         throw new Error(`Failed to merge profile bodies: ${fuseResult.error.message}`);
       }
       combined = fuseResult.value;
     }
     const split = await kernel.decomposeBody(combined, node.id);
-    split.forEach((handle, i) => {
-      allBodies.push({ bodyId: bodyId(`body_${node.id}_${i}`), handle });
-    });
-  } else if (inputs.operation === 'join') {
-    const fuseResult = await kernel.booleanFuse([
-      ...targetEntries.map(([, h]) => h),
-      ...profileBodies,
-    ]);
-    if (!fuseResult.ok) {
-      throw new Error(`Join failed: ${fuseResult.error.message}`);
-    }
-    // Merge: the result carries the PRIMARY target's id; the other inputs
-    // are consumed and their ids retire. Minting a fresh id here would
-    // invalidate every stored BodyRef pointing at the target the user joined
-    // onto, which is the body they still think of as theirs.
-    //
-    // `targetEntries` is non-empty in this branch — the guard above routes
-    // the empty case to newBody — but read it without an assertion so the
-    // invariant is enforced rather than asserted.
-    const [primaryTarget] = targetEntries;
-    if (!primaryTarget) throw new Error('Join reached with no target bodies.');
-    for (const [tid] of targetEntries) context.bodies.delete(tid);
-    allBodies.push({ bodyId: carryBodyId(primaryTarget[0]), handle: fuseResult.value });
+    return split.map((handle, i) => ({ bodyId: mintBodyId(node.id, i), handle }));
+  };
+
+  const operands = {
+    tools: profileBodies,
+    candidates: targetEntries,
+    context,
+    kernel,
+    explicitTargets: (inputs.targetBodies?.length ?? 0) > 0,
+  };
+  let allBodies: EmittedBody[];
+  if (inputs.operation === 'join') {
+    allBodies = await joinTouchingBodies({ ...operands, newBodies });
+  } else if (inputs.operation === 'cut') {
+    allBodies = await cutTouchingBodies(operands);
   } else {
-    // cut — targetEntries[0] is the user-picked target (or the
-    // insertion-order first body in the back-compat all-context path).
-    const [tid, th] = targetEntries[0]!;
-    const cutResult = await kernel.booleanCut(th, profileBodies);
-    if (!cutResult.ok) {
-      throw new Error(`Cut failed: ${cutResult.error.message}`);
-    }
-    // Cut modifies the target in place — same body, material removed — so it
-    // carries the target's id rather than minting one.
-    context.bodies.delete(tid);
-    allBodies.push({ bodyId: carryBodyId(tid), handle: cutResult.value });
+    allBodies = await newBodies(profileBodies);
   }
 
   return {
@@ -420,28 +395,6 @@ function resolveStartOffset(inputs: ExtrudeFeatureInputs, params: ResolvedParams
   const result = evaluateExpression(inputs.startOffset, params);
   if (!result.ok) throw new Error(`Failed to resolve extrude start offset: ${result.error}`);
   return result.value;
-}
-
-/**
- * Pick the bodies this extrude operates against for join/cut. When the
- * feature carries an explicit `targetBodies` list, only those bodies
- * participate. Empty/undefined falls back to the
- * whole context — preserves behavior for documents saved before the
- * picker shipped, and for newBody where the field is irrelevant.
- *
- * Refs that don't resolve in `context.bodies` (e.g. user picked a body
- * that got deleted upstream) are silently dropped — the next stage's
- * "empty selection → newBody fallback" handles the degenerate case.
- */
-function selectTargetEntries(
-  inputs: ExtrudeFeatureInputs,
-  context: BuildContext,
-): [BodyId, KernelBody][] {
-  const all = Array.from(context.bodies.entries()) as [BodyId, KernelBody][];
-  const refs = inputs.targetBodies;
-  if (!refs || refs.length === 0) return all;
-  const wanted = new Set(refs.map((r: BodyRef) => String(r.bodyId)));
-  return all.filter(([id]) => wanted.has(String(id)));
 }
 
 /**

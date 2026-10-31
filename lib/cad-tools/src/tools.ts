@@ -674,14 +674,12 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
           enum: ['newBody', 'join', 'cut'],
           description:
             "'newBody' creates a new disconnected body (most common — start here). " +
-            "'join' adds the extrude to existing bodies (boolean union). " +
-            "'cut' subtracts the extrude from existing bodies. Default 'newBody'. " +
-            "WARNING: today multiple sequential 'cut' features each operate " +
-            'on the most recent build of the targeted body — but each leaves ' +
-            "behind a body entry in `list_bodies` for the prior build. After " +
-            "N cuts you'll see N+1 bodies; the one with the highest " +
-            'sourceFeatureId is the current state. Pass `targetBodies` ' +
-            'explicitly if you have multiple bodies and need to be precise.',
+            "'join' fuses the extrude with the bodies it touches or overlaps and " +
+            "keeps the first one's bodyId; bodies it does not reach are left " +
+            'alone, and an extrude that touches no body becomes a new body. ' +
+            "'cut' subtracts the extrude from every body it overlaps (each keeps " +
+            'its bodyId) and fails with "Cut removes nothing" when it overlaps ' +
+            "none. Default 'newBody'.",
         },
         direction: {
           type: 'string',
