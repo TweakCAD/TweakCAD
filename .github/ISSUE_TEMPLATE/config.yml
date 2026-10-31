@@ -1,5 +1,5 @@
 blank_issues_enabled: true
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/HumanHub/TweakCAD/security/advisories/new
+    url: https://github.com/TweakCAD/TweakCAD/security/advisories/new
     about: Report privately — please don't open a public issue.

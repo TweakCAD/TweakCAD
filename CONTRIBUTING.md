@@ -65,9 +65,9 @@ most often trip up a first PR:
 **If your change makes a doc wrong, fix the doc in the same PR.** This is not
 a nicety — a stale architecture doc is worse than no doc, because it actively
 misleads the next reader into building on something that is not there. The
-triggers are listed at the top of `CLAUDE.md`: new or removed commands, schema
-fields, constraint types, kernel methods, or any behavioural change in the
-solver, kernel, undo, rebuild or persistence.
+triggers: new or removed commands, schema fields, constraint types, kernel
+methods, or any behavioural change in the solver, kernel, undo, rebuild or
+persistence.
 
 Counts that are derivable from source (tool count, command count, constraint
 variants) are machine-checked inside `<!-- AUTOGEN -->` markers. Prose accuracy
