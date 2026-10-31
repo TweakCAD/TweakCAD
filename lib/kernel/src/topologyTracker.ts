@@ -66,6 +66,69 @@ function indexedEdgeStableId(origin: string, index: number): StableEdgeId {
 }
 
 /**
+ * Sort key for a result sub-shape, by its walk index. Compared
+ * lexicographically, ascending. Used to decide which of several faces that
+ * ended up with the same stable ID keeps it unsuffixed.
+ */
+export type ElementOrderKey = (walkIndex: number) => readonly number[];
+
+function compareKeys(a: readonly number[], b: readonly number[]): number {
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    const d = a[i]! - b[i]!;
+    if (d !== 0) return d;
+  }
+  return a.length - b.length;
+}
+
+/**
+ * Make the IDs in one body unique. `ids[i]` is the ID chosen for the
+ * sub-shape at walk index `i`. When several sub-shapes share an ID (a face
+ * split into pieces, or two ops minting the same walk-index ID), one keeps
+ * it and the rest become `<id>:1`, `<id>:2`, … skipping any suffix another
+ * sub-shape already carries. The keeper is the first inherited ID (not
+ * marked `fresh`) — refs may already point at it — then the first by
+ * `order`, then by walk index.
+ *
+ * Without this, the reverse lookup in `resolveStableFaceId` returns
+ * whichever duplicate it meets first, so an ID reported for one face can
+ * resolve to another.
+ */
+function makeUnique<T extends string>(
+  hashes: number[],
+  ids: T[],
+  brand: (raw: string) => T,
+  fresh: boolean[],
+  order?: ElementOrderKey,
+): Map<number, T> {
+  const groups = new Map<T, number[]>();
+  ids.forEach((id, i) => {
+    const g = groups.get(id);
+    if (g) g.push(i);
+    else groups.set(id, [i]);
+  });
+  const used = new Set<string>(ids);
+  const result = [...ids];
+  for (const [id, members] of groups) {
+    if (members.length < 2) continue;
+    const ranked = members
+      .map(i => ({ i, key: [fresh[i] ? 1 : 0, ...(order ? order(i) : [])] }))
+      .sort((a, b) => compareKeys(a.key, b.key) || a.i - b.i)
+      .map(m => m.i);
+    let suffix = 1;
+    for (const i of ranked.slice(1)) {
+      while (used.has(`${id}:${suffix}`)) suffix++;
+      const next = brand(`${id}:${suffix}`);
+      used.add(next);
+      result[i] = next;
+    }
+  }
+  const map = new Map<number, T>();
+  hashes.forEach((h, i) => map.set(h, result[i]!));
+  return map;
+}
+
+/**
  * Decode the run-length-encoded `modified` / `generated` arrays from
  * occt-wasm's `EvolutionData`. Format:
  *
@@ -189,33 +252,18 @@ export class ShapeEvolutionTracker {
     // ids so the same op rebuilding the same boolean produces the same
     // ids for new faces too (e.g. the rounded face a fillet introduces
     // gets `sf_fillet_<featureId>_<index>` every rebuild).
-    const faceHashToStable = new Map<number, StableFaceId>();
-    for (let i = 0; i < resultFaceHashes.length; i++) {
-      const h = resultFaceHashes[i]!;
-      let copied: StableFaceId | undefined;
-      for (const inHandle of inputBodyHandles) {
-        const id = this.bodies.get(inHandle)?.faceHashToStable.get(h);
-        if (id !== undefined) {
-          copied = id;
-          break;
-        }
-      }
-      faceHashToStable.set(h, copied ?? indexedFaceStableId(origin, i));
-    }
-    const edgeHashToStable = new Map<number, StableEdgeId>();
-    for (let i = 0; i < resultEdgeHashes.length; i++) {
-      const h = resultEdgeHashes[i]!;
-      let copied: StableEdgeId | undefined;
-      for (const inHandle of inputBodyHandles) {
-        const id = this.bodies.get(inHandle)?.edgeHashToStable.get(h);
-        if (id !== undefined) {
-          copied = id;
-          break;
-        }
-      }
-      edgeHashToStable.set(h, copied ?? indexedEdgeStableId(origin, i));
-    }
-    this.bodies.set(resultBodyHandle, { faceHashToStable, edgeHashToStable });
+    const inherited = resultFaceHashes.map(h => this.findInputStable(inputBodyHandles, h));
+    const faceIds = inherited.map((id, i) => id ?? indexedFaceStableId(origin, i));
+    const faceHashToStable = makeUnique(
+      resultFaceHashes,
+      faceIds,
+      stableFaceId,
+      inherited.map(id => id === undefined),
+    );
+    this.bodies.set(resultBodyHandle, {
+      faceHashToStable,
+      edgeHashToStable: this.edgeIdsByHashMatch(inputBodyHandles, resultEdgeHashes, origin),
+    });
   }
 
   /**
@@ -225,20 +273,29 @@ export class ShapeEvolutionTracker {
    * the cases that {@link propagateIds}'s hash-match silently misses
    * (boolean recreates TShape, fillet modifies adjacent faces, etc.).
    *
-   * Algorithm:
-   * 1. Decode `modified` and `generated`. Build a result-hash → stable-id
-   *    map by transferring each input face's stable ID to every result
-   *    face it became.
-   * 2. Walk every result face hash in `resultFaceHashes`. If a face is
-   *    covered by step 1, use that ID. Otherwise fall back to the
-   *    inherited hash-match path ({@link propagateIds}) — covers
-   *    unchanged faces whose TShape survived.
-   * 3. For freshly-generated faces with no input parent
-   *    (`generated`-list entries), assign walk-index IDs so the same op
-   *    rebuilding the same geometry produces the same IDs every time.
-   * 4. Edges are NOT touched here — `EvolutionData` is face-only on the
-   *    occt-wasm facade. Callers should still call {@link propagateIds}
-   *    (or a future edge-history method) to propagate edge IDs.
+   * Each result face takes the first of:
+   * 1. **Hash-match** — the face's TShape survived the op unchanged, so
+   *    it *is* that input face and keeps its ID.
+   * 2. **`modified`** — OCCT says an input face became this one. When
+   *    several inputs merged into one result face (coplanar faces of a
+   *    fuse), the first input in the payload wins; the facade lists the
+   *    first operand's faces first, so the target body keeps its names.
+   * 3. **`generated`** — a new face OCCT attributes to an input face
+   *    (shell's inner walls, a fillet's rounded face). Gets
+   *    `sf_<origin>_<n>`, numbered in payload order over the entries that
+   *    are result faces with no ID yet. Boolean `generated` lists carry
+   *    section edges, not faces; counting only real, unnamed faces keeps
+   *    the numbering independent of those entries and of a stray hash
+   *    collision between an edge and a named face.
+   * 4. **Orphan** — `sf_<origin>_orphan_<walkIndex>`.
+   *
+   * A face split into N pieces gives all N the parent's ID through step 2;
+   * the uniqueness pass then keeps the bare ID on the first piece by
+   * `order` (the kernel passes largest area first) and suffixes the rest
+   * `:1`, `:2`, … so every ID names exactly one face.
+   *
+   * Edges are NOT touched here — `EvolutionData` is face-only on the
+   * occt-wasm facade. Callers follow up with {@link recordEdgeEvolution}.
    *
    * @param resultBodyHandle - kernel handle of the new result body.
    * @param inputBodyHandles - kernel handles of input bodies fed into op.
@@ -247,6 +304,8 @@ export class ShapeEvolutionTracker {
    * @param evolution - `EvolutionRecord` parsed from the WithHistory call.
    * @param origin - short tag for the op (e.g. `fuse_<featureId>`), used
    *   for debug IDs assigned to generated/fresh faces.
+   * @param order - sort key per result walk index, used to pick which of
+   *   several faces sharing an ID keeps it. Walk order when omitted.
    */
   recordEvolution(
     resultBodyHandle: string,
@@ -254,73 +313,48 @@ export class ShapeEvolutionTracker {
     resultFaceHashes: number[],
     evolution: EvolutionRecord,
     origin: string,
+    order?: ElementOrderKey,
   ): void {
-    // Step 1: build resultHash → stableId from the input → result map.
-    // For each input face that survived (in `modified`), find its stable
-    // ID in any input body, then attach that ID to every result face it
-    // became. For input faces that produced *new* output (in `generated`),
-    // mint walk-index IDs and attach those to the result faces.
-    const resultHashToStable = new Map<number, StableFaceId>();
-    let generatedSeq = 0;
+    const resultFaces = new Set(resultFaceHashes);
+    const assigned = new Map<number, StableFaceId>();
+    // Result faces whose ID is minted by this op rather than carried over.
+    const minted = new Set<number>();
+
+    for (const h of resultFaceHashes) {
+      const id = this.findInputStable(inputBodyHandles, h);
+      if (id !== undefined) assigned.set(h, id);
+    }
 
     for (const [inputHash, resultHashes] of decodeRunLength(evolution.modified)) {
       const inputStable = this.findInputStable(inputBodyHandles, inputHash);
       if (inputStable === undefined) continue; // input face wasn't tracked
-      // Same ID assigned to every result face the input became. For N > 1
-      // (face-split case) all children share the parent's ID — selection
-      // healing for "I picked the split half" is a future enhancement
-      // (would need a `:0` / `:1` suffix scheme; out of scope for now
-      // since the user would have picked a single face originally).
       for (const rh of resultHashes) {
-        resultHashToStable.set(rh, inputStable);
+        if (resultFaces.has(rh) && !assigned.has(rh)) assigned.set(rh, inputStable);
       }
     }
 
+    let generatedSeq = 0;
     for (const [, generatedHashes] of decodeRunLength(evolution.generated)) {
       for (const gh of generatedHashes) {
-        // Fresh walk-index ID — same op rebuilding the same boolean
-        // produces the same `sf_<origin>_<n>` for this generated face.
-        // Doesn't collide with the parent-derived IDs above because the
-        // result hashes are distinct from any input hash that was
-        // present-and-modified (OCCT differentiates "modified" from
-        // "generated" by whether the input survived).
-        resultHashToStable.set(gh, indexedFaceStableId(origin, generatedSeq++));
+        if (!resultFaces.has(gh) || assigned.has(gh)) continue;
+        assigned.set(gh, indexedFaceStableId(origin, generatedSeq++));
+        minted.add(gh);
       }
     }
 
-    // Step 2: walk all result faces. Use map first, fall back to
-    // hash-match against input bodies, fall back to walk-index. This
-    // means an unchanged face whose TShape survived (so its hash is
-    // identical to an input's hash) still gets its parent's stable ID —
-    // matches the legacy hash-match behavior for that common case.
-    const faceHashToStable = new Map<number, StableFaceId>();
-    for (let i = 0; i < resultFaceHashes.length; i++) {
-      const h = resultFaceHashes[i]!;
-      const fromHistory = resultHashToStable.get(h);
-      if (fromHistory !== undefined) {
-        faceHashToStable.set(h, fromHistory);
-        continue;
-      }
-      // Fallback A: hash-match against any input. Covers faces OCCT
-      // didn't bother to report in modified/generated (some makers skip
-      // unchanged faces).
-      let copied: StableFaceId | undefined;
-      for (const inHandle of inputBodyHandles) {
-        const id = this.bodies.get(inHandle)?.faceHashToStable.get(h);
-        if (id !== undefined) {
-          copied = id;
-          break;
-        }
-      }
-      // Fallback B: walk-index ID seeded from the op origin + result
-      // walk position. Same logic propagateIds() uses for orphan faces.
-      faceHashToStable.set(h, copied ?? indexedFaceStableId(`${origin}_orphan`, i));
-    }
+    const faceIds = resultFaceHashes.map(
+      (h, i) => assigned.get(h) ?? indexedFaceStableId(`${origin}_orphan`, i),
+    );
+    const faceHashToStable = makeUnique(
+      resultFaceHashes,
+      faceIds,
+      stableFaceId,
+      resultFaceHashes.map(h => minted.has(h) || !assigned.has(h)),
+      order,
+    );
 
     // Edges are not in EvolutionData — keep the existing per-body edge
-    // map empty here; the caller must invoke propagateIds() afterward to
-    // populate edges via the hash-match path. We store an empty edge
-    // map so subsequent edge propagation can find this body record.
+    // map here; the caller follows up with recordEdgeEvolution().
     const existing = this.bodies.get(resultBodyHandle);
     this.bodies.set(resultBodyHandle, {
       faceHashToStable,
@@ -359,24 +393,36 @@ export class ShapeEvolutionTracker {
     resultEdgeHashes: number[],
     origin: string,
   ): void {
-    const edgeHashToStable = new Map<number, StableEdgeId>();
-    for (let i = 0; i < resultEdgeHashes.length; i++) {
-      const h = resultEdgeHashes[i]!;
-      let copied: StableEdgeId | undefined;
-      for (const inHandle of inputBodyHandles) {
-        const id = this.bodies.get(inHandle)?.edgeHashToStable.get(h);
-        if (id !== undefined) {
-          copied = id;
-          break;
-        }
-      }
-      edgeHashToStable.set(h, copied ?? indexedEdgeStableId(origin, i));
-    }
     const existing = this.bodies.get(resultBodyHandle);
     this.bodies.set(resultBodyHandle, {
       faceHashToStable: existing?.faceHashToStable ?? new Map<number, StableFaceId>(),
-      edgeHashToStable,
+      edgeHashToStable: this.edgeIdsByHashMatch(inputBodyHandles, resultEdgeHashes, origin),
     });
+  }
+
+  /**
+   * Hash-match result edges against the input bodies; unmatched edges get
+   * walk-index IDs. Made unique per body: walk-index IDs minted by two
+   * steps of the same fold (`se_fuse_3` twice) would otherwise collide.
+   */
+  private edgeIdsByHashMatch(
+    inputBodyHandles: string[],
+    resultEdgeHashes: number[],
+    origin: string,
+  ): Map<number, StableEdgeId> {
+    const inherited = resultEdgeHashes.map(h => {
+      for (const inHandle of inputBodyHandles) {
+        const id = this.bodies.get(inHandle)?.edgeHashToStable.get(h);
+        if (id !== undefined) return id;
+      }
+      return undefined;
+    });
+    return makeUnique(
+      resultEdgeHashes,
+      inherited.map((id, i) => id ?? indexedEdgeStableId(origin, i)),
+      stableEdgeId,
+      inherited.map(id => id === undefined),
+    );
   }
 
   /** Look up the stable face ID for a face hash on a given body. */

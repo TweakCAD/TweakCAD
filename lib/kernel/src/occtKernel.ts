@@ -41,11 +41,15 @@ import { ShapeEvolutionTracker, type EvolutionRecord } from './topologyTracker.t
 
 /**
  * Upper bound for `kernel.hashCode(shape, upperBound)` — used as the modulo
- * for OCCT's internal `MapOfShape` hash. A large prime gives a near-zero
- * collision rate across typical CAD models. Used by `ShapeEvolutionTracker`
- * to key stable IDs.
+ * for OCCT's internal `MapOfShape` hash. Used by `ShapeEvolutionTracker` to
+ * key stable IDs and by the `*WithHistory` calls to hash their payloads.
+ * The tracker maps every face and edge of a body by hash, and a boolean's
+ * history payload also carries section-edge hashes, so a collision silently
+ * renames a face. Hashes follow heap addresses, so with a small modulus a
+ * face can be named differently from one rebuild to the next; the largest
+ * int32 prime keeps collisions out of practical reach.
  */
-const HASH_UPPER_BOUND = 1_000_003;
+const HASH_UPPER_BOUND = 2_147_483_647;
 
 /**
  * Modulus the mesher uses for `faceGroups[3*i + 2]` and the wireframe pass
@@ -53,8 +57,9 @@ const HASH_UPPER_BOUND = 1_000_003;
  * `TopTools_ShapeMapHasher{}(shape) % 2147483647`. To pair faces returned
  * by `getSubShapes('face')` to their cached triangle ranges, we must call
  * `k.hashCode(face, MESH_HASH_BOUND)` so the JS-side and C++-side hashes
- * land in the same numeric space. Distinct from `HASH_UPPER_BOUND`
- * (1_000_003) which is the tracker's separate namespace.
+ * land in the same numeric space. Currently the same value as
+ * `HASH_UPPER_BOUND`, but the two are kept as separate names: this one is
+ * fixed by the C++ facade, the tracker's is ours to choose.
  *
  * Reference: the OCCT mesher and wireframe passes in the occt-wasm facade.
  */
@@ -324,12 +329,23 @@ export class OcctKernel implements CadKernel {
         generated: evolution.generated,
         deleted: evolution.deleted,
       };
+      // Faces that end up sharing an ID (a split face's pieces) are ranked
+      // largest-area first, then by centroid, so the bare ID stays on the
+      // main piece and the ranking doesn't depend on OCCT's walk order.
+      // Only called for faces in such a group.
+      const round = (v: number) => Math.round(v * 1e6) / 1e6;
+      const faceOrder = (i: number): number[] => {
+        const f = resultFaces[i]!;
+        const c = k.getSurfaceCenterOfMass(f);
+        return [-round(Math.abs(k.getSurfaceArea(f))), round(c.x), round(c.y), round(c.z)];
+      };
       this.tracker.recordEvolution(
         body.handle,
         inputBodies.map(b => b.handle),
         faceHashes,
         record,
         origin,
+        faceOrder,
       );
       this.tracker.recordEdgeEvolution(
         body.handle,
@@ -866,13 +882,15 @@ export class OcctKernel implements CadKernel {
       // per-input → per-result face mappings. After each step the
       // accumulated body becomes the next input — its tracker entry
       // (just populated by storeBodyWithHistory) feeds the next merge.
-      const inputFaceHashes = this.collectInputFaceHashes(targets);
+      // The hashes are collected per step: OCCT only reports history for
+      // the hashes it is given, and the accumulated body's faces are new
+      // after every step.
       let accBody = targets[0]!;
       for (let i = 1; i < targets.length; i++) {
         const evo = k.fuseWithHistory(
           this.getBodyShape(accBody),
           this.getBodyShape(targets[i]!),
-          inputFaceHashes,
+          this.collectInputFaceHashes([accBody, targets[i]!]),
           HASH_UPPER_BOUND,
         );
         accBody = this.storeBodyWithHistory(
@@ -902,14 +920,13 @@ export class OcctKernel implements CadKernel {
       const k = this.getKernel();
       // Same pairwise fold as booleanFuse — cutWithHistory is binary,
       // so peel tools off one at a time. The result becomes the new
-      // target for the next iteration.
-      const inputFaceHashes = this.collectInputFaceHashes([target, ...tools]);
+      // target for the next iteration (input hashes per step, as in fuse).
       let accBody = target;
       for (const tool of tools) {
         const evo = k.cutWithHistory(
           this.getBodyShape(accBody),
           this.getBodyShape(tool),
-          inputFaceHashes,
+          this.collectInputFaceHashes([accBody, tool]),
           HASH_UPPER_BOUND,
         );
         accBody = this.storeBodyWithHistory(evo.result, [accBody, tool], evo, 'cut');
@@ -928,13 +945,12 @@ export class OcctKernel implements CadKernel {
       }
       const k = this.getKernel();
       // Pairwise fold via intersectWithHistory — same shape as fuse/cut.
-      const inputFaceHashes = this.collectInputFaceHashes(targets);
       let accBody = targets[0]!;
       for (let i = 1; i < targets.length; i++) {
         const evo = k.intersectWithHistory(
           this.getBodyShape(accBody),
           this.getBodyShape(targets[i]!),
-          inputFaceHashes,
+          this.collectInputFaceHashes([accBody, targets[i]!]),
           HASH_UPPER_BOUND,
         );
         accBody = this.storeBodyWithHistory(
@@ -1302,7 +1318,8 @@ export class OcctKernel implements CadKernel {
         }
         // Two hashes per face: one in the mesh-bridge space (matches what
         // the C++ mesher wrote into faceGroups[*+2]), one in the tracker
-        // namespace (smaller modulus). They are NOT interchangeable.
+        // namespace. The moduli happen to be equal today; each lookup uses
+        // its own so either can change independently.
         const meshHash = k.hashCode(fh, MESH_HASH_BOUND);
         const trackerHash = k.hashCode(fh, HASH_UPPER_BOUND);
         const stable = this.tracker.getStableFaceId(body.handle, trackerHash);

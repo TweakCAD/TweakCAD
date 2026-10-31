@@ -20,7 +20,9 @@
  *      cylinder at the geometrically-correct depth.
  *   5. Boolean-cut the assembled tool from the target body. The target
  *      is the FaceRef's parent body (looked up via `context.bodies` from
- *      `face.bodyRef.bodyId`).
+ *      `face.bodyRef.bodyId`). A cut that removes no material (the drill
+ *      misses the body) fails the feature, when the kernel can measure
+ *      volume.
  *
  * Deterministic IDs: every kernel call passes `node.id` (with suffixes
  * for the secondary shapes) as the topology-tracker origin so a hole
@@ -56,6 +58,13 @@ import {
  * to clear; we multiply by 2 for slack against floating-point edges.
  */
 const THROUGH_ALL_FACTOR = 2;
+
+/**
+ * Removed volume (mm³) at or below which the cut counts as having missed
+ * the body. Far below any real hole (a 0.1 mm × 0.1 mm hole is ~8e-4 mm³),
+ * far above OCCT's volume noise on an unchanged solid.
+ */
+const MIN_REMOVED_VOLUME = 1e-6;
 
 export async function buildHole(
   node: FeatureNode,
@@ -113,10 +122,11 @@ export async function buildHole(
     targetHandle as KernelBody,
   );
 
-  // 4. Center the primary cylinder. v1 always uses face centroid — the
-  // schema's `center: [Expression, Expression]` is reserved for the
-  // click-to-position UX. If non-zero values land here later, they're
-  // interpreted as (u, v) offsets in the face plane's basis.
+  // 4. Center the primary cylinder: `center` is a (u, v) offset from the
+  // face centroid in the face plane's basis (`getFacePlane`). The dialog
+  // emits [0, 0]; the AI tool passes real offsets. The centroid of a face
+  // with a hole in it (a shelled box's rim) lies off the face, so [0, 0]
+  // can miss the body — step 8 reports that.
   const [cu, cv] = evalCenter(inputs.center, params, node.id);
   const drillCenter: Vec3 = [
     facePlane.origin[0] + cu * facePlane.uAxis[0] + cv * facePlane.vAxis[0],
@@ -246,9 +256,28 @@ export async function buildHole(
   // 8. Subtract the tool body from the target body. The resulting
   // body's bodyId is derived from `node.id` so it stays stable across
   // rebuilds — same pattern as extrude's `body_${node.id}_${i}`.
+  const volumeBefore = kernel.getMassProperties
+    ? (await kernel.getMassProperties(targetHandle as KernelBody)).volume
+    : undefined;
   const cutResult = await kernel.booleanCut(targetHandle as KernelBody, [toolBody]);
   if (!cutResult.ok) {
     throw new Error(`Hole cut failed: ${cutResult.error.message}`);
+  }
+
+  // A drill that misses the body leaves it untouched, and the boolean
+  // still succeeds. Report that instead of a feature that did nothing.
+  if (volumeBefore !== undefined && kernel.getMassProperties) {
+    const removed = volumeBefore - (await kernel.getMassProperties(cutResult.value)).volume;
+    if (removed <= Math.max(MIN_REMOVED_VOLUME, volumeBefore * 1e-9)) {
+      kernel.dispose(cutResult.value);
+      const fmt = (v: Vec3) => `[${v.map(n => +n.toFixed(3)).join(', ')}]`;
+      throw new Error(
+        `Hole cuts nothing: the drill at ${fmt(drillCenter)} along ${fmt(axis)} ` +
+        `misses body ${targetBodyId}. center [${cu}, ${cv}] is measured from the ` +
+        `face centroid ${fmt(facePlane.origin)} along u ${fmt(facePlane.uAxis)} ` +
+        `and v ${fmt(facePlane.vAxis)}.`,
+      );
+    }
   }
 
   // Replace the target body in the context: the bodyId stays the same
@@ -324,9 +353,8 @@ async function resolvePrimaryHeight(
 }
 
 /**
- * Resolve the in-plane center as (u, v) numbers. v1 always emits
- * `["0", "0"]` from the dialog so this returns [0, 0] — leaves the door
- * open for the click-to-position UX without a schema migration.
+ * Resolve the in-plane center as (u, v) numbers. The dialog emits
+ * `["0", "0"]`; `feature_hole` passes the caller's offsets.
  */
 function evalCenter(
   center: HoleFeatureInputs['center'],

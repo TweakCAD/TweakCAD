@@ -8,7 +8,7 @@
  * (e.g. drilling outward instead of inward) and keeps the test fast.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildHole } from './buildHole.ts';
 import { emptyBuildContext } from '@tweakcad/core/src/features/contracts.ts';
 import { ok } from '@tweakcad/core/src/result.ts';
@@ -16,6 +16,21 @@ import type { FeatureNode } from '@tweakcad/core/src/document/schema.ts';
 import type { BodyId, FeatureId } from '@tweakcad/core/src/ids.ts';
 import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
 import type { KernelBody, KernelFace } from '@tweakcad/kernel/src/types.ts';
+import { OcctKernel } from '@tweakcad/kernel/src/occtKernel.ts';
+import { emptyProject, createPart } from '@tweakcad/core/src/document/factory.ts';
+import {
+  emptyEditorState,
+  drawRectangle,
+  drawCircle,
+  toSnapshot,
+  makeCounterIdFactory,
+} from '@tweakcad/core/src/sketch/operations.ts';
+import { sketchBuildGeometry } from '@tweakcad/core/src/sketch/derivedGeometry.ts';
+import { detectSketchRegions, regionToProfileRef } from '@tweakcad/core/src/sketch/profileRegions.ts';
+import type { CadPart, SketchEditorSnapshot } from '@tweakcad/core/src/document/schema.ts';
+import { featureId, partId } from '@tweakcad/core/src/ids.ts';
+import { attachTestSolver } from '@tweakcad/testing/src/solver.ts';
+import { incrementalRebuild } from '../rebuilder.ts';
 
 function makeNode(inputs: Record<string, unknown>): FeatureNode {
   return {
@@ -381,4 +396,124 @@ describe('buildHole — countersink', () => {
       /Countersink angle must be in \(0, 180\)/,
     );
   });
+});
+
+/**
+ * Real kernel, real rebuilder: an enclosure — a box shelled open at the top
+ * (+Y), then four corner bosses joined in from the floor to the rim — with
+ * an insert hole drilled into the rim over a boss. The rim's FaceRef is the
+ * ID the box's top face had before the shell; the shell hands that ID to
+ * the rim, and the join's fuse must carry it forward.
+ */
+describe('buildHole — on a shelled body with joined bosses (OCCT)', () => {
+  beforeAll(attachTestSolver, 30_000);
+
+  const PART = partId('part_1');
+  const BOX = 'body_extrude_1_0';
+  const RIM = 'sf_extrude_1_5';
+
+  function feature(id: string, type: string, inputs: unknown, dependsOn: string[] = []): FeatureNode {
+    return {
+      id: featureId(id),
+      type,
+      name: id,
+      version: 1,
+      enabled: true,
+      visible: true,
+      dependsOn: dependsOn.map(featureId),
+      inputs,
+      createdAt: '2026-10-31T00:00:00.000Z',
+      updatedAt: '2026-10-31T00:00:00.000Z',
+    } as unknown as FeatureNode;
+  }
+
+  function profiles(sketchId: string, editorModel: SketchEditorSnapshot) {
+    const regions = detectSketchRegions(sketchBuildGeometry({ editorModel }));
+    return regions.map(r => regionToProfileRef(featureId(sketchId), r, regions));
+  }
+
+  /** The enclosure timeline plus a hole on the rim at face-local `center`. */
+  function enclosure(center: [number, number]): CadPart {
+    const rect = toSnapshot(
+      drawRectangle(emptyEditorState(), { corner: [-50, -25], width: 100, height: 50 }, { idFactory: makeCounterIdFactory() }).state,
+    ) as unknown as SketchEditorSnapshot;
+    let state = emptyEditorState();
+    const ids = makeCounterIdFactory();
+    for (const [x, y] of [[44.5, 19.5], [-44.5, 19.5], [44.5, -19.5], [-44.5, -19.5]] as const) {
+      state = drawCircle(state, { center: [x, y], radius: 4 }, { idFactory: ids }).state;
+    }
+    const circles = toSnapshot(state) as unknown as SketchEditorSnapshot;
+    const faceRef = (stableFaceId: string) => ({
+      type: 'stableTopology',
+      bodyRef: { partId: PART, bodyId: BOX },
+      stableFaceId,
+    });
+
+    const part = createPart('Enclosure');
+    part.id = PART;
+    part.timeline = [
+      feature('sketch_1', 'sketch', { plane: { type: 'defaultPlane', name: 'XZ' }, editorModel: rect }),
+      feature('extrude_1', 'extrude', {
+        profiles: profiles('sketch_1', rect),
+        operation: 'newBody',
+        direction: { type: 'normal' },
+        extent: { type: 'distance', value: '25' },
+      }, ['sketch_1']),
+      feature('shell_1', 'shell', {
+        sourceBody: { partId: PART, bodyId: BOX },
+        removedFaces: [faceRef(RIM)],
+        thickness: '2',
+      }),
+      feature('sketch_2', 'sketch', { plane: { type: 'defaultPlane', name: 'XZ' }, editorModel: circles }),
+      feature('extrude_2', 'extrude', {
+        profiles: profiles('sketch_2', circles),
+        operation: 'join',
+        startOffset: '2',
+        direction: { type: 'normal' },
+        extent: { type: 'distance', value: '23' },
+      }, ['sketch_2']),
+      feature('hole_1', 'hole', {
+        face: faceRef(RIM),
+        center: center.map(String),
+        direction: { type: 'normal' },
+        diameter: '4',
+        extent: { type: 'distance', value: '6' },
+        kind: 'simple',
+      }),
+    ];
+    return part;
+  }
+
+  async function rebuild(part: CadPart) {
+    const project = emptyProject('Enclosure');
+    project.parts[part.id] = part;
+    const kernel = new OcctKernel();
+    await kernel.init();
+    const result = await incrementalRebuild(part, project, kernel, 0);
+    const box = result.bodies.find(b => b.bodyId === BOX);
+    const volume = box ? (await kernel.getMassProperties(box.handle)).volume : undefined;
+    return { result, volume };
+  }
+
+  it('drills the rim over a boss through the ID the top face had before the shell', async () => {
+    const withoutHole = enclosure([0, 0]);
+    withoutHole.timeline.pop();
+    const before = await rebuild(withoutHole);
+    expect(before.result.featureResults.map(r => r.status)).toEqual(Array(5).fill('success'));
+
+    // Rim centroid sits at the box centre; on an upward face u = +Z and
+    // v = +X, so the boss at x = 44.5, z = 19.5 is center [19.5, 44.5].
+    const after = await rebuild(enclosure([19.5, 44.5]));
+    const hole = after.result.featureResults.find(r => r.featureId === 'hole_1');
+    expect(hole?.status === 'failed' ? hole.error.message : hole?.status).toBe('success');
+    expect(before.volume! - after.volume!).toBeCloseTo(Math.PI * 2 * 2 * 6, 3);
+  }, 60_000);
+
+  it('fails a hole that misses the body instead of reporting a no-op success', async () => {
+    // [0, 0] is the rim's centroid: the middle of the open cavity.
+    const { result } = await rebuild(enclosure([0, 0]));
+    const hole = result.featureResults.find(r => r.featureId === 'hole_1');
+    expect(hole?.status).toBe('failed');
+    if (hole?.status === 'failed') expect(hole.error.message).toMatch(/cuts nothing/);
+  }, 60_000);
 });

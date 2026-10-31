@@ -1029,4 +1029,84 @@ describe('OcctKernel — shell', () => {
     const { volume } = await k.getMassProperties(shelled.value);
     expect(volume).toBeCloseTo(6000 - 6 * 16 * 28, 3);
   });
+
+  /**
+   * An enclosure: 100×50×25 box shelled 2 mm open at the top, then four
+   * r=4 corner bosses (floor to rim, overlapping the walls by 0.5 mm)
+   * fused in one call, as a join extrude does. Returns each face's stable
+   * ID with the centroid of the face it resolves to.
+   */
+  async function enclosure(k: OcctKernel) {
+    const rect = await k.createSketchFace({
+      type: 'polygon',
+      origin: [0, 0, 0],
+      normal: [0, 0, 1],
+      vertices: [[-50, -25, 0], [50, -25, 0], [50, 25, 0], [-50, 25, 0]],
+    });
+    if (!rect.ok) throw new Error(rect.error.message);
+    const box = await k.extrudeFace(rect.value, [0, 0, 25], 'extrude_base');
+    if (!box.ok) throw new Error(box.error.message);
+    const topId = await stableIdOfFaceAtZ(k, box.value, 25);
+    const top = await k.resolveFaceRef(box.value, topId);
+    if (!top) throw new Error('top face did not resolve');
+    const shelled = await k.shell(box.value, [top], 2);
+    if (!shelled.ok) throw new Error(shelled.error.message);
+
+    const bosses: KernelBody[] = [];
+    for (const [x, y] of [[44.5, 19.5], [-44.5, 19.5], [44.5, -19.5], [-44.5, -19.5]] as const) {
+      const c = await k.createSketchFace({ type: 'circle', origin: [x, y, 2], center: [x, y, 2], normal: [0, 0, 1], radius: 4 });
+      if (!c.ok) throw new Error(c.error.message);
+      const boss = await k.extrudeFace(c.value, [0, 0, 23], `extrude_boss_${bosses.length}`);
+      if (!boss.ok) throw new Error(boss.error.message);
+      bosses.push(boss.value);
+    }
+    const fused = await k.booleanFuse([shelled.value, ...bosses]);
+    if (!fused.ok) throw new Error(fused.error.message);
+
+    await k.tessellate(fused.value, FINE_TESSELLATION);
+    const topo = await k.getTopology(fused.value);
+    const faces: { id: string; centroid: number[]; normal: number[] }[] = [];
+    for (const f of topo.faces) {
+      if (!f.stableFaceId) throw new Error(`${f.faceId} has no stable id`);
+      const resolved = await k.resolveFaceRef(fused.value, f.stableFaceId);
+      if (!resolved) throw new Error(`${f.stableFaceId} reported by getTopology does not resolve`);
+      const plane = await k.getFacePlane(resolved);
+      faces.push({ id: f.stableFaceId, centroid: plane.origin.map(v => +v.toFixed(3)), normal: plane.normal });
+    }
+    return { topId, faces };
+  }
+
+  it('every face of a shelled, multi-boss-joined body has its own resolvable ID', async () => {
+    const k = await newKernel();
+    const { faces } = await enclosure(k);
+
+    // Unique IDs, each resolving to a different face: an ID reported for
+    // one face can't resolve to another.
+    expect(new Set(faces.map(f => f.id)).size).toBe(faces.length);
+    expect(new Set(faces.map(f => f.centroid.join())).size).toBe(faces.length);
+  });
+
+  it('the rim keeps the removed top face\'s ID through the shell and a multi-body join', async () => {
+    const k = await newKernel();
+    const { topId, faces } = await enclosure(k);
+
+    // OCCT reports the removed face as modified into the rim; the join's
+    // later fuse steps must carry that forward rather than mint a new ID.
+    const rim = faces.find(f => f.id === topId);
+    expect(rim?.centroid).toEqual([expect.closeTo(0, 1), expect.closeTo(0, 1), expect.closeTo(25, 6)]);
+    expect(rim?.normal[2]).toBeCloseTo(1, 6);
+    // The rim's slivers under the bosses are suffixed pieces of it.
+    expect(faces.filter(f => f.id.startsWith(`${topId}:`)).length).toBeGreaterThan(0);
+  });
+
+  it('names the same faces the same way when the body is rebuilt', async () => {
+    // A rebuild on the same kernel runs with different heap addresses and
+    // so different face hashes; the names must not depend on them.
+    const k = await newKernel();
+    const sig = (fs: { id: string; centroid: number[] }[]) =>
+      fs.map(f => `${f.id}@${f.centroid.join()}`).sort();
+    const first = await enclosure(k);
+    const second = await enclosure(k);
+    expect(sig(second.faces)).toEqual(sig(first.faces));
+  });
 });

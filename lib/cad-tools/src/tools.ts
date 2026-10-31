@@ -1046,8 +1046,14 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
       'Drill a cylindrical hole into a body, perpendicular to a chosen ' +
       'face. Discovery: `list_bodies(partId)` → `list_faces(bodyId)` → ' +
       'pick the planar face with the right `stableFaceId`. ' +
-      '`center` is in face-local 2D coordinates (mm) — for the auto-' +
-      'center default, pass [0, 0]. ' +
+      '`center` is a [u, v] offset (mm) from the face centroid in the ' +
+      "face's tangent frame: v = +X and u = X × normal, except when the " +
+      'normal points mostly along ±X (|nx| > 0.9), where v = +Y and ' +
+      'u = Y × normal. So on an upward (+Y) face, center = [z, x] ' +
+      'relative to the centroid; on a +Z face, [-y, x]. The centroid of ' +
+      "a face with an opening (a shelled box's rim) lies off the face, " +
+      'so [0, 0] there drills into empty space. A hole that removes no ' +
+      'material fails the feature. ' +
       '`depth` is along the face normal (use a value larger than the ' +
       'body for a through-hole). ' +
       "`kind` selects 'simple' (cylindrical) | 'counterbore' (with a " +
@@ -1069,7 +1075,7 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
           items: { type: 'number' },
           minItems: 2,
           maxItems: 2,
-          description: 'Center [x, y] in face-local coordinates (mm). [0, 0] = face centroid.',
+          description: 'Center [u, v] in mm from the face centroid, in the face frame described above. [0, 0] = face centroid.',
         },
         diameter: {
           type: 'number',
