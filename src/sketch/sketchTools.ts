@@ -51,6 +51,7 @@ import {
   handleOffsetClick,
   handleSketchMirrorClick,
   handleDimensionClick,
+  closeDimensionPrompt,
   finishSpline,
 } from './sketchToolsExt.ts';
 
@@ -515,16 +516,16 @@ export function handleToolEscape(store: SketchEditorState): boolean {
     case 'offset':           session = { tool: 'offset', phase: 'idle', distance: session.distance }; break;
     case 'sketch-mirror':    session = { tool: 'sketch-mirror', phase: 'idle' }; break;
     case 'dimension':
-      // Cancel any pending dimension prompt and reset
-      store.setPendingDimension(null);
+      // Cancel any pending dimension prompt and its highlight, then reset
+      closeDimensionPrompt(store);
       session = { tool: 'dimension', phase: 'idle' };
       break;
     case 'dimension-x':
-      store.setPendingDimension(null);
+      closeDimensionPrompt(store);
       session = { tool: 'dimension-x', phase: 'idle' };
       break;
     case 'dimension-y':
-      store.setPendingDimension(null);
+      closeDimensionPrompt(store);
       session = { tool: 'dimension-y', phase: 'idle' };
       break;
     case 'select':

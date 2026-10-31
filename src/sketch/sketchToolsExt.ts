@@ -290,9 +290,14 @@ export function handleExtendClick(store: SketchEditorState, x: number, y: number
  *
  * Pick a line  → length dimension
  * Pick a circle → radius dimension
- * Pick a second line while one is already selected → angle dimension between
- *   the two lines (smart-dimension behaviour, an angle-between
- *   constraint flow).
+ * Pick a second line while the first line's length prompt is still open →
+ *   angle dimension between the two lines (smart-dimension behaviour, an
+ *   angle-between constraint flow).
+ *
+ * The angle pairing reads only the open prompt, never the editor selection,
+ * so once a length is committed or cancelled the next line pick is a fresh
+ * length. The picked geometry is selected as a highlight while its prompt is
+ * open; `closeDimensionPrompt` drops both together.
  *
  * Populates `store.pendingDimension`; the SketchEditor sees this and renders
  * a floating input field. On commit, the editor applies the matching
@@ -311,7 +316,7 @@ export function handleDimensionClick(
 ): void {
   const gid = pickGeometryAt(store, x, y);
   if (!gid) {
-    store.setPendingDimension(null);
+    closeDimensionPrompt(store);
     return;
   }
   const geom = store.geometries.get(gid);
@@ -334,42 +339,39 @@ export function handleDimensionClick(
       screenX: (a.x + b.x) / 2,
       screenY: (a.y + b.y) / 2,
     });
+    store.selectGeometry(gid, false);
     return;
   }
 
-  // Smart dimension: if a line is selected and the picked geometry is also a
-  // line (and not the same one), pop the angle dimension dialog.
-  if (geom.type === 'line') {
-    const selectedLineIds = [...store.selectedGeometryIds].filter(id => {
-      const g = store.geometries.get(id);
-      return g?.type === 'line' && id !== gid;
-    });
-    if (selectedLineIds.length === 1) {
-      const otherId = selectedLineIds[0]!;
-      const other = store.geometries.get(otherId);
-      if (other?.type === 'line') {
-        const a1 = store.points.get(other.startId);
-        const a2 = store.points.get(other.endId);
-        const b1 = store.points.get(geom.startId);
-        const b2 = store.points.get(geom.endId);
-        if (a1 && a2 && b1 && b2) {
-          const angA = Math.atan2(a2.y - a1.y, a2.x - a1.x);
-          const angB = Math.atan2(b2.y - b1.y, b2.x - b1.x);
-          // Normalize to (-π, π]
-          let diff = angB - angA;
-          while (diff > Math.PI) diff -= 2 * Math.PI;
-          while (diff <= -Math.PI) diff += 2 * Math.PI;
-          store.setPendingDimension({
-            kind: 'angle',
-            geometryA: otherId,
-            geometryB: gid,
-            current: diff,
-            // Dialog appears near the intersection (or midpoint of midpoints).
-            screenX: ((a1.x + a2.x) / 2 + (b1.x + b2.x) / 2) / 2,
-            screenY: ((a1.y + a2.y) / 2 + (b1.y + b2.y) / 2) / 2,
-          });
-          return;
-        }
+  // Smart dimension: if another line's length prompt is still open and the
+  // picked geometry is also a line, pop the angle dimension dialog.
+  const pending = store.pendingDimension;
+  if (geom.type === 'line' && pending?.kind === 'length' && pending.geometryId !== gid) {
+    const otherId = pending.geometryId;
+    const other = store.geometries.get(otherId);
+    if (other?.type === 'line') {
+      const a1 = store.points.get(other.startId);
+      const a2 = store.points.get(other.endId);
+      const b1 = store.points.get(geom.startId);
+      const b2 = store.points.get(geom.endId);
+      if (a1 && a2 && b1 && b2) {
+        const angA = Math.atan2(a2.y - a1.y, a2.x - a1.x);
+        const angB = Math.atan2(b2.y - b1.y, b2.x - b1.x);
+        // Normalize to (-π, π]
+        let diff = angB - angA;
+        while (diff > Math.PI) diff -= 2 * Math.PI;
+        while (diff <= -Math.PI) diff += 2 * Math.PI;
+        store.setPendingDimension({
+          kind: 'angle',
+          geometryA: otherId,
+          geometryB: gid,
+          current: diff,
+          // Dialog appears near the intersection (or midpoint of midpoints).
+          screenX: ((a1.x + a2.x) / 2 + (b1.x + b2.x) / 2) / 2,
+          screenY: ((a1.y + a2.y) / 2 + (b1.y + b2.y) / 2) / 2,
+        });
+        store.selectGeometry(gid, true);
+        return;
       }
     }
   }
@@ -386,7 +388,6 @@ export function handleDimensionClick(
       screenX: (a.x + b.x) / 2,
       screenY: (a.y + b.y) / 2,
     });
-    // Select it so the next dimension click can pop angle mode.
     store.selectGeometry(gid, false);
     return;
   }
@@ -400,6 +401,7 @@ export function handleDimensionClick(
       screenX: c.x + geom.radius * 0.6,
       screenY: c.y + geom.radius * 0.6,
     });
+    store.selectGeometry(gid, false);
     return;
   }
   // There are no `polygon` or `slot` editor-geometry dimension routes:
@@ -420,8 +422,18 @@ export function handleDimensionClick(
       screenX: (c.x + m.x) / 2,
       screenY: (c.y + m.y) / 2,
     });
+    store.selectGeometry(gid, false);
     return;
   }
+}
+
+/**
+ * Close the dimension prompt (commit, cancel, Escape, or an empty pick) and
+ * drop the highlight selection the dimension tool made for it.
+ */
+export function closeDimensionPrompt(store: SketchEditorState): void {
+  store.setPendingDimension(null);
+  store.clearSelection();
 }
 
 /**

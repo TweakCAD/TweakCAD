@@ -30,6 +30,7 @@ import type {
   SketchPointId,
 } from '@tweakcad/core/src/sketch/types.ts';
 import { dispatchApplyConstraint } from './sketchDispatch.ts';
+import { closeDimensionPrompt } from './sketchToolsExt.ts';
 
 interface DimensionsOverlayProps {
   sceneManager: SketchSceneManager | null;
@@ -166,7 +167,7 @@ export function DimensionsOverlay({ sceneManager }: DimensionsOverlayProps) {
           x={promptPos.x}
           y={promptPos.y}
           onCommit={(value) => commitPendingDimension(value)}
-          onCancel={() => useSketchEditorStore.getState().setPendingDimension(null)}
+          onCancel={() => closeDimensionPrompt(useSketchEditorStore.getState())}
         />
       )}
     </div>
@@ -303,7 +304,7 @@ function commitPendingDimension(value: number): void {
     });
   }
 
-  store.setPendingDimension(null);
+  closeDimensionPrompt(store);
 }
 
 // ---- Constraint → label position ----
