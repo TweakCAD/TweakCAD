@@ -49,25 +49,26 @@ export async function loadCloudProject(projectId: string): Promise<CloudLoadResu
     // blank doc.
     return { name: result.project.name, doc: null as unknown as CadProject, etag: null };
   }
-  const res = await fetch(result.downloadUrl, { credentials: 'omit' });
-  if (!res.ok) throw new Error(`Cloud document fetch failed: ${res.status}`);
-  // Validated, not cast. This was `(await res.json()) as CadProject` — the
-  // least-checked path in the app, and the one that loads documents the user
-  // did not author, including anything remixed from the public gallery.
-  const loaded = loadCadDocumentOrThrow(await res.json());
+  // `downloadUrl` only says a document exists. The bytes come through the app
+  // (see `loadDocument`), because the signed URL is cross-origin.
+  const { document, etag } = await client().loadDocument(projectId);
+  // Validated, not cast: this path also loads documents the user did not
+  // author, including anything remixed from the public gallery.
+  const loaded = loadCadDocumentOrThrow(document);
   for (const d of loaded.diagnostics) {
     console.warn(`[cloud load] ${d.message}`);
   }
   // Seed the precondition for subsequent saves. Everything loaded here is
   // what the server currently holds, so this etag is what our first write
   // claims to be replacing.
-  if (result.etag) liveEtags.set(projectId, result.etag);
+  const liveEtag = etag ?? result.etag;
+  if (liveEtag) liveEtags.set(projectId, liveEtag);
   // Pull the imported geometry back in. The document the server holds names
   // its imports but does not carry them; without this the project opens to a
   // body that refuses to build, telling the user to re-link a file they never
   // unlinked.
   const doc = await hydrateReferenceAssets(projectId, loaded.project);
-  return { name: result.project.name, doc, etag: result.etag };
+  return { name: result.project.name, doc, etag: liveEtag };
 }
 
 

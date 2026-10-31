@@ -10,6 +10,7 @@ import { ApiClient } from '@tweakcad/api-client';
 import type {
   CreateProjectRequest} from '@tweakcad/api-types';
 import {
+  ApiError,
   ProjectSummary,
   Project,
   PageResponse,
@@ -104,8 +105,12 @@ export class CloudStorageProvider {
   readonly id = 'cloud' as const;
   readonly label = 'Cloud Storage';
   private api: ApiClient;
+  private baseUrl: string;
+  private fetchImpl: typeof fetch;
 
   constructor(config: CloudStorageConfig) {
+    this.baseUrl = config.baseUrl.replace(/\/$/, '');
+    this.fetchImpl = config.fetch ?? fetch.bind(globalThis);
     this.api = new ApiClient({
       baseUrl: config.baseUrl,
       ...(config.fetch ? { fetch: config.fetch } : {}),
@@ -137,6 +142,33 @@ export class CloudStorageProvider {
     );
     if (!res.ok) throw apiError(res.error);
     return res.value;
+  }
+
+  /**
+   * The live document, parsed but not validated, with the etag of the bytes
+   * that were served.
+   *
+   * Read through the app rather than `downloadUrl`: that is a signed bucket
+   * URL on another origin, and a cross-origin `fetch()` of it needs bucket
+   * CORS the editor cannot count on. The etag comes from this response, not
+   * from {@link load}, so it describes exactly the bytes returned even when
+   * an autosave lands between the two requests.
+   */
+  async loadDocument(projectId: string): Promise<{ document: unknown; etag: string | null }> {
+    const response = await this.fetchImpl(
+      `${this.baseUrl}/api/v1/projects/${encodeURIComponent(projectId)}/document`,
+      { method: 'GET', headers: { Accept: 'application/json' }, credentials: 'include', cache: 'no-store' },
+    );
+    if (!response.ok) {
+      const raw: unknown = await response.json().catch(() => null);
+      const parsed = ApiError.safeParse(raw);
+      throw apiError(
+        parsed.success
+          ? parsed.data
+          : { code: 'internal', message: `Document request failed (${response.status})` },
+      );
+    }
+    return { document: await response.json(), etag: response.headers.get('etag') };
   }
 
   /**

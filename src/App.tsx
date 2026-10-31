@@ -26,6 +26,8 @@ import {
   save,
   saveAsToDisk,
   saveAsNewCloudProject,
+  openFileFromDisk,
+  type BootResolution,
   type ProjectContext,
   type DocumentStorage,
   type FileOpsHandles,
@@ -38,7 +40,8 @@ import { makeImportedData } from '@tweakcad/core/src/document/importedData.ts';
 import { sha256Hex } from '@tweakcad/core/src/document/contentHash.ts';
 import { referenceId, generateId } from '@tweakcad/core/src/ids.ts';
 import { Toast } from './components/Toast.tsx';
-import { useToastStore } from './components/toastStore.ts';
+import { enqueueToast, useToastStore } from './components/toastStore.ts';
+import { nameDocumentInUrl } from './storage/context.ts';
 import { SignInModal } from './components/SignInModal.tsx';
 import { BootGate, type BootGateKind } from './components/BootGate.tsx';
 import { rememberOfflineChoice } from './storage/offlineChoice.ts';
@@ -70,8 +73,9 @@ type StorageRuntime = {
  *   1. Synchronously initialize the in-memory app (no I/O).
  *   2. Fire the SaaS probe so cloud-aware features know whether the backend
  *      is reachable.
- *   3. Resolve the initial document from URL / IDB / cloud — never blocks
- *      the editor on a network error; falls back to local mirror or blank.
+ *   3. Resolve the initial document from URL / IDB / cloud. A cloud project
+ *      that cannot be read falls back to this browser's copy, or to a gate
+ *      that says why — never to a blank document bound to the project.
  *   4. Attach the autosave scheduler.
  */
 export function App() {
@@ -193,8 +197,45 @@ export function App() {
   }, [storage, appState.documentStore]);
 
   // Resolve initial document + attach autosave. Runs once on mount.
+  /**
+   * Set when boot resolved to no document. Clearing it re-runs boot, which
+   * is how both answers take effect: "continue offline" writes the tab's
+   * choice first, and signing in changes what `decideBoot` sees. Open file
+   * clears it by adopting the picked file directly.
+   */
+  const [bootGate, setBootGate] = useState<BootGateKind | null>(null);
+  const [bootGateBusy, setBootGateBusy] = useState(false);
+  const [bootGateError, setBootGateError] = useState<string | null>(null);
+
+  /**
+   * Make `resolution` this window's document and start autosaving it.
+   *
+   * Shared by boot and by the gate's Open file, which reaches a document
+   * without boot having resolved one.
+   */
+  const autosaveUnsubRef = useRef<(() => void) | null>(null);
+  const adoptDocument = useCallback((resolution: BootResolution) => {
+    if (resolution.doc !== appState.documentStore.getState()) {
+      appState.documentStore.replaceDocument(resolution.doc);
+    }
+
+    const scheduler = new AutosaveScheduler(resolution.context);
+    scheduler.setStorage(resolution.storage);
+    autosaveUnsubRef.current?.();
+    autosaveUnsubRef.current = scheduler.attach(appState.documentStore);
+
+    setStorage({
+      scheduler,
+      context: resolution.context,
+      storage: resolution.storage,
+      ...(resolution.warning ? { bootWarning: resolution.warning } : {}),
+      ...(resolution.recoveredFromAutosave && resolution.recoveredFilename
+        ? { recoveredFilename: resolution.recoveredFilename }
+        : {}),
+    });
+  }, [appState]);
+
   useEffect(() => {
-    let unsub: (() => void) | null = null;
     let cancelled = false;
     (async () => {
       // Kick off the SaaS probe so the rest of the UI can render cloud
@@ -213,44 +254,33 @@ export function App() {
       const resolution = await resolveInitialProject(defaultDoc);
       if (cancelled) return;
 
-      // Boot deliberately opened nothing: signed in with a bare URL, or
-      // backend-up-and-signed-out. Show the gate and attach no autosave —
-      // there is no document to save, and minting a blank one here is the
-      // guess this whole change exists to stop making.
+      // Boot deliberately opened nothing: signed in with a bare URL,
+      // backend-up-and-signed-out, or a named cloud project that could not
+      // be read. Show the gate and attach no autosave — there is no
+      // document to save, and minting a blank one here is the guess this
+      // whole change exists to stop making.
       if (!('doc' in resolution)) {
         setBootGate(resolution.kind);
+        setBootGateError(resolution.kind === 'load-failed' ? resolution.message : null);
         return;
       }
 
-      if (resolution.doc !== defaultDoc) {
-        appState.documentStore.replaceDocument(resolution.doc);
-      }
-
-      const scheduler = new AutosaveScheduler(resolution.context);
-      scheduler.setStorage(resolution.storage);
-      unsub = scheduler.attach(appState.documentStore);
-
-      setStorage({
-        scheduler,
-        context: resolution.context,
-        storage: resolution.storage,
-        ...(resolution.warning ? { bootWarning: resolution.warning } : {}),
-        ...(resolution.recoveredFromAutosave && resolution.recoveredFilename
-          ? { recoveredFilename: resolution.recoveredFilename }
-          : {}),
-      });
+      adoptDocument(resolution);
     })();
     return () => {
       cancelled = true;
-      unsub?.();
+      autosaveUnsubRef.current?.();
+      autosaveUnsubRef.current = null;
     };
-  }, [appState]);
+  }, [appState, adoptDocument]);
 
-  // Surface boot warnings (e.g. "SaaS unreachable, opened local copy") via a
-  // console message until the UI gets a proper toast surface.
+  // Boot opened something other than what the URL asked for (this
+  // browser's copy, or nothing from an unreachable backend). Say so where
+  // the user is looking.
   useEffect(() => {
     if (storage?.bootWarning) {
       console.warn('[boot]', storage.bootWarning);
+      enqueueToast({ tone: 'warning', message: storage.bootWarning, durationMs: 20_000 });
     }
   }, [storage?.bootWarning]);
 
@@ -280,6 +310,9 @@ export function App() {
       setContext: (next) => {
         setStorage((prev) => (prev ? { ...prev, context: next } : prev));
         storage.scheduler.setContext(next);
+        // A reload must come back to the document this window now holds,
+        // not to the project or file it started on.
+        nameDocumentInUrl(next);
       },
       blankDoc: () => newProjectWithPart(generateProjectName(), 'Part 1'),
       confirm,
@@ -292,7 +325,10 @@ export function App() {
     if (fileHandles) void newDocument(fileHandles);
   }, [fileHandles]);
   const onFileOpen = useCallback(() => {
-    if (fileHandles) void openFromDisk(fileHandles);
+    if (!fileHandles) return;
+    openFromDisk(fileHandles).catch((err: unknown) => {
+      reportFileError('Open failed', err);
+    });
   }, [fileHandles]);
 
   /**
@@ -336,7 +372,7 @@ export function App() {
       const project = appState.documentStore.getState();
       const partIds = Object.keys(project.parts);
       if (partIds.length === 0) {
-        console.warn('[App] Import: no parts in document; create or open a project first');
+        reportFileError('Import failed', new Error('The document has no part to import into.'));
         return;
       }
       // v1 imports into the first part. Multi-part documents land
@@ -381,10 +417,10 @@ export function App() {
         ...(asset ? { asset } : {}),
       });
       if (!result.ok) {
-        console.error('[App] Import dispatch failed:', result.error.message);
+        reportFileError('Import failed', new Error(result.error.message));
       }
     } catch (err) {
-      console.error('[App] Import failed:', err);
+      reportFileError('Import failed', err);
     }
   }, [appState.documentStore, appState.commandBus, storage, confirm]);
 
@@ -405,7 +441,7 @@ export function App() {
       const project = appState.documentStore.getState();
       const partIds = Object.keys(project.parts);
       if (partIds.length === 0) {
-        console.warn('[App] Component import: no parts; create or open a project first');
+        reportFileError('Component import failed', new Error('The document has no part to import into.'));
         return;
       }
       const partId = partIds[0] as import('@tweakcad/core/src/ids.ts').PartId;
@@ -433,10 +469,10 @@ export function App() {
         },
       });
       if (!result.ok) {
-        console.error('[App] Component import dispatch failed:', result.error.message);
+        reportFileError('Component import failed', new Error(result.error.message));
       }
     } catch (err) {
-      console.error('[App] Component import failed:', err);
+      reportFileError('Component import failed', err);
     }
   }, [appState.documentStore, appState.commandBus]);
 
@@ -508,15 +544,6 @@ export function App() {
   // when the user picks "Cloud" but isn't signed in yet.
   const [signInOpen, setSignInOpen] = useState(false);
 
-  /**
-   * Set when boot resolved to no document. Clearing it re-runs boot, which
-   * is how both answers take effect: "continue offline" writes the tab's
-   * choice first, and signing in changes what `decideBoot` sees.
-   */
-  const [bootGate, setBootGate] = useState<BootGateKind | null>(null);
-  const [bootGateBusy, setBootGateBusy] = useState(false);
-  const [bootGateError, setBootGateError] = useState<string | null>(null);
-
   const onContinueOffline = useCallback(() => {
     rememberOfflineChoice();
     window.location.reload();
@@ -545,6 +572,30 @@ export function App() {
       setBootGateBusy(false);
     }
   }, []);
+  /**
+   * Open file, from the empty state. The file becomes this window's
+   * document as it would from File → Open, and no cloud project is created:
+   * Save As → Cloud makes the one project, rather than New project making
+   * an empty one first.
+   */
+  const onOpenFileFromGate = useCallback(async () => {
+    setBootGateError(null);
+    try {
+      const result = await openFileFromDisk();
+      if (!result) return;
+      const context: ProjectContext = { kind: 'local-stored', localId: `disk-${result.filename}` };
+      adoptDocument({
+        doc: result.doc,
+        context,
+        storage: { kind: 'disk', handle: result.handle, filename: result.filename, lastSavedAt: Date.now() },
+        source: 'local-only',
+      });
+      nameDocumentInUrl(context);
+      setBootGate(null);
+    } catch (err) {
+      setBootGateError(err instanceof Error ? err.message : 'Could not open the file.');
+    }
+  }, [adoptDocument]);
   const onRequestSignIn = useCallback(() => setSignInOpen(true), []);
   const onSignOut = useCallback(async () => {
     try {
@@ -573,6 +624,8 @@ export function App() {
           onSignIn={() => setSignInOpen(true)}
           onContinueOffline={onContinueOffline}
           onNewProject={() => void onNewCloudProject()}
+          onOpenFile={() => void onOpenFileFromGate()}
+          onRetry={() => window.location.reload()}
           projectsUrl="/dashboard"
           busy={bootGateBusy}
           error={bootGateError}
@@ -820,6 +873,18 @@ function AutoExportStatusPanel({ statuses }: { statuses: AutoExportStatus[] }) {
       </ul>
     </div>
   );
+}
+
+/**
+ * Tell the user a file operation failed, in a toast and in the in-app
+ * console. A console.error alone is invisible: the user sees nothing happen
+ * and cannot tell a failed import from a slow one.
+ */
+function reportFileError(title: string, err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(`[App] ${title}:`, err);
+  consoleLog('error', `${title}: ${message}`, 'file');
+  enqueueToast({ tone: 'warning', title, message });
 }
 
 /**

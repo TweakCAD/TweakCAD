@@ -27,6 +27,7 @@ const putReference = vi.fn();
 const referenceUrl = vi.fn();
 const createVersion = vi.fn();
 const load = vi.fn();
+const loadDocument = vi.fn();
 
 class StubConflictError extends Error {}
 
@@ -39,6 +40,7 @@ vi.mock('@tweakcad/cloud-providers', () => ({
     referenceUrl = referenceUrl;
     createVersion = createVersion;
     load = load;
+    loadDocument = loadDocument;
   },
   CloudConflictError: StubConflictError,
 }));
@@ -51,8 +53,9 @@ const {
   saveCloudProject, createCloudVersion, clearCloudEtag,
   wouldExceedCloudLimit, CLOUD_DOCUMENT_MAX_BYTES,
   listCloudRevisions, restoreCloudRevision,
-  splitReferenceAssets, hydrateReferenceAssets,
+  splitReferenceAssets, hydrateReferenceAssets, loadCloudProject,
 } = await import('./cloudAdapter.ts');
+const { newProjectWithPart } = await import('@tweakcad/core/src/document/factory.ts');
 
 const PROJECT = 'proj_1';
 const doc = () => ({ schemaVersion: 1, metadata: { name: 'x' } }) as never;
@@ -426,5 +429,47 @@ describe('reference uploads — not on every save', () => {
     const text = await sent.text();
     expect(text).not.toContain('QUJD');
     expect(text).toContain('big.step');
+  });
+});
+
+describe('loadCloudProject', () => {
+  const summary = { project: { name: 'Enclosure' }, downloadUrl: 'https://bucket.example/doc', etag: 'etag-meta', sizeBytes: 10 };
+
+  it('reads the document through the app, not the signed bucket URL', async () => {
+    // The signed URL is cross-origin; fetching it needs bucket CORS, and a
+    // blocked read is a project that will not open.
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    load.mockResolvedValue(summary);
+    loadDocument.mockResolvedValue({ document: newProjectWithPart('Enclosure', 'Part 1'), etag: 'etag-doc' });
+
+    const result = await loadCloudProject(PROJECT);
+
+    expect(loadDocument).toHaveBeenCalledWith(PROJECT);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result?.doc.metadata.name).toBe('Enclosure');
+    fetchSpy.mockRestore();
+  });
+
+  it('seeds the save precondition from the bytes it was served', async () => {
+    load.mockResolvedValue(summary);
+    loadDocument.mockResolvedValue({ document: newProjectWithPart('Enclosure', 'Part 1'), etag: 'etag-doc' });
+    const result = await loadCloudProject(PROJECT);
+    expect(result?.etag).toBe('etag-doc');
+
+    await saveCloudProject(PROJECT, doc());
+    expect(save.mock.calls[0]![2]).toEqual({ ifMatch: 'etag-doc' });
+  });
+
+  it('has no document to read for a project that was never saved', async () => {
+    load.mockResolvedValue({ ...summary, downloadUrl: null, etag: null });
+    const result = await loadCloudProject(PROJECT);
+    expect(result?.doc).toBeNull();
+    expect(loadDocument).not.toHaveBeenCalled();
+  });
+
+  it('throws when the document cannot be read, rather than returning nothing', async () => {
+    load.mockResolvedValue(summary);
+    loadDocument.mockRejectedValue(new Error('internal: The project document is unavailable.'));
+    await expect(loadCloudProject(PROJECT)).rejects.toThrow('unavailable');
   });
 });

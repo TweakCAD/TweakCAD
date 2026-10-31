@@ -41,6 +41,33 @@ export function newLocalId(): string {
  * editing is not a history entry, and Back should leave the editor rather
  * than step through its own bookkeeping.
  */
+/**
+ * Make the address bar name the document `context` now points at.
+ *
+ * Called whenever a file operation re-anchors the window (New, Open, Save
+ * As). The URL is what boot reads on reload, so a window that opened a file
+ * or saved as a new cloud project must stop naming the project it started
+ * on — otherwise a reload opens that one instead. Exactly one of
+ * `?project=` / `?local=` survives; `local-fresh` keeps neither, and
+ * autosave adds `?local=` on its first write.
+ */
+export function nameDocumentInUrl(context: ProjectContext): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const url = new URL(window.location.href);
+    const before = url.toString();
+    url.searchParams.delete('project');
+    url.searchParams.delete('local');
+    if (context.kind === 'cloud') url.searchParams.set('project', context.cloudProjectId);
+    if (context.kind === 'local-stored') url.searchParams.set('local', context.localId);
+    if (url.toString() === before) return;
+    window.history.replaceState(window.history.state, '', url.toString());
+  } catch {
+    // Same trade as rememberLocalIdInUrl: losing the reload identity is not
+    // worth failing the file operation over.
+  }
+}
+
 export function rememberLocalIdInUrl(localId: string): void {
   if (typeof window === 'undefined') return;
   try {

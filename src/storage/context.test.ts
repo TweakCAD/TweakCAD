@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it, afterEach } from 'vitest';
-import { localIdFromUrl, newLocalId, rememberLocalIdInUrl } from './context.ts';
+import { localIdFromUrl, nameDocumentInUrl, newLocalId, rememberLocalIdInUrl } from './context.ts';
 
 /** Minimal `window` stand-in: a location and a history that records writes. */
 function fakeWindow(href: string) {
@@ -106,5 +106,40 @@ describe('rememberLocalIdInUrl', () => {
     Reflect.deleteProperty(globalThis, 'window');
     expect(() => rememberLocalIdInUrl('doc_abc')).not.toThrow();
     expect(localIdFromUrl()).toBeNull();
+  });
+});
+
+describe('nameDocumentInUrl', () => {
+  it('points a window at the cloud project it was saved as', () => {
+    // Save As → Cloud from a window opened on another project. Leaving the
+    // old id in place made a reload open the wrong project.
+    const f = install('https://tweakcad.com/cad?project=proj_old');
+    nameDocumentInUrl({ kind: 'cloud', cloudProjectId: 'proj_new', localId: 'cloud-mirror-proj_new' });
+    const url = new URL(f.replaced[0]!);
+    expect(url.searchParams.get('project')).toBe('proj_new');
+    expect(url.searchParams.has('local')).toBe(false);
+  });
+
+  it('drops the project when a file is opened in its window', () => {
+    const f = install('https://tweakcad.com/cad?project=proj_old');
+    nameDocumentInUrl({ kind: 'local-stored', localId: 'disk-enclosure.cadjson' });
+    const url = new URL(f.replaced[0]!);
+    expect(url.searchParams.has('project')).toBe(false);
+    expect(url.searchParams.get('local')).toBe('disk-enclosure.cadjson');
+  });
+
+  it('names nothing for a fresh document and keeps other parameters', () => {
+    const f = install('https://tweakcad.com/cad?local=doc_abc&panel=history');
+    nameDocumentInUrl({ kind: 'local-fresh' });
+    const url = new URL(f.replaced[0]!);
+    expect(url.searchParams.has('local')).toBe(false);
+    expect(url.searchParams.has('project')).toBe(false);
+    expect(url.searchParams.get('panel')).toBe('history');
+  });
+
+  it('does nothing when the URL already names the document', () => {
+    const f = install('https://tweakcad.com/cad?project=proj_1');
+    nameDocumentInUrl({ kind: 'cloud', cloudProjectId: 'proj_1', localId: 'cloud-mirror-proj_1' });
+    expect(f.replaced).toHaveLength(0);
   });
 });

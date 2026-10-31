@@ -38,10 +38,14 @@ import type { DocumentStorage } from './documentStorage.ts';
  * document?" is "the one you pick". Returning a blank document instead
  * would be the same guess the adoption bug made, just quieter.
  */
-export type BootGate = {
-  kind: 'gate' | 'choose';
-  intent: BootIntent;
-};
+export type BootGate =
+  | { kind: 'gate' | 'choose'; intent: BootIntent }
+  /**
+   * The URL names a cloud project that could not be read and this browser
+   * holds no copy of it. Shown rather than a blank document: bound to the
+   * project, a blank document's first autosave would replace the real one.
+   */
+  | { kind: 'load-failed'; intent: BootIntent; message: string };
 
 export type BootResolution = {
   kind?: 'document';
@@ -214,10 +218,21 @@ function contextFromStorage(storage: DocumentStorage, localId: string): ProjectC
   return { kind: 'local-stored', localId };
 }
 
+/** The reason a cloud load failed, worded for the person who asked for it. */
+export function describeCloudLoadError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  // Provider errors read "<code>: <message>". The code is for logs.
+  const message = raw.replace(/^[a-z_]+: /, '');
+  if (/^not_found: /.test(raw)) return 'The project was not found in your account.';
+  if (err instanceof TypeError) return 'The server could not be reached.';
+  if (!message) return 'The project could not be read.';
+  return /[.!?]$/.test(message) ? message : `${message}.`;
+}
+
 async function resolveCloudIdBoot(
   cloudProjectId: string,
   defaultDoc: CadProject,
-): Promise<BootResolution> {
+): Promise<BootResolution | Omit<Extract<BootGate, { kind: 'load-failed' }>, 'intent'>> {
   const saas = await probeSaas();
 
   // Case A: SaaS unavailable. ?project=ID is moot in standalone mode —
@@ -294,25 +309,22 @@ async function resolveCloudIdBoot(
         source: 'cloud',
       };
     } catch (err) {
-      console.warn('[boot] cloud load failed, falling back to local mirror', err);
+      console.warn('[boot] cloud load failed', err);
+      const reason = describeCloudLoadError(err);
       const mirror = await localStore.getByCloudProjectId(cloudProjectId);
       if (mirror) {
+        // Opened detached, like the offline cases above. Bound to the
+        // project, the first autosave would replace the server's copy with
+        // this one with no precondition, and this copy may be older.
         return {
           doc: mirror.doc,
-          context: { kind: 'cloud', cloudProjectId, localId: mirror.id },
-          storage: { kind: 'cloud', projectId: cloudProjectId, slug: mirror.name },
+          context: { kind: 'local-stored', localId: mirror.id },
+          storage: { kind: 'unsaved' },
           source: 'local-mirror',
-          warning: 'Cloud load failed; opened your local copy. Will retry on save.',
+          warning: `The cloud project didn't open: ${reason} Showing the copy saved in this browser; changes stay in this browser.`,
         };
       }
-      const localId = `cloud-mirror-${cloudProjectId}`;
-      return {
-        doc: defaultDoc,
-        context: { kind: 'cloud', cloudProjectId, localId },
-        storage: { kind: 'cloud', projectId: cloudProjectId, slug: cloudProjectId },
-        source: 'cloud',
-        warning: 'Cloud load failed and no local copy was found. Starting blank.',
-      };
+      return { kind: 'load-failed', message: reason };
     }
   }
 
