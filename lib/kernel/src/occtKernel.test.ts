@@ -14,6 +14,7 @@
 import { describe, expect, it } from 'vitest';
 import { OcctKernel } from './occtKernel.ts';
 import { FINE_TESSELLATION } from './types.ts';
+import type { KernelBody } from './types.ts';
 
 async function newKernel(): Promise<OcctKernel> {
   const k = new OcctKernel();
@@ -993,5 +994,39 @@ describe('OcctKernel — sweep', () => {
       expect(swept.ok).toBe(false);
       if (!swept.ok) expect(swept.error.code).toBe('SWEEP_DEGENERATE');
     }
+  });
+});
+
+describe('OcctKernel — shell', () => {
+  /** Stable id of the box face whose vertices all sit at z = `z`. */
+  async function stableIdOfFaceAtZ(k: OcctKernel, body: KernelBody, z: number) {
+    const mesh = await k.tessellate(body, FINE_TESSELLATION);
+    const topo = await k.getTopology(body);
+    const face = topo.faces.find(f => {
+      for (let i = 3 * f.triStart; i < 3 * f.triEnd; i++) {
+        if (Math.abs(mesh.positions[(mesh.indices[i] as number) * 3 + 2]! - z) > 1e-6) return false;
+      }
+      return true;
+    });
+    if (!face?.stableFaceId) throw new Error(`no face at z=${z}`);
+    return face.stableFaceId;
+  }
+
+  it('positive thickness hollows inward: outer bounds unchanged, cavity removed', async () => {
+    const k = await newKernel();
+    const box = await k.makeBox({ origin: [0, 0, 0], width: 10, height: 20, depth: 30 });
+    if (!box.ok) throw new Error('precondition failed');
+    const top = await k.resolveFaceRef(box.value, await stableIdOfFaceAtZ(k, box.value, 30));
+    if (!top) throw new Error('top face did not resolve');
+
+    const shelled = await k.shell(box.value, [top], 2);
+    if (!shelled.ok) throw new Error(shelled.error.message);
+
+    const bb = await k.getBoundingBox(shelled.value);
+    expect(bb.min).toEqual([expect.closeTo(0, 4), expect.closeTo(0, 4), expect.closeTo(0, 4)]);
+    expect(bb.max).toEqual([expect.closeTo(10, 4), expect.closeTo(20, 4), expect.closeTo(30, 4)]);
+    // 10×20×30 minus a 6×16×28 cavity open at the top.
+    const { volume } = await k.getMassProperties(shelled.value);
+    expect(volume).toBeCloseTo(6000 - 6 * 16 * 28, 3);
   });
 });

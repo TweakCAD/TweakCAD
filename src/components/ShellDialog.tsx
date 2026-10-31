@@ -27,7 +27,7 @@ export interface ShellDialogFaceEntry {
 }
 
 export interface ShellDialogResult {
-  /** Wall thickness in mm (positive). Builder negates for inward shell. */
+  /** Wall thickness in mm (positive); the shell grows inward. */
   thickness: number;
 }
 

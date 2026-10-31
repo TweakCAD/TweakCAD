@@ -13,11 +13,11 @@
  *      *body* faces only.
  *   3. Resolve each FaceRef to a runtime KernelFace via
  *      `kernel.resolveFaceRef` (topology-naming layer).
- *   4. Evaluate the user-entered thickness expression and *negate* it
- *      before passing to OCCT so the wall grows inward (the default
- *      direction). Schema stores thickness as a positive number; if a
- *      future "outward shell" toggle lands, it can flip the sign here.
- *   5. Call `kernel.shell(body, faces, -thickness, tolerance)`. The
+ *   4. Evaluate the user-entered thickness expression. Schema stores
+ *      thickness as a positive number and the kernel shells inward for
+ *      positive values; if a future "outward shell" toggle lands, it
+ *      can flip the sign here.
+ *   5. Call `kernel.shell(body, faces, thickness, tolerance)`. The
  *      kernel routes this through `shellWithHistory` for per-face
  *      evolution.
  *   6. Reuse the source bodyId on the result so downstream features
@@ -99,10 +99,10 @@ export async function buildShell(
     faces.push(resolved);
   }
 
-  // 4. Thickness. Evaluated, validated positive, then negated before
-  // passing to OCCT so the shell wall grows inward (the default
-  // direction). A future `direction: 'inward' | 'outward'`
-  // toggle can sit here without a schema change.
+  // 4. Thickness. Evaluated and validated positive; the kernel shells
+  // inward for positive values (the default direction). A future
+  // `direction: 'inward' | 'outward'` toggle can negate it here
+  // without a schema change.
   const thicknessResult = evaluateExpression(inputs.thickness, params);
   if (!thicknessResult.ok) {
     throw new Error(`Failed to resolve shell thickness: ${thicknessResult.error}`);
@@ -110,12 +110,11 @@ export async function buildShell(
   if (thicknessResult.value <= 0) {
     throw new Error(`Shell thickness must be positive (got ${thicknessResult.value})`);
   }
-  const occtThickness = -thicknessResult.value; // inward
   const tolerance = inputs.tolerance ?? 1e-3;
 
   // 5. Kernel call. The kernel routes through shellWithHistory and
   // propagates stable IDs through `storeBodyWithHistory`.
-  const shellResult = await kernel.shell(body, faces, occtThickness, tolerance);
+  const shellResult = await kernel.shell(body, faces, thicknessResult.value, tolerance);
   if (!shellResult.ok) {
     throw new Error(`Shell failed: ${shellResult.error.message}`);
   }

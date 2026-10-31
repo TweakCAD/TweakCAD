@@ -184,11 +184,9 @@ export interface CadKernel {
    * @param facesToRemove Faces left open after shelling. Must reference
    *                      faces on `body` (caller's responsibility); the
    *                      kernel doesn't cross-check.
-   * @param thickness     Wall thickness in mm. *Negative* values shell
-   *                      inward (the usual UX default); positive shells
-   *                      outward. The builder typically passes a
-   *                      negative number derived from the user-entered
-   *                      positive thickness.
+   * @param thickness     Wall thickness in mm. Positive values shell
+   *                      inward (the outer surface stays put); negative
+   *                      values shell outward.
    * @param tolerance     Numerical tolerance for the offset fit. 1e-3
    *                      is occt-wasm's loose preset; 1e-6 is precise.
    */
