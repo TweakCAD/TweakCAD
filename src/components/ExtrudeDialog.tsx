@@ -45,7 +45,7 @@ export interface ExtrudeDialogResult {
   /** Target plane for `extentType: 'toPlane'`. Undefined for other modes. */
   targetPlane?: ExtrudeDefaultPlane;
   operation: ExtrudeOperation;
-  /** Picked target body for join / cut. Undefined means "auto" (all in context). */
+  /** Picked target body for join / cut. Undefined means no pick. */
   targetBodyId?: string;
 }
 
@@ -289,9 +289,8 @@ export function ExtrudeDialog({ sketchName, profileCount = 1, initialValues, ava
               value={targetBodyId}
               onChange={e => setTargetBodyId(e.target.value)}
               style={styles.select}
-              title="Target body for join / cut. Auto = every body in the part (legacy)."
             >
-              <option value="">Auto (all)</option>
+              <option value="">Auto</option>
               {availableBodies!.map(body => (
                 <option key={body.id} value={body.id}>{body.label}</option>
               ))}

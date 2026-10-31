@@ -41,7 +41,7 @@ export interface PrimitiveDialogResult {
   dimensions: Record<string, number>;
   position: [number, number, number];
   operation: PrimitiveOperation;
-  /** Picked target for join / cut. Undefined means "all bodies in the part". */
+  /** Picked target for join / cut. Undefined means no pick. */
   targetBodyId?: string;
 }
 
@@ -322,7 +322,7 @@ export function PrimitiveDialog({
               value={targetBodyId}
               onChange={e => setTargetBodyId(e.target.value)}
             >
-              <option value="">All bodies</option>
+              <option value="">Auto</option>
               {availableBodies?.map(b => (
                 <option key={b.id} value={b.id}>{b.label}</option>
               ))}

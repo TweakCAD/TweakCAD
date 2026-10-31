@@ -311,6 +311,24 @@ export function Shell({
     [partForFeature, bodyToFeatureMap],
   );
 
+  /**
+   * Target-picker entries for a join / cut dialog: the bodies built by the
+   * part's timeline, labelled by the feature that produced them.
+   */
+  const bodyOptionsForPart = useCallback(
+    (partId: PartId | null): { id: string; label: string }[] => {
+      const part = partId ? project.parts[partId] : undefined;
+      if (!part) return [];
+      return Object.entries(bodyToFeatureMap)
+        .filter(([, fid]) => part.timeline.some(f => f.id === fid))
+        .map(([bid, fid], i) => {
+          const feature = part.timeline.find(f => f.id === fid);
+          return { id: String(bid), label: feature ? `Body ${i + 1} (${feature.name})` : `Body ${i + 1}` };
+        });
+    },
+    [project.parts, bodyToFeatureMap],
+  );
+
 
   // Sketch mode state (old store for mode tracking + camera save/restore)
   const sketchActive = useSketchActive();
@@ -1391,8 +1409,8 @@ export function Shell({
             }
           : { type: 'distance' as const, value: String(result.distance) };
 
-    // Empty picker = "Auto (all)" → leave targetBodies undefined so the
-    // builder's whole-context back-compat path takes over. When the user
+    // Empty picker = "Auto" → leave targetBodies undefined so join and cut
+    // act on the bodies the extrude touches. When the user
     // does pick, single-select for now; the schema is multi-target so
     // the array shape is right for the future multi-picker.
     const targetBodies = result.targetBodyId
@@ -1997,6 +2015,9 @@ export function Shell({
         angle: String(result.angle),
         operation: result.operation,
         startOffset: String(result.startOffset),
+        ...(result.targetBodyId
+          ? { targetBodies: [{ partId, bodyId: result.targetBodyId as BodyId }] }
+          : {}),
       },
     });
     if (cmdResult.ok) {
@@ -2107,6 +2128,9 @@ export function Shell({
     const inputs: import('@tweakcad/core/src/document/schema.ts').LoftFeatureInputs = {
       profiles,
       operation: result.operation,
+      ...(result.targetBodyId
+        ? { targetBodies: [{ partId, bodyId: result.targetBodyId as BodyId }] }
+        : {}),
     };
     if (result.ruled) inputs.ruled = true;
     if (result.closed) inputs.closed = true;
@@ -4184,6 +4208,7 @@ export function Shell({
             <RevolveDialog
               sketchName={revolveState.sketchName}
               profileCount={revolveState.profiles.length}
+              availableBodies={bodyOptionsForPart(partForFeature(revolveState.sketchId))}
               onConfirm={handleRevolveConfirm}
               onCancel={handleRevolveCancel}
             />
@@ -4195,6 +4220,7 @@ export function Shell({
           {loftState.visible && (
             <LoftDialog
               profiles={loftDialogEntries}
+              availableBodies={bodyOptionsForPart(partForFeature(loftState.profiles[0]?.sketchId))}
               onRemoveProfile={handleLoftRemoveProfile}
               onConfirm={handleLoftConfirm}
               onCancel={handleLoftCancel}
@@ -4278,51 +4304,25 @@ export function Shell({
             />
           )}
 
-          {booleanState.visible && (() => {
-            const partFor = activePartId ? project.parts[activePartId] : undefined;
-            const availableBodies = partFor
-              ? Object.entries(bodyToFeatureMap)
-                  .filter(([bid]) => partFor.timeline.some(f => f.id === bodyToFeatureMap[bid as never]))
-                  .map(([bid, fid], i) => {
-                    const feature = partFor.timeline.find(f => f.id === fid);
-                    return { id: String(bid), label: feature ? `Body ${i + 1} (${feature.name})` : `Body ${i + 1}` };
-                  })
-              : [];
-            return (
-              <BooleanDialog
-                operation={booleanState.operation}
-                availableBodies={availableBodies}
-                onConfirm={handleBooleanConfirm}
-                onCancel={() => setBooleanState(s => ({ ...s, visible: false }))}
-              />
-            );
-          })()}
+          {booleanState.visible && (
+            <BooleanDialog
+              operation={booleanState.operation}
+              availableBodies={bodyOptionsForPart(activePartId)}
+              onConfirm={handleBooleanConfirm}
+              onCancel={() => setBooleanState(s => ({ ...s, visible: false }))}
+            />
+          )}
 
           {/* Primitive: numbers only — no viewport picking, so the dialog
-              stands alone. The target-body picker is built the same way as
-              Extrude's. */}
-          {primitiveState.visible && (() => {
-            const partFor = activePartId ? project.parts[activePartId] : undefined;
-            const availableBodies = partFor
-              ? Object.entries(bodyToFeatureMap)
-                  .filter(([bid]) => partFor.timeline.some(f => f.id === bodyToFeatureMap[bid as never]))
-                  .map(([bid, featureId], i) => {
-                    const feature = partFor.timeline.find(f => f.id === featureId);
-                    return {
-                      id: String(bid),
-                      label: feature ? `Body ${i + 1} (${feature.name})` : `Body ${i + 1}`,
-                    };
-                  })
-              : [];
-            return (
-              <PrimitiveDialog
-                kind={primitiveState.kind}
-                availableBodies={availableBodies}
-                onConfirm={handlePrimitiveConfirm}
-                onCancel={handlePrimitiveCancel}
-              />
-            );
-          })()}
+              stands alone. */}
+          {primitiveState.visible && (
+            <PrimitiveDialog
+              kind={primitiveState.kind}
+              availableBodies={bodyOptionsForPart(activePartId)}
+              onConfirm={handlePrimitiveConfirm}
+              onCancel={handlePrimitiveCancel}
+            />
+          )}
 
           {/* Mirror: pickMode='body' override above feeds the body-pick
               subscription. Plane choice + operation toggle live in the

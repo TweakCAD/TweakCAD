@@ -94,6 +94,24 @@ function invalidInput(message: string): ToolExecutionError {
   return { code: 'INVALID_INPUT', message };
 }
 
+/**
+ * Optional `targetBodies: string[]` (bodyIds from `list_bodies`) for a
+ * join / cut, as BodyRefs in the feature's part. Absent or empty means no
+ * pick: the feature joins or cuts the bodies it touches.
+ */
+function parseTargetBodies(
+  args: Record<string, unknown>,
+  partId: PartId,
+): Result<BodyRef[] | undefined, ToolExecutionError> {
+  const raw = args['targetBodies'];
+  if (raw === undefined) return ok(undefined);
+  if (!Array.isArray(raw) || !raw.every((s) => typeof s === 'string' && s.length > 0)) {
+    return err(invalidInput('`targetBodies` must be an array of bodyId strings'));
+  }
+  if (raw.length === 0) return ok(undefined);
+  return ok((raw as string[]).map((id) => ({ partId, bodyId: id as BodyId })));
+}
+
 function hostError(message: string): ToolExecutionError {
   return { code: 'HOST_ERROR', message };
 }
@@ -726,6 +744,8 @@ export async function executeFeatureExtrude(
   if (!partId) {
     return err(invalidInput(`Sketch not found or not a sketch feature: ${sketchId}`));
   }
+  const targets = parseTargetBodies(args, partId);
+  if (!targets.ok) return targets;
 
   // Build profiles: either from the caller's explicit list, or auto-fill
   // from the sketch's detected regions.
@@ -789,6 +809,7 @@ export async function executeFeatureExtrude(
           direction: { type: direction as 'normal' | 'reversed' },
           extent: { type: 'distance', value: distanceStr },
         };
+  if (targets.value) inputs.targetBodies = targets.value;
 
   const cmd: CadCommand = {
     type: 'CreateExtrude',
@@ -1081,6 +1102,8 @@ export async function executeFeatureRevolve(
   const before = asProject(host.getDocument());
   const partId = resolveSketchPart(before, sketchIdArg);
   if (!partId) return err(invalidInput(`Sketch not found or not a sketch feature: ${sketchIdArg}`));
+  const targets = parseTargetBodies(args, partId);
+  if (!targets.ok) return targets;
 
   // Build the profile. Prefer the caller's explicit profile if given;
   // otherwise auto-pick the first detected region.
@@ -1119,6 +1142,7 @@ export async function executeFeatureRevolve(
     axis: { type: axisArg as 'x' | 'y' | 'z' },
     angle: String(angleArg),
     operation: opArg as 'newBody' | 'join' | 'cut',
+    ...(targets.value ? { targetBodies: targets.value } : {}),
   };
 
   const cmd: CadCommand = {
@@ -1520,12 +1544,15 @@ export async function executeFeatureLoft(
   }
 
   const partId = resolveSketchPart(before, profilesArg[0]!['sketchId'] as string)!;
+  const targets = parseTargetBodies(args, partId);
+  if (!targets.ok) return targets;
 
   const inputs: LoftFeatureInputs = {
     profiles,
     operation: opArg as 'newBody' | 'join' | 'cut',
     ...(typeof args['ruled'] === 'boolean' ? { ruled: args['ruled'] } : {}),
     ...(typeof args['closed'] === 'boolean' ? { closed: args['closed'] } : {}),
+    ...(targets.value ? { targetBodies: targets.value } : {}),
   };
 
   const cmd: CadCommand = {

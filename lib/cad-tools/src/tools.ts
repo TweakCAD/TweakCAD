@@ -681,6 +681,14 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
             'its bodyId) and fails with "Cut removes nothing" when it overlaps ' +
             "none. Default 'newBody'.",
         },
+        targetBodies: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            "OPTIONAL, for 'join' / 'cut'. bodyIds (from `list_bodies`) to act on " +
+            'instead of the bodies the extrude touches. A picked join fuses all of ' +
+            "them into the first one's bodyId; a picked cut cuts only them.",
+        },
         direction: {
           type: 'string',
           enum: ['normal', 'reversed', 'symmetric'],
@@ -760,6 +768,14 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
             "'cut' subtracts the revolve from every body it overlaps (each keeps " +
             'its bodyId) and fails with "Cut removes nothing" when it overlaps ' +
             'none.',
+        },
+        targetBodies: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            "OPTIONAL, for 'join' / 'cut'. bodyIds (from `list_bodies`) to act on " +
+            'instead of the bodies the revolve touches. A picked join fuses all of ' +
+            "them into the first one's bodyId; a picked cut cuts only them.",
         },
         profile: {
           type: 'object',
@@ -977,6 +993,14 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
             "'cut' subtracts the loft from every body it overlaps (each keeps " +
             'its bodyId) and fails with "Cut removes nothing" when it overlaps ' +
             'none.',
+        },
+        targetBodies: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            "OPTIONAL, for 'join' / 'cut'. bodyIds (from `list_bodies`) to act on " +
+            'instead of the bodies the loft touches. A picked join fuses all of ' +
+            "them into the first one's bodyId; a picked cut cuts only them.",
         },
         ruled: {
           type: 'boolean',

@@ -25,10 +25,20 @@ export interface LoftDialogProfileEntry {
   label: string;
 }
 
+/** A body the user can pick as the target for join / cut. */
+export interface LoftAvailableBody {
+  /** Stringified BodyId. */
+  id: string;
+  /** Display label, e.g. "Body 1 (Extrude 1)". */
+  label: string;
+}
+
 export interface LoftDialogResult {
   operation: LoftOperation;
   ruled: boolean;
   closed: boolean;
+  /** Picked target body for join / cut. Undefined means no pick. */
+  targetBodyId?: string;
 }
 
 interface LoftDialogProps {
@@ -36,6 +46,8 @@ interface LoftDialogProps {
   profiles: LoftDialogProfileEntry[];
   /** Remove a profile by its key (raised from a row's X button). */
   onRemoveProfile: (key: string) => void;
+  /** Bodies currently in the part — populates the target-body picker. */
+  availableBodies?: LoftAvailableBody[] | undefined;
   /** Initial values when editing an existing loft (currently unused; for parity with ExtrudeDialog). */
   initialValues?: { operation?: LoftOperation; ruled?: boolean; closed?: boolean } | undefined;
   onConfirm: (result: LoftDialogResult) => void;
@@ -49,6 +61,7 @@ const MIN_PROFILES = 2;
 export function LoftDialog({
   profiles,
   onRemoveProfile,
+  availableBodies,
   initialValues,
   onConfirm,
   onCancel,
@@ -56,6 +69,8 @@ export function LoftDialog({
   const [operation, setOperation] = useState<LoftOperation>(initialValues?.operation ?? 'newBody');
   const [ruled, setRuled] = useState<boolean>(initialValues?.ruled ?? false);
   const [closed, setClosed] = useState<boolean>(initialValues?.closed ?? false);
+  const [targetBodyId, setTargetBodyId] = useState('');
+  const showTargetBodyPicker = operation !== 'newBody' && (availableBodies?.length ?? 0) > 0;
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
@@ -67,8 +82,13 @@ export function LoftDialog({
 
   const handleConfirm = useCallback(() => {
     if (profiles.length < MIN_PROFILES) return;
-    onConfirm({ operation, ruled, closed });
-  }, [profiles.length, operation, ruled, closed, onConfirm]);
+    onConfirm({
+      operation,
+      ruled,
+      closed,
+      ...(showTargetBodyPicker && targetBodyId ? { targetBodyId } : {}),
+    });
+  }, [profiles.length, operation, ruled, closed, showTargetBodyPicker, targetBodyId, onConfirm]);
 
   const canConfirm = profiles.length >= MIN_PROFILES;
 
@@ -134,6 +154,22 @@ export function LoftDialog({
             <ToggleButton active={operation === 'cut'} onClick={() => setOperation('cut')} label="Cut" />
           </div>
         </div>
+
+        {showTargetBodyPicker && (
+          <div style={styles.row}>
+            <span style={styles.label}>Target</span>
+            <select
+              value={targetBodyId}
+              onChange={e => setTargetBodyId(e.target.value)}
+              style={styles.select}
+            >
+              <option value="">Auto</option>
+              {availableBodies!.map(body => (
+                <option key={body.id} value={body.id}>{body.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div style={styles.actions}>
           <button
@@ -316,6 +352,18 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'space-between',
     padding: '6px 12px',
     gap: 8,
+  },
+  select: {
+    flex: 1,
+    height: 28,
+    padding: '0 6px',
+    border: '1px solid #d0d0d0',
+    borderRadius: 5,
+    fontSize: 12,
+    background: '#fff',
+    color: '#333',
+    outline: 'none',
+    cursor: 'pointer',
   },
   label: {
     fontSize: 11,

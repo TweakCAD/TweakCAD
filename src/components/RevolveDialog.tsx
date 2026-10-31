@@ -15,6 +15,14 @@ import { PanelHeader } from './PanelHeader.tsx';
 export type RevolveAxis = 'x' | 'y' | 'z';
 export type RevolveOperation = 'newBody' | 'join' | 'cut';
 
+/** A body the user can pick as the target for join / cut. */
+export interface RevolveAvailableBody {
+  /** Stringified BodyId. */
+  id: string;
+  /** Display label, e.g. "Body 1 (Extrude 1)". */
+  label: string;
+}
+
 export interface RevolveDialogResult {
   /** Sweep angle in degrees (1..360). */
   angle: number;
@@ -24,6 +32,8 @@ export interface RevolveDialogResult {
   operation: RevolveOperation;
   /** Offset along the profile normal before revolving. */
   startOffset: number;
+  /** Picked target body for join / cut. Undefined means no pick. */
+  targetBodyId?: string;
 }
 
 export interface RevolveDialogInitialValues {
@@ -37,6 +47,8 @@ interface RevolveDialogProps {
   sketchName: string;
   profileCount?: number | undefined;
   initialValues?: RevolveDialogInitialValues | undefined;
+  /** Bodies currently in the part — populates the target-body picker. */
+  availableBodies?: RevolveAvailableBody[] | undefined;
   onConfirm: (result: RevolveDialogResult) => void;
   onCancel: () => void;
 }
@@ -47,6 +59,7 @@ export function RevolveDialog({
   sketchName,
   profileCount = 1,
   initialValues,
+  availableBodies,
   onConfirm,
   onCancel,
 }: RevolveDialogProps) {
@@ -54,8 +67,10 @@ export function RevolveDialog({
   const [axis, setAxis] = useState<RevolveAxis>(initialValues?.axis ?? 'z');
   const [operation, setOperation] = useState<RevolveOperation>(initialValues?.operation ?? 'newBody');
   const [startOffset, setStartOffset] = useState(String(initialValues?.startOffset ?? 0));
+  const [targetBodyId, setTargetBodyId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const showTargetBodyPicker = operation !== 'newBody' && (availableBodies?.length ?? 0) > 0;
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -91,8 +106,9 @@ export function RevolveDialog({
       axis,
       operation,
       startOffset: Number.isFinite(parsedOffset) ? parsedOffset : 0,
+      ...(showTargetBodyPicker && targetBodyId ? { targetBodyId } : {}),
     });
-  }, [angle, axis, operation, startOffset, onConfirm, validate]);
+  }, [angle, axis, operation, startOffset, showTargetBodyPicker, targetBodyId, onConfirm, validate]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -166,6 +182,22 @@ export function RevolveDialog({
             <ToggleButton active={operation === 'cut'} onClick={() => setOperation('cut')} label="Cut" />
           </div>
         </div>
+
+        {showTargetBodyPicker && (
+          <div style={styles.row}>
+            <span style={styles.label}>Target</span>
+            <select
+              value={targetBodyId}
+              onChange={e => setTargetBodyId(e.target.value)}
+              style={styles.select}
+            >
+              <option value="">Auto</option>
+              {availableBodies!.map(body => (
+                <option key={body.id} value={body.id}>{body.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div style={styles.actions}>
           <button
@@ -269,6 +301,18 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'space-between',
     padding: '8px 12px',
     gap: 8,
+  },
+  select: {
+    flex: 1,
+    height: 28,
+    padding: '0 6px',
+    border: '1px solid #d0d0d0',
+    borderRadius: 5,
+    fontSize: 12,
+    background: '#fff',
+    color: '#333',
+    outline: 'none',
+    cursor: 'pointer',
   },
   label: {
     fontSize: 11,
