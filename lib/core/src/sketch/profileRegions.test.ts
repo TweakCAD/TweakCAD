@@ -53,15 +53,16 @@ describe('detectSketchRegions', () => {
     expect(regions.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('concentric circles (outer + inner) → at least one region', () => {
-    // Pins whatever the detector returns today — if the contract drifts
-    // (e.g. annular region detection lands) this test surfaces the change.
+  it('concentric circles → the outer region is a ring around the inner disc', () => {
     const regions = buildAndDetect((s, f) => {
       let st = drawCircle(s, { center: [0, 0], radius: 10 }, { idFactory: f }).state;
       st = drawCircle(st, { center: [0, 0], radius: 3 }, { idFactory: f }).state;
       return st;
     });
-    expect(regions.length).toBeGreaterThanOrEqual(1);
+    expect(regions).toHaveLength(2);
+    const [ring, disc] = regions;
+    expect(ring!.holes?.map(h => h.id)).toEqual([disc!.id]);
+    expect(disc!.holes ?? []).toEqual([]);
   });
 
   it('open polyline (3 lines, not closed) → 0 regions', () => {

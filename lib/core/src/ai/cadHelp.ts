@@ -130,12 +130,26 @@ hallucinated ids get \`NOT_FOUND\` errors. Cheaper to \`list_*\` first.
 3. sketch_create(partId, "XY") → { sketchId }
 4. sketch_draw_rectangle(sketchId, [0,0], 60, 30)
 5. sketch_draw_circle(sketchId, [30, 15], 3)
-6. list_sketch_regions(sketchId) → 2 regions: outer-with-hole + inner-disc
+6. list_sketch_regions(sketchId) → 2 regions:
+     the plate ring { wireEntityIds: [4 line ids], holeEntityIds: [<circleId>] }
+     the inner disc { wireEntityIds: [<circleId>] }
 7. feature_extrude(sketchId, 5,
-     profiles=[{ wireEntityIds: [<rectId>, <circleId>], interiorPoint: [3,3] }])
-   // interiorPoint disambiguates: pick the rect-with-hole, not the inner disc
+     profiles=[{ wireEntityIds: <ring's wireEntityIds> }])
+   // the ring alone → plate with a through hole. Omitting \`profiles\`
+   // extrudes every region, ring + disc, which fills the hole back in.
 8. end_transaction
 9. get_diagnostics; view_screenshot
+\`\`\`
+
+### Pattern B2: boss with an insert hole (tube in one extrude)
+
+\`\`\`
+1. sketch_create(partId, "XY") → { sketchId }
+2. sketch_draw_circle(sketchId, [0,0], 4) → { entityId: outer }
+3. sketch_draw_circle(sketchId, [0,0], 2) → { entityId: inner }
+4. feature_extrude(sketchId, 10, profiles=[{ wireEntityIds: [outer, inner] }])
+   // [outer] alone names the same ring. [inner] alone is the insert disc;
+   // [outer] + [inner] as two profiles is the solid boss.
 \`\`\`
 
 ### Pattern D: stadium-shaped slot cut through a plate

@@ -650,7 +650,10 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
       "Extrude a sketch's closed profile(s) along the sketch normal. " +
       'If `profiles` is omitted, ALL closed regions in the sketch are ' +
       'used (the common case — works whenever the sketch has exactly the ' +
-      "shapes you want to extrude). The tool resolves the sketch's part " +
+      'shapes you want to extrude). Selecting a ring together with the ' +
+      'region filling its hole extrudes the solid outer shape, so to keep ' +
+      'a hole open pass `profiles` without the inner region. ' +
+      "The tool resolves the sketch's part " +
       'automatically from sketchId. Returns `{ featureId }`. ' +
       'AFTER calling: ALWAYS call `get_diagnostics` to confirm the ' +
       'extrude built (sketches can build successfully but extrude can ' +
@@ -701,7 +704,9 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
                 type: 'array',
                 items: { type: 'string' },
                 minItems: 1,
-                description: 'Entity ids forming the wire boundary (e.g. [rectId] or [lineA, lineB, lineC, lineD]).',
+                description:
+                  'Entity ids forming the wire boundary (e.g. [circleId] or [lineA, lineB, lineC, lineD]). ' +
+                  'For a ring, the outer boundary alone or outer + hole ids ([outer, inner]) both name the ring.',
               },
               interiorPoint: {
                 type: 'array',
@@ -1263,9 +1268,15 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
     name: 'list_sketch_regions',
     description:
       'List the closed regions detected in a sketch. Each entry has an ' +
-      '`id`, `type` (`circle` / `polygon`), `area`, `center` (interior ' +
-      'point), and `wireEntityIds` (the sketch entities forming the ' +
-      'boundary). ' +
+      '`id`, `type` (`circle` / `polygon` / `ellipse` / `closedSpline`), ' +
+      '`area` (fillable area, holes subtracted), `center` (a point inside ' +
+      'the region), and `wireEntityIds` (the sketch entities forming the ' +
+      'outer boundary). A loop nested inside another makes the outer ' +
+      'region a ring: it lists the inner loop under `holeEntityIds`, and ' +
+      'the inner loop is also its own region. Two concentric circles give ' +
+      'the ring `{ wireEntityIds: [outer], holeEntityIds: [inner] }` plus ' +
+      'the inner disc `{ wireEntityIds: [inner] }`. Extruding the ring makes ' +
+      'a tube; extruding ring + disc together makes the solid outer shape. ' +
       'USE THIS when a sketch has MULTIPLE shapes and you need to pick ' +
       'specific ones for extrude/revolve (e.g. extrude just the outer ' +
       'rectangle, ignore the inner hole). For sketches with one obvious ' +

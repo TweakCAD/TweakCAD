@@ -66,7 +66,11 @@ export type SketchRegion = {
   label: string;
   type: 'circle' | 'polygon' | 'ellipse' | 'closedSpline';
   entityIds: EntityId[];
-  /** All entity IDs participating in this region (outer boundary + any inner holes). */
+  /**
+   * Every entity on this region's own boundary (the outer loop). Hole
+   * boundaries are not included — see {@link regionWireEntityIds} for the
+   * outer + direct-hole set.
+   */
   allEntityIds: EntityId[];
   segments: SketchRegionSegment[];
   vertices: [number, number][];
@@ -815,6 +819,96 @@ export function pointInRegionOuter(point: [number, number], region: SketchRegion
 }
 
 /**
+ * The region's outer boundary entities followed by those of its direct
+ * holes. This is the full wire set of a ring: `[outer, inner]` for two
+ * concentric circles. `resolveProfile` accepts it as a reference to the
+ * ring, alongside the outer-boundary-only form.
+ */
+export function regionWireEntityIds(region: SketchRegion): EntityId[] {
+  const ids = [...region.entityIds];
+  for (const hole of region.holes ?? []) {
+    for (const id of hole.entityIds) {
+      if (!ids.some(existing => String(existing) === String(id))) ids.push(id);
+    }
+  }
+  return ids;
+}
+
+/** Fillable area: the outer area minus each direct hole's area. */
+export function regionNetArea(region: SketchRegion): number {
+  let area = region.area;
+  for (const hole of region.holes ?? []) area -= hole.area;
+  return area;
+}
+
+/** Sample points on a region's outer boundary (circles carry no vertices). */
+function regionOutlineSamples(region: SketchRegion): [number, number][] {
+  if (region.type !== 'circle') return region.vertices;
+  const radius = Math.sqrt(region.area / Math.PI);
+  const samples: [number, number][] = [];
+  for (let i = 0; i < 16; i++) {
+    const angle = (i / 16) * Math.PI * 2;
+    samples.push([
+      region.center[0] + Math.cos(angle) * radius,
+      region.center[1] + Math.sin(angle) * radius,
+    ]);
+  }
+  return samples;
+}
+
+/**
+ * A point inside the region's fillable area. The area centroid of a ring
+ * sits in its hole (and a concave outline's can sit outside it), so when
+ * `center` fails the hole-aware test this walks from the centre toward
+ * the boundary samples until a point lands in the material.
+ */
+export function regionInteriorPoint(region: SketchRegion): [number, number] {
+  if (pointInRegion(region.center, region)) return region.center;
+  const [cx, cy] = region.center;
+  for (const t of [0.5, 0.75, 0.25, 0.9, 0.1]) {
+    for (const [px, py] of regionOutlineSamples(region)) {
+      const candidate: [number, number] = [cx + (px - cx) * t, cy + (py - cy) * t];
+      if (pointInRegion(candidate, region)) return candidate;
+    }
+  }
+  return region.center;
+}
+
+/**
+ * Fill holes that are themselves selected. Picking a ring and the disc
+ * inside it means "the whole outer area", so the ring loses that hole and
+ * the disc is dropped; the result extrudes as one face instead of two
+ * bodies fused along the inner circle. A filled hole's own holes move up
+ * to the outer region (a selected ring inside a selected ring keeps the
+ * innermost hole open). Regions are matched by id, so pass regions from
+ * one sketch only.
+ */
+export function fillSelectedHoles(selected: SketchRegion[]): SketchRegion[] {
+  const byId = new Map<string, SketchRegion>();
+  for (const region of selected) if (!byId.has(region.id)) byId.set(region.id, region);
+  const filled = new Set<string>();
+  const fill = (holes: SketchRegion[]): SketchRegion[] =>
+    holes.flatMap(hole => {
+      const picked = byId.get(hole.id);
+      if (!picked) return [hole];
+      filled.add(hole.id);
+      return fill(picked.holes ?? []);
+    });
+
+  const withFilledHoles = [...byId.values()].map(region => {
+    if (!region.holes || region.holes.length === 0) return region;
+    const holes = fill(region.holes);
+    if (holes.length === region.holes.length && holes.every((h, i) => h === region.holes![i])) {
+      return region;
+    }
+    const next: SketchRegion = { ...region, holes };
+    if (holes.length === 0) delete next.holes;
+    return next;
+  });
+  return withFilledHoles.filter(region => !filled.has(region.id));
+}
+
+/**
  * Test whether a 2D point is inside a region's *fillable* area — inside its
  * outer boundary and NOT inside any nested hole. So clicking the gap of an
  * annulus selects the annulus, while clicking its centre selects the inner
@@ -838,7 +932,9 @@ export function pointInRegion(point: [number, number], region: SketchRegion): bo
  * Resolution priority:
  * 1. Exact entity-ID set match (most common: standalone circle, rectangle)
  * 2. Exact match + interior point disambiguation (intersecting geometry)
+ * 2b. Ring match: outer boundary + direct holes (`[outer, inner]`)
  * 3. Subset match (entity IDs are a subset of region's allEntityIds)
+ * 3b. Subset of a ring's outer boundary + direct holes
  * 4. Fail -- no heuristics, no confidence scores
  */
 export function resolveProfile(
@@ -866,33 +962,46 @@ export function resolveProfile(
     return setsEqual(entityIdSet, regionEntityIdSet);
   });
 
-  // Exact unique match
-  if (candidates.length === 1 && candidates[0]) {
-    return { profileRef: ref, status: 'resolved', region: candidates[0] };
-  }
-
-  // Multiple candidates: disambiguate with interior point
-  if (candidates.length > 1 && ref.interiorPoint) {
-    const match = candidates.find(region => pointInRegion(ref.interiorPoint!, region));
-    if (match) {
-      return { profileRef: ref, status: 'resolved', region: match };
+  // A unique candidate wins outright; several are disambiguated by the
+  // stored interior point. `undefined` means "try the next case".
+  const pick = (found: SketchRegion[]): ResolvedProfileResult | undefined => {
+    if (found.length === 1 && found[0]) {
+      return { profileRef: ref, status: 'resolved', region: found[0] };
     }
+    if (found.length > 1 && ref.interiorPoint) {
+      const match = found.find(region => pointInRegion(ref.interiorPoint!, region));
+      if (match) return { profileRef: ref, status: 'resolved', region: match };
+    }
+    return undefined;
+  };
+
+  const exact = pick(candidates);
+  if (exact) return exact;
+
+  // Case 2b: the full wire set of a ring — outer boundary plus its holes
+  // (`[outer, inner]` for concentric circles).
+  const ringWires = (region: SketchRegion): string[] => regionWireEntityIds(region).map(String);
+  const holed = detectedRegions.filter(region => (region.holes?.length ?? 0) > 0);
+  if (candidates.length === 0) {
+    const ring = pick(holed.filter(region => setsEqual(entityIdSet, new Set(ringWires(region)))));
+    if (ring) return ring;
   }
 
   // Case 3: Check if wireEntityIds are a subset (edge splitting at intersections)
   const subsetCandidates = detectedRegions.filter(region =>
     ref.wireEntityIds.every(id => region.allEntityIds.map(String).includes(String(id))),
   );
+  const subset = pick(subsetCandidates);
+  if (subset) return subset;
 
-  if (subsetCandidates.length === 1 && subsetCandidates[0]) {
-    return { profileRef: ref, status: 'resolved', region: subsetCandidates[0] };
-  }
-
-  if (subsetCandidates.length > 1 && ref.interiorPoint) {
-    const match = subsetCandidates.find(region => pointInRegion(ref.interiorPoint!, region));
-    if (match) {
-      return { profileRef: ref, status: 'resolved', region: match };
-    }
+  // Case 3b: a subset of a ring's outer + hole wires (one edge of a
+  // rectangle plus the circle inside it).
+  if (subsetCandidates.length === 0) {
+    const ringSubset = pick(holed.filter(region => {
+      const wires = ringWires(region);
+      return ref.wireEntityIds.every(id => wires.includes(String(id)));
+    }));
+    if (ringSubset) return ringSubset;
   }
 
   // Failed
@@ -927,7 +1036,7 @@ export function regionToProfileRef(
     wireEntityIds: entityIds,
   };
   if (duplicates.length > 0) {
-    result.interiorPoint = region.center;
+    result.interiorPoint = regionInteriorPoint(region);
   }
   return result;
 }

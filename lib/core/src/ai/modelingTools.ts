@@ -62,7 +62,12 @@ import type {
 } from '../document/schema.ts';
 import type { PartId, FeatureId, EntityId, BodyId } from '../ids.ts';
 import { stableEdgeId, stableFaceId } from '../ids.ts';
-import { detectSketchRegions } from '../sketch/profileRegions.ts';
+import {
+  detectSketchRegions,
+  regionInteriorPoint,
+  regionNetArea,
+  regionWireEntityIds,
+} from '../sketch/profileRegions.ts';
 import { fromSnapshot } from '../sketch/operations.ts';
 import { pickGeometryAt } from '../sketch/sketchPicking.ts';
 import type { CadCommand } from '../commands/types.ts';
@@ -681,7 +686,7 @@ export async function executeSketchDrawPoint(
  *   - **Auto-profile.** When `profiles` is omitted, the wrapper fills
  *     it with every closed region detected in the sketch (each region
  *     becomes one ProfileRef with `wireEntityIds = region.entityIds`
- *     and `interiorPoint = region.center`).
+ *     and `interiorPoint` = a point inside the region's material).
  *
  *   - **Partid resolution.** The caller passes only `sketchId`; we
  *     walk the doc to find its part.
@@ -760,9 +765,8 @@ export async function executeFeatureExtrude(
         sketchId: sketchId as FeatureId,
         wireEntityIds: r.entityIds,
       };
-      if (r.center && Number.isFinite(r.center[0]) && Number.isFinite(r.center[1])) {
-        ref.interiorPoint = [r.center[0], r.center[1]];
-      }
+      const interior = regionInteriorPoint(r);
+      if (Number.isFinite(interior[0]) && Number.isFinite(interior[1])) ref.interiorPoint = interior;
       return ref;
     });
   }
@@ -1106,9 +1110,8 @@ export async function executeFeatureRevolve(
       sketchId: sketchIdArg as FeatureId,
       wireEntityIds: first.entityIds,
     };
-    if (first.center && Number.isFinite(first.center[0]) && Number.isFinite(first.center[1])) {
-      profile.interiorPoint = [first.center[0], first.center[1]];
-    }
+    const interior = regionInteriorPoint(first);
+    if (Number.isFinite(interior[0]) && Number.isFinite(interior[1])) profile.interiorPoint = interior;
   }
 
   const inputs: RevolveFeatureInputs = {
@@ -1418,9 +1421,8 @@ export async function executeFeatureSweep(
       sketchId: sketchId as FeatureId,
       wireEntityIds: first.entityIds,
     };
-    if (first.center && Number.isFinite(first.center[0]) && Number.isFinite(first.center[1])) {
-      ref.interiorPoint = [first.center[0], first.center[1]];
-    }
+    const interior = regionInteriorPoint(first);
+    if (Number.isFinite(interior[0]) && Number.isFinite(interior[1])) ref.interiorPoint = interior;
     return ok(ref);
   };
 
@@ -1511,9 +1513,8 @@ export async function executeFeatureLoft(
         sketchId: sketchId as FeatureId,
         wireEntityIds: first.entityIds,
       };
-      if (first.center && Number.isFinite(first.center[0]) && Number.isFinite(first.center[1])) {
-        ref.interiorPoint = [first.center[0], first.center[1]];
-      }
+      const interior = regionInteriorPoint(first);
+      if (Number.isFinite(interior[0]) && Number.isFinite(interior[1])) ref.interiorPoint = interior;
       profiles.push(ref);
     }
   }
@@ -1557,6 +1558,20 @@ export async function executeCadHelp(
 }
 
 /**
+ * One `list_sketch_regions` entry. `area` is the fillable (net) area and
+ * `center` a point inside the material, so for a ring both describe the
+ * ring, not the full outer disc.
+ */
+export type SketchRegionSummary = {
+  id: string;
+  type: 'circle' | 'polygon' | 'ellipse' | 'closedSpline';
+  area: number;
+  center: [number, number];
+  wireEntityIds: string[];
+  holeEntityIds?: string[];
+};
+
+/**
  * list_sketch_regions — pure function over the document. Reads the
  * sketch's flat `entities` Record and runs the same `detectSketchRegions`
  * the worker uses to find profiles for extrude. Returns the same
@@ -1566,13 +1581,7 @@ export async function executeCadHelp(
 export async function executeListSketchRegions(
   args: Record<string, unknown>,
   host: ToolHost,
-): Promise<Result<Array<{
-  id: string;
-  type: 'circle' | 'polygon' | 'ellipse' | 'closedSpline';
-  area: number;
-  center: [number, number];
-  wireEntityIds: string[];
-}>, ToolExecutionError>> {
+): Promise<Result<SketchRegionSummary[], ToolExecutionError>> {
   const sketchId = args['sketchId'];
   if (typeof sketchId !== 'string') return err(invalidInput('`sketchId` must be a string'));
 
@@ -1585,13 +1594,20 @@ export async function executeListSketchRegions(
   const entities = sketchBuildGeometry(loc.feature.inputs as unknown as SketchFeatureInputs);
   const regions = detectSketchRegions(entities);
   return ok(
-    regions.map((r) => ({
-      id: r.id,
-      type: r.type,
-      area: r.area,
-      center: [r.center[0], r.center[1]],
-      wireEntityIds: r.entityIds.map((id) => String(id)),
-    })),
+    regions.map((r) => {
+      const entry: SketchRegionSummary = {
+        id: r.id,
+        type: r.type,
+        area: regionNetArea(r),
+        center: regionInteriorPoint(r),
+        wireEntityIds: r.entityIds.map((id) => String(id)),
+      };
+      // A ring: `wireEntityIds` is its outer loop, `holeEntityIds` the
+      // loops nested inside it (each also listed as its own region).
+      const holeIds = regionWireEntityIds(r).slice(r.entityIds.length);
+      if (holeIds.length > 0) entry.holeEntityIds = holeIds.map((id) => String(id));
+      return entry;
+    }),
   );
 }
 

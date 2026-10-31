@@ -18,7 +18,7 @@ import type { Vec3 } from '@tweakcad/core/src/math.ts';
 import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
 import type { KernelBody, ResolvedProfile } from '@tweakcad/kernel/src/types.ts';
 import type { BuildContext, BuildResult } from '@tweakcad/core/src/features/contracts.ts';
-import { resolveProfile } from '@tweakcad/core/src/sketch/profileRegions.ts';
+import { resolveProfile, fillSelectedHoles } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import type { SketchRegion, ResolvedProfileResult } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import { sampleEllipse, catmullRomClosed } from '@tweakcad/core/src/sketch/curveSampling.ts';
 import { ringSelfIntersects } from '@tweakcad/core/src/sketch/selfIntersection.ts';
@@ -122,16 +122,27 @@ export async function buildExtrude(
   // detection time — a circle inside a square makes that square's region
   // an annulus). So a profile is just its region's outer boundary plus its
   // holes; selecting the annulus extrudes a washer with no extra step.
-  const holedProfiles: ResolvedProfile[] = [];
+  // Selecting the annulus AND the disc inside it fills that hole first, so
+  // the pair extrudes as one plain face rather than two bodies fused along
+  // the inner circle (which leaves seam edges on both caps).
+  const regionsBySketch = new Map<FeatureId, SketchRegion[]>();
   for (const resolved of resolvedProfiles) {
     if (resolved.status !== 'resolved' || !resolved.region) continue;
     const sid = resolved.profileRef.sketchId as FeatureId;
-    const profile = regionToKernelProfile(resolved.region, sid, context);
-    const holes = resolved.region.holes ?? [];
-    if (holes.length > 0) {
-      profile.holes = holes.map(h => regionToKernelProfile(h, sid, context));
+    const list = regionsBySketch.get(sid) ?? [];
+    list.push(resolved.region);
+    regionsBySketch.set(sid, list);
+  }
+  const holedProfiles: ResolvedProfile[] = [];
+  for (const [sid, regions] of regionsBySketch) {
+    for (const region of fillSelectedHoles(regions)) {
+      const profile = regionToKernelProfile(region, sid, context);
+      const holes = region.holes ?? [];
+      if (holes.length > 0) {
+        profile.holes = holes.map(h => regionToKernelProfile(h, sid, context));
+      }
+      holedProfiles.push(profile);
     }
-    holedProfiles.push(profile);
   }
 
   // Step 1: build every profile-body. No boolean ops in this loop —
