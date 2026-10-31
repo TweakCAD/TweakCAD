@@ -8,13 +8,13 @@
  * every feature that modifies that body re-emits the same id.** The id means
  * "this body", for the life of the body — not "the output of feature X".
  *
- * Creators mint: extrude in `newBody` mode, revolve, loft, sweep, imported
+ * Creators mint: extrude, revolve and loft in `newBody` mode, sweep, imported
  * geometry, imported component, component instance, and the reflected copy a
  * non-join mirror produces. Patterns also mint, because the source body
  * survives alongside them — a pattern adds a body, it does not replace one.
  *
  * Modifiers carry: fillet, chamfer, shell, hole, a joining mirror, and
- * extrude in `join` / `cut` mode.
+ * extrude, revolve and loft in `join` / `cut` mode.
  *
  * ## Why this way round
  *
@@ -43,10 +43,10 @@
  *
  * These are the two cases that need stating or they drift again.
  *
- * - **Merge** (boolean union, mirror-join, extrude-join): the result carries
- *   the **primary target's** id — `targetBodies[0]`, the first touched body
- *   in build order when nothing is picked (see `bodyOperation.ts`), or the
- *   source for mirror. The other inputs are consumed and their ids retire.
+ * - **Merge** (boolean union, mirror-join, extrude/revolve/loft join): the
+ *   result carries the **primary target's** id — `targetBodies[0]`, the first
+ *   touched body in build order when nothing is picked (see
+ *   `bodyOperation.ts`), or the source for mirror. The other inputs are consumed and their ids retire.
  * - **Split** (a boolean that disconnects a solid): the piece that inherits
  *   identity keeps the id; the rest are new bodies and mint fresh ids. The
  *   inheriting piece is chosen by {@link pickIdentityHeir} rather than by

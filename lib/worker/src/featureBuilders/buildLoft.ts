@@ -12,11 +12,13 @@ import type {
   ProfileRef,
 } from '@tweakcad/core/src/document/schema.ts';
 import type { ResolvedParams } from '@tweakcad/core/src/expressions.ts';
-import { bodyId } from '@tweakcad/core/src/ids.ts';
-import type { FeatureId } from '@tweakcad/core/src/ids.ts';
+import { mintBodyId } from './bodyIdentity.ts';
+import { selectTargetCandidates, joinTouchingBodies, cutTouchingBodies } from './bodyOperation.ts';
+import type { EmittedBody } from './bodyOperation.ts';
+import type { FeatureId, BodyId } from '@tweakcad/core/src/ids.ts';
 import type { Vec3 } from '@tweakcad/core/src/math.ts';
 import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
-import type { KernelBody, KernelFace, ResolvedProfile } from '@tweakcad/kernel/src/types.ts';
+import type { KernelFace, ResolvedProfile } from '@tweakcad/kernel/src/types.ts';
 import type { BuildContext, BuildResult } from '@tweakcad/core/src/features/contracts.ts';
 import { resolveProfile } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import type { SketchRegion } from '@tweakcad/core/src/sketch/profileRegions.ts';
@@ -79,27 +81,32 @@ export async function buildLoft(
     throw new Error(`Loft failed: ${bodyResult.error.message}`);
   }
 
-  let finalBody = bodyResult.value;
-
-  if (inputs.operation === 'join' && context.bodies.size > 0) {
-    const existing = Array.from(context.bodies.values()) as KernelBody[];
-    const fuse = await kernel.booleanFuse([...existing, finalBody]);
-    if (fuse.ok) finalBody = fuse.value;
-  } else if (inputs.operation === 'cut' && context.bodies.size > 0) {
-    const target = Array.from(context.bodies.values())[0] as KernelBody | undefined;
-    if (target) {
-      const cut = await kernel.booleanCut(target, [finalBody]);
-      if (cut.ok) finalBody = cut.value;
-    }
+  const operands = {
+    tools: [bodyResult.value],
+    candidates: selectTargetCandidates(inputs.targetBodies, context),
+    context,
+    kernel,
+    explicitTargets: (inputs.targetBodies?.length ?? 0) > 0,
+  };
+  // Same contract as Extrude's (see `bodyOperation.ts`). Deterministic ids
+  // derived from the feature keep user-captured FaceRef/EdgeRef on a new
+  // body valid across rebuilds.
+  let bodies: EmittedBody[];
+  if (inputs.operation === 'join') {
+    bodies = await joinTouchingBodies({
+      ...operands,
+      newBodies: async ([tool]) => [{ bodyId: mintBodyId(node.id), handle: tool! }],
+    });
+  } else if (inputs.operation === 'cut') {
+    bodies = await cutTouchingBodies(operands);
+  } else {
+    bodies = [{ bodyId: mintBodyId(node.id), handle: bodyResult.value }];
   }
 
-  // Deterministic id derived from the feature so user-captured
-  // FaceRef/EdgeRef on this body survive subsequent rebuilds.
-  const newBodyId = bodyId(`body_${node.id}_0`);
   return {
-    bodies: [{ bodyId: newBodyId, handle: finalBody }],
+    bodies,
     outputs: {
-      bodies: { main: newBodyId },
+      bodies: Object.fromEntries(bodies.map((b, i) => [i === 0 ? 'main' : `body_${i}`, b.bodyId])) as Record<string, BodyId>,
     },
   };
 }

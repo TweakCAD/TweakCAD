@@ -752,7 +752,14 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
         operation: {
           type: 'string',
           enum: ['newBody', 'join', 'cut'],
-          description: "Default 'newBody'. 'join' fuses into existing bodies, 'cut' subtracts.",
+          description:
+            "'newBody' creates a new disconnected body (default). " +
+            "'join' fuses the revolve with the bodies it touches or overlaps and " +
+            "keeps the first one's bodyId; bodies it does not reach are left " +
+            'alone, and a revolve that touches no body becomes a new body. ' +
+            "'cut' subtracts the revolve from every body it overlaps (each keeps " +
+            'its bodyId) and fails with "Cut removes nothing" when it overlaps ' +
+            'none.',
         },
         profile: {
           type: 'object',
@@ -962,7 +969,14 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
         operation: {
           type: 'string',
           enum: ['newBody', 'join', 'cut'],
-          description: "Default 'newBody'.",
+          description:
+            "'newBody' creates a new disconnected body (default). " +
+            "'join' fuses the loft with the bodies it touches or overlaps and " +
+            "keeps the first one's bodyId; bodies it does not reach are left " +
+            'alone, and a loft that touches no body becomes a new body. ' +
+            "'cut' subtracts the loft from every body it overlaps (each keeps " +
+            'its bodyId) and fails with "Cut removes nothing" when it overlaps ' +
+            'none.',
         },
         ruled: {
           type: 'boolean',

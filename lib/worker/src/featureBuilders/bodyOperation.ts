@@ -1,6 +1,6 @@
 /**
  * Join and cut for features that create a solid and combine it with the
- * bodies already in the part (extrude, primitive).
+ * bodies already in the part (extrude, primitive, revolve, loft).
  *
  * **Without picked targets, only bodies the new solid meets take part.** Join
  * fuses each tool solid with the bodies it touches or overlaps; a body it does
