@@ -57,6 +57,7 @@ import { FilletDialog } from '../components/FilletDialog.tsx';
 import type { FilletDialogResult, FilletDialogEdgeEntry } from '../components/FilletDialog.tsx';
 import { ChamferDialog } from '../components/ChamferDialog.tsx';
 import type { ChamferDialogResult, ChamferDialogEdgeEntry } from '../components/ChamferDialog.tsx';
+import { resolveEdgePick, appendEdgeRefs } from './edgePick.ts';
 import { ConstructionPlaneDialog } from '../components/ConstructionPlaneDialog.tsx';
 import { SectionPanel, type SectionOrientation } from '../components/SectionPanel.tsx';
 import { MovePanel, type MoveTransform } from '../components/MovePanel.tsx';
@@ -502,6 +503,17 @@ export function Shell({
     visible: boolean;
     edges: import('@tweakcad/core/src/document/schema.ts').EdgeRef[];
   }>({ visible: false, edges: [] });
+
+  // Fillet / Chamfer "Tangent chain" toggle: an edge pick also adds the
+  // edges tangent-continuous with it. Shared by both dialogs and kept
+  // across openings; the ref lets the pick subscriptions read it without
+  // resubscribing.
+  const [edgeTangentChain, setEdgeTangentChainState] = useState(false);
+  const edgeTangentChainRef = useRef(false);
+  const setEdgeTangentChain = useCallback((on: boolean) => {
+    edgeTangentChainRef.current = on;
+    setEdgeTangentChainState(on);
+  }, []);
 
   // Construction-plane dialog state. Tracks the dialog visibility, the
   // current plane kind (offsetFromPlane vs offsetFromFace), and the
@@ -2185,57 +2197,35 @@ export function Shell({
       useSketchEditorStore.getState().clearAll();
     }
     setFilletState({ visible: true, edges: [] });
-    consoleLog('info', 'Click body edges in the viewport to fillet them', 'fillet');
+    consoleLog('info', 'Click body edges in the viewport to fillet them, or a face for all its edges', 'fillet');
   }, [sketchActive, sketchActions]);
 
   /**
-   * While the Fillet dialog is open, every viewport edge selection (the
-   * user clicks an edge) is appended to filletState.edges as a stable
-   * EdgeRef. The viewport pick mode is set to 'edge' by the dedicated
-   * effect below. We subscribe directly to the selection store rather
-   * than re-rendering through React hooks because picks fire frequently
-   * and we want to debounce naturally via store equality.
+   * While the Fillet dialog is open, every viewport pick (pick mode is
+   * 'edgeOrFace', set by the dedicated effect below) appends stable
+   * EdgeRefs to filletState.edges: an edge pick adds that edge (or its
+   * tangent chain), a face pick adds the face's boundary edges. Refs
+   * already in the list are skipped. We subscribe directly to the
+   * selection store; hover-only updates keep the same selection object
+   * and are ignored.
    */
   useEffect(() => {
     if (!filletState.visible) return;
-    const { selectionStore, documentStore, viewportStore } = getAppState();
+    const { selectionStore, viewportStore } = getAppState();
 
     const unsubscribe = selectionStore.subscribe((state, prev) => {
       const sel = state.selection;
-      if (!sel || sel.type !== 'edge') return;
-      // The selection store fires on every change including null; ignore
-      // duplicates of the same edge (zustand uses reference equality on
-      // state objects but the inner selection is a fresh object each time).
-      const prevSel = prev?.selection;
-      if (
-        prevSel?.type === 'edge' &&
-        prevSel.bodyId === sel.bodyId &&
-        prevSel.edgeId === sel.edgeId
-      ) return;
-
-      // Look up the stable edge ID from the body's topology map. The map
-      // is published by the worker on every rebuild.
-      const topoMaps = viewportStore.getState().topologyMaps;
-      const topo = topoMaps.find(t => t.bodyId === sel.bodyId);
-      const edge = topo?.edges.find(e => e.edgeId === sel.edgeId);
-      if (!edge?.stableEdgeId) {
+      if (!sel || sel === prev?.selection) return;
+      const { refs, missingStableIds } = resolveEdgePick(
+        sel, viewportStore.getState().topologyMaps, { tangentChain: edgeTangentChainRef.current },
+      );
+      if (missingStableIds > 0 && 'bodyId' in sel) {
         consoleLog('warn', `Edge has no stable id yet (body ${sel.bodyId}); fillet ref would not survive rebuild`, 'fillet');
-        return;
       }
-
-      const ref: import('@tweakcad/core/src/document/schema.ts').EdgeRef = {
-        type: 'stableTopology',
-        bodyRef: { partId: sel.partId, bodyId: sel.bodyId },
-        stableEdgeId: edge.stableEdgeId,
-      };
-      void documentStore; // unused but kept for future repair-hint hydration
-
+      if (refs.length === 0) return;
       setFilletState(prev => {
-        // De-dupe by JSON key so the user can click the same edge twice
-        // without accumulating duplicates.
-        const key = JSON.stringify(ref);
-        if (prev.edges.some(e => JSON.stringify(e) === key)) return prev;
-        return { ...prev, edges: [...prev.edges, ref] };
+        const edges = appendEdgeRefs(prev.edges, refs);
+        return edges === prev.edges ? prev : { ...prev, edges };
       });
     });
 
@@ -2301,45 +2291,29 @@ export function Shell({
       useSketchEditorStore.getState().clearAll();
     }
     setChamferState({ visible: true, edges: [] });
-    consoleLog('info', 'Click body edges in the viewport to chamfer them', 'chamfer');
+    consoleLog('info', 'Click body edges in the viewport to chamfer them, or a face for all its edges', 'chamfer');
   }, [sketchActive, sketchActions]);
 
-  // Edge-pick subscription — verbatim mirror of the Fillet effect, just
-  // routed into chamferState. Kept as its own effect (rather than a
-  // shared helper) so each dialog can deactivate cleanly via its own
-  // visible flag without coordination.
+  // Edge-pick subscription — mirror of the Fillet effect, routed into
+  // chamferState. Kept as its own effect so each dialog deactivates
+  // cleanly via its own visible flag.
   useEffect(() => {
     if (!chamferState.visible) return;
     const { selectionStore, viewportStore } = getAppState();
 
     const unsubscribe = selectionStore.subscribe((state, prev) => {
       const sel = state.selection;
-      if (!sel || sel.type !== 'edge') return;
-      const prevSel = prev?.selection;
-      if (
-        prevSel?.type === 'edge' &&
-        prevSel.bodyId === sel.bodyId &&
-        prevSel.edgeId === sel.edgeId
-      ) return;
-
-      const topoMaps = viewportStore.getState().topologyMaps;
-      const topo = topoMaps.find(t => t.bodyId === sel.bodyId);
-      const edge = topo?.edges.find(e => e.edgeId === sel.edgeId);
-      if (!edge?.stableEdgeId) {
+      if (!sel || sel === prev?.selection) return;
+      const { refs, missingStableIds } = resolveEdgePick(
+        sel, viewportStore.getState().topologyMaps, { tangentChain: edgeTangentChainRef.current },
+      );
+      if (missingStableIds > 0 && 'bodyId' in sel) {
         consoleLog('warn', `Edge has no stable id yet (body ${sel.bodyId}); chamfer ref would not survive rebuild`, 'chamfer');
-        return;
       }
-
-      const ref: import('@tweakcad/core/src/document/schema.ts').EdgeRef = {
-        type: 'stableTopology',
-        bodyRef: { partId: sel.partId, bodyId: sel.bodyId },
-        stableEdgeId: edge.stableEdgeId,
-      };
-
+      if (refs.length === 0) return;
       setChamferState(prev => {
-        const key = JSON.stringify(ref);
-        if (prev.edges.some(e => JSON.stringify(e) === key)) return prev;
-        return { ...prev, edges: [...prev.edges, ref] };
+        const edges = appendEdgeRefs(prev.edges, refs);
+        return edges === prev.edges ? prev : { ...prev, edges };
       });
     });
 
@@ -3388,8 +3362,9 @@ export function Shell({
   useEffect(() => {
     if (!viewportCtrl) return;
     if (filletState.visible || chamferState.visible) {
-      // Fillet / Chamfer both want edges — override the modeling default.
-      viewportCtrl.setPickMode('edge');
+      // Fillet / Chamfer pick edges; a click on a face (no edge in reach)
+      // stands for all of that face's edges.
+      viewportCtrl.setPickMode('edgeOrFace');
       return;
     }
     if (mirrorState.visible || patternState.visible) {
@@ -4225,21 +4200,25 @@ export function Shell({
           )}
 
           {/* Fillet: dialog only. Edge picking happens via the standard
-              viewport pick path while pickMode is overridden to 'edge'. */}
+              viewport pick path while pickMode is overridden to 'edgeOrFace'. */}
           {filletState.visible && (
             <FilletDialog
               edges={filletDialogEntries}
               onRemoveEdge={handleFilletRemoveEdge}
+              tangentChain={edgeTangentChain}
+              onTangentChainChange={setEdgeTangentChain}
               onConfirm={handleFilletConfirm}
               onCancel={handleFilletCancel}
             />
           )}
 
-          {/* Chamfer: same edge-pick pattern as Fillet (pickMode='edge'). */}
+          {/* Chamfer: same edge-pick pattern as Fillet (pickMode='edgeOrFace'). */}
           {chamferState.visible && (
             <ChamferDialog
               edges={chamferDialogEntries}
               onRemoveEdge={handleChamferRemoveEdge}
+              tangentChain={edgeTangentChain}
+              onTangentChainChange={setEdgeTangentChain}
               onConfirm={handleChamferConfirm}
               onCancel={handleChamferCancel}
             />

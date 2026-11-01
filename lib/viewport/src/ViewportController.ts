@@ -16,8 +16,12 @@ import { SelectionHighlight } from './selectionHighlight.ts';
 import { fitFraming, homeFraming, lerpFraming, HOME_THETA, HOME_PHI } from './cameraFraming.ts';
 import type { CameraFraming } from './cameraFraming.ts';
 
-/** What kind of topology element clicks should resolve to. */
-export type PickMode = 'face' | 'edge' | 'body' | 'none';
+/**
+ * What kind of topology element clicks should resolve to.
+ * 'edgeOrFace' resolves to the nearest visible edge under the cursor and
+ * falls back to the face when no edge is in reach.
+ */
+export type PickMode = 'face' | 'edge' | 'edgeOrFace' | 'body' | 'none';
 
 /**
  * Result of a successful pick. The viewport doesn't know about partId; the
@@ -133,6 +137,7 @@ export class ViewportController {
   // React layer (Shell.tsx) wires these into the document selection store.
   private pickMode: PickMode = 'none';
   private pickRaycaster = new THREE.Raycaster();
+  private occlusionRaycaster = new THREE.Raycaster();
   private pickCallback: ((picked: PickedTopology) => void) | null = null;
   private preselectCallback: ((picked: PickedTopology) => void) | null = null;
   // Pointer-down position for click-vs-drag distinction.
@@ -721,17 +726,21 @@ export class ViewportController {
     );
     this.pickRaycaster.setFromCamera(ndc, this.camera);
 
-    if (this.pickMode === 'edge') {
+    if (this.pickMode === 'edge' || this.pickMode === 'edgeOrFace') {
       // Slightly generous edge threshold so users don't have to land
       // pointer-perfect on the line. Tuned for a typical zoom; could be
       // made camera-distance-adaptive later.
       this.pickRaycaster.params.Line = { threshold: this.spherical.radius * 0.01 };
+      // In 'edgeOrFace' mode a click inside a face must not resolve to an
+      // edge hidden behind it, so line hits are kept only where the edge
+      // point itself is visible.
+      const visibleOnly = this.pickMode === 'edgeOrFace';
       let best: { dist: number; bodyId: BodyId; segIdx: number; topoMap?: TopologyMap } | null = null;
       for (const entry of this.meshRegistry.getEntries()) {
         const edges = entry.edges;
         if (!edges || !edges.visible) continue;
         const hits = this.pickRaycaster.intersectObject(edges, false);
-        const h = hits[0];
+        const h = visibleOnly ? hits.find(hit => this.isPointVisible(hit.point)) : hits[0];
         // For THREE.LineSegments raycasts, the Intersection populates
         // `index` (start-vertex index of the hit segment), NOT
         // `faceIndex` — `faceIndex` is set only for Mesh hits where
@@ -746,10 +755,9 @@ export class ViewportController {
         const segIdx = Math.floor(h.index / 2);
         best = { dist: h.distance, bodyId: entry.bodyId, segIdx, ...(entry.topoMap !== undefined ? { topoMap: entry.topoMap } : {}) };
       }
-      if (!best) return null;
-      const edgeId = segmentToEdgeId(best.segIdx, best.topoMap);
-      if (!edgeId) return null;
-      return { type: 'edge', bodyId: best.bodyId, edgeId };
+      const edgeId = best ? segmentToEdgeId(best.segIdx, best.topoMap) : undefined;
+      if (best && edgeId) return { type: 'edge', bodyId: best.bodyId, edgeId };
+      if (this.pickMode === 'edge') return null;
     }
 
     // Face / body modes raycast against the solid meshes.
@@ -767,10 +775,31 @@ export class ViewportController {
     if (this.pickMode === 'body') {
       return { type: 'body', bodyId: bestFace.bodyId };
     }
-    // pickMode === 'face'
+    // pickMode === 'face' | 'edgeOrFace'
     const faceId = triangleToFaceId(bestFace.triIdx, bestFace.topoMap);
     if (!faceId) return null;
     return { type: 'face', bodyId: bestFace.bodyId, faceId };
+  }
+
+  /**
+   * True when no visible body surface sits between the camera and `point`
+   * (a point on an edge line). The tolerance absorbs the edge lying on the
+   * surface it bounds.
+   */
+  private isPointVisible(point: THREE.Vector3): boolean {
+    const origin = this.pickRaycaster.ray.origin;
+    const dir = point.clone().sub(origin);
+    const dist = dir.length();
+    if (dist < 1e-9) return true;
+    this.occlusionRaycaster.set(origin, dir.divideScalar(dist));
+    this.occlusionRaycaster.far = dist;
+    const eps = Math.max(dist * 1e-3, 1e-4);
+    for (const entry of this.meshRegistry.getEntries()) {
+      if (!entry.mesh.visible) continue;
+      const hit = this.occlusionRaycaster.intersectObject(entry.mesh, false)[0];
+      if (hit && hit.distance < dist - eps) return false;
+    }
+    return true;
   }
 
   /**

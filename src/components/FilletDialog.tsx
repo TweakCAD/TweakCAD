@@ -2,7 +2,9 @@
  * FilletDialog — inline panel overlay for the fillet operation.
  *
  * Edge picker: edges are click-selected from the viewport (the Shell flips
- * pick mode to 'edge' while this dialog is open). The dialog itself shows
+ * pick mode to 'edgeOrFace' while this dialog is open). Clicking a face
+ * adds all of its boundary edges; with "Tangent chain" on, an edge pick
+ * also adds the edges tangent-continuous with it. The dialog itself shows
  * the ordered edge list + remove-X per row + a radius input.
  */
 
@@ -28,6 +30,9 @@ interface FilletDialogProps {
   edges: FilletDialogEdgeEntry[];
   /** Remove an edge by key (X button on a row). */
   onRemoveEdge: (key: string) => void;
+  /** Whether an edge pick also adds its tangent-continuous neighbours. */
+  tangentChain: boolean;
+  onTangentChainChange: (on: boolean) => void;
   /** Initial values when editing an existing fillet (currently unused; for parity). */
   initialValues?: { radius?: number } | undefined;
   onConfirm: (result: FilletDialogResult) => void;
@@ -37,6 +42,8 @@ interface FilletDialogProps {
 export function FilletDialog({
   edges,
   onRemoveEdge,
+  tangentChain,
+  onTangentChainChange,
   initialValues,
   onConfirm,
   onCancel,
@@ -90,11 +97,11 @@ export function FilletDialog({
 
         <div style={styles.section}>
           <div style={styles.sectionLabel}>
-            Edges {edges.length > 0 ? `(${edges.length})` : '(click edges in viewport)'}
+            Edges {edges.length > 0 ? `(${edges.length})` : '(click edges or faces in viewport)'}
           </div>
           <div style={styles.edgeList}>
             {edges.length === 0 && (
-              <div style={styles.emptyHint}>Click body edges in the viewport...</div>
+              <div style={styles.emptyHint}>Click edges, or a face for all its edges...</div>
             )}
             {edges.map((e, idx) => (
               <div key={e.key} style={styles.edgeRow}>
@@ -113,6 +120,14 @@ export function FilletDialog({
               </div>
             ))}
           </div>
+          <label style={styles.checkboxRow}>
+            <input
+              type="checkbox"
+              checked={tangentChain}
+              onChange={e => onTangentChainChange(e.target.checked)}
+            />
+            <span>Tangent chain</span>
+          </label>
         </div>
 
         <div style={styles.row}>
@@ -221,6 +236,10 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10, fontWeight: 700, flexShrink: 0,
   },
   edgeLabel: { flex: 1, fontSize: 12, color: '#333', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  checkboxRow: {
+    display: 'inline-flex', alignItems: 'center', gap: 8,
+    marginTop: 8, cursor: 'pointer', fontSize: 12, color: '#333',
+  },
   edgeRemove: {
     width: 18, height: 18,
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
