@@ -14,7 +14,7 @@
  * Visual + interaction style matches {@link PrimitiveDialog}.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { PanelHeader } from './PanelHeader.tsx';
 import { CutIcon, FuseIcon } from '../icons/cadIcons.tsx';
 
@@ -39,6 +39,28 @@ interface BooleanDialogProps {
   availableBodies: BooleanAvailableBody[];
   onConfirm: (result: BooleanDialogResult) => void;
   onCancel: () => void;
+}
+
+/** How much of the tool candidate list is ticked. */
+export type ToolSelection = 'none' | 'some' | 'all';
+
+export function toolSelection(candidateIds: string[], selectedIds: string[]): ToolSelection {
+  const picked = candidateIds.filter(id => selectedIds.includes(id)).length;
+  if (picked === 0) return 'none';
+  return picked === candidateIds.length ? 'all' : 'some';
+}
+
+/** The header toggle: everything ticked clears, anything less ticks every candidate. */
+export function toggleAllTools(candidateIds: string[], selectedIds: string[]): string[] {
+  return toolSelection(candidateIds, selectedIds) === 'all' ? [] : [...candidateIds];
+}
+
+/**
+ * Picking a body as the target drops it from the tools: a body combined
+ * with itself is a no-op, and leaving it checked would look deliberate.
+ */
+export function retargetTools(selectedIds: string[], targetId: string): string[] {
+  return selectedIds.filter(id => id !== targetId);
 }
 
 const LABELS: Record<BooleanOperation, { title: string; verb: string; hint: string }> = {
@@ -77,11 +99,9 @@ export function BooleanDialog({
     return () => window.removeEventListener('keydown', handler);
   }, [onCancel]);
 
-  // Picking a body as the target drops it from the tools: a body combined
-  // with itself is a no-op, and leaving it checked would look deliberate.
   const chooseTarget = useCallback((id: string) => {
     setTargetBodyId(id);
-    setToolBodyIds(prev => prev.filter(t => t !== id));
+    setToolBodyIds(prev => retargetTools(prev, id));
   }, []);
 
   const toggleTool = useCallback((id: string) => {
@@ -89,6 +109,14 @@ export function BooleanDialog({
   }, []);
 
   const tools = availableBodies.filter(b => b.id !== targetBodyId);
+  const toolIds = tools.map(b => b.id);
+  const selection = toolSelection(toolIds, toolBodyIds);
+
+  // `indeterminate` has no attribute form, so it is set on the element.
+  const allToolsRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (allToolsRef.current) allToolsRef.current.indeterminate = selection === 'some';
+  }, [selection]);
   const canConfirm = targetBodyId !== '' && toolBodyIds.length > 0;
   const labels = LABELS[operation];
 
@@ -140,8 +168,19 @@ export function BooleanDialog({
             </div>
 
             <div style={styles.section}>
-              <div style={styles.sectionLabel}>
-                Tools — consumed ({toolBodyIds.length})
+              <div style={styles.sectionHeader}>
+                <div style={{ ...styles.sectionLabel, marginBottom: 0 }}>
+                  Tools — consumed ({toolBodyIds.length})
+                </div>
+                <label style={styles.allToggle} title="Select all / none">
+                  <input
+                    ref={allToolsRef}
+                    type="checkbox"
+                    checked={selection === 'all'}
+                    onChange={() => setToolBodyIds(prev => toggleAllTools(toolIds, prev))}
+                  />
+                  All
+                </label>
               </div>
               <div style={styles.toolList}>
                 {tools.map(b => (
@@ -230,6 +269,10 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11, fontWeight: 600, color: '#888',
     textTransform: 'uppercase', letterSpacing: 0.3, marginBottom: 6,
   },
+  sectionHeader: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6,
+  },
+  allToggle: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#555', cursor: 'pointer' },
   select: {
     width: '100%', height: 28, padding: '0 6px',
     border: '1px solid #d0d0d0', borderRadius: 5,
