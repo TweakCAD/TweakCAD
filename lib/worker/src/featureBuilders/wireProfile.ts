@@ -51,7 +51,7 @@ export function regionHasCurveSegments(region: SketchRegion): boolean {
 /**
  * Build the kernel-side `WireSegment[]` from a region's per-segment
  * geometry. Each `line` becomes a kernel line; each `arc` becomes a
- * three-point arc via the geometric midpoint of the swept angle; each
+ * three-point arc via the midpoint of its signed sweep; each
  * `bezier` maps its four poles straight to a native Bézier edge.
  *
  * The mid-point is computed from `arcCenter` + `arcRadius` +
@@ -95,32 +95,11 @@ export function regionSegmentsToWire(
     ) {
       const [cx, cy] = seg.arcCenter;
       const r = seg.arcRadius;
-      // Normalize sweep to the *symmetric closed* interval [-π, π] and
-      // pick the midpoint on the *minor* arc between start and end. The
-      // planar graph computes `arcEndAngle - arcStartAngle` from the
-      // half-edge endpoint atan2's, which can land either CW or CCW
-      // around the circle depending on which face owns the arc — for
-      // inscribed shapes (circle tangent to a rectangle), two of the
-      // four corner regions get a (+3π/2) raw sweep but the actual
-      // boundary is the (−π/2) minor arc. Forcing |sweep| ≤ π picks the
-      // minor arc every time.
-      //
-      // The interval MUST be symmetric (both bounds strict). A clamped
-      // half-circle has |sweep| = π exactly, and its sign encodes the
-      // traversal direction: the curve-loop walker may walk an arc
-      // end→start, yielding sweep = −π. An asymmetric `(−π, π]` would
-      // wrap that −π up to +π and flip the midpoint to the *opposite*
-      // side of the chord (a right-bulging D extrudes as a left-bulging
-      // half-disc). Keeping −π as −π makes the midpoint traversal-
-      // invariant: same physical arc, same midpoint, either direction.
-      //
-      // Full circles aren't an issue here: the simple-circle region in
-      // `detectSketchRegions` wins over the planar graph's closed-loop
-      // face via the merge-priority fix, so we never see a sweep ≈ ±2π
-      // in this branch.
-      let sweep = seg.arcEndAngle - seg.arcStartAngle;
-      while (sweep > Math.PI) sweep -= 2 * Math.PI;
-      while (sweep < -Math.PI) sweep += 2 * Math.PI;
+      // `arcEndAngle - arcStartAngle` is the signed sweep in traversal
+      // order, unwrapped by both region producers (see
+      // `SketchRegionSegment.arcEndAngle`). Taking it as-is keeps arcs over
+      // 180° on their real side; forcing the minor arc would flip them.
+      const sweep = seg.arcEndAngle - seg.arcStartAngle;
       const midAngle = seg.arcStartAngle + sweep / 2;
       const midLocal: [number, number] = [
         cx + r * Math.cos(midAngle),

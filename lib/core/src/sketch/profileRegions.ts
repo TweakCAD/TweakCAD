@@ -45,9 +45,14 @@ export type SketchRegionSegment = {
   arcCenter?: [number, number];
   /** Arc-only: radius in mm. */
   arcRadius?: number;
-  /** Arc-only: start angle in radians (atan2 of start vs center). */
+  /** Arc-only: angle of `start` about the center, in radians. */
   arcStartAngle?: number;
-  /** Arc-only: end angle in radians. CCW from start. */
+  /**
+   * Arc-only: angle of `end` about the center, unwrapped so that
+   * `arcEndAngle - arcStartAngle` is the signed sweep in traversal order
+   * (positive CCW, negative CW, magnitude up to 2π). It is not wrapped to
+   * ±π, so an arc over 180° keeps its true extent.
+   */
   arcEndAngle?: number;
   /** Bézier-only: first off-curve control pole (after `start`). */
   bezierCp1?: [number, number];
@@ -109,6 +114,7 @@ export type ResolvedProfileResult = {
 
 const POINT_KEY_PRECISION = 6;
 const EPSILON = 1e-6;
+const TAU = 2 * Math.PI;
 
 function expressionToNumber(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -119,8 +125,17 @@ function expressionToNumber(value: unknown): number | null {
   return null;
 }
 
+const NEGATIVE_ZERO_KEY = `-${(0).toFixed(POINT_KEY_PRECISION)}`;
+
+/** Coordinate key; a tiny negative value (e.g. `10 * sin(2π)`) prints as
+ *  `-0.000000` and must match the `0.000000` of an exact zero. */
+function coordKey(value: number): string {
+  const key = value.toFixed(POINT_KEY_PRECISION);
+  return key === NEGATIVE_ZERO_KEY ? key.slice(1) : key;
+}
+
 function pointKey(point: [number, number]): string {
-  return `${point[0].toFixed(POINT_KEY_PRECISION)},${point[1].toFixed(POINT_KEY_PRECISION)}`;
+  return `${coordKey(point[0])},${coordKey(point[1])}`;
 }
 
 function distance(a: [number, number], b: [number, number]): number {
@@ -276,9 +291,13 @@ function getCurveEdge(entity: SketchEntity): CurveEdge | null {
     // A full-circle arc (start ≈ end) can't be an endpoint-connected loop
     // member; standalone closed arcs aren't supported here.
     if (distance(start, end) <= EPSILON) return null;
+    // Sketch arcs run CCW from startAngle to endAngle. Unwrap the end angle
+    // so `arcEndAngle - arcStartAngle` is that CCW sweep in (0, 2π); it
+    // stays the signed traversal sweep after `reverseCurveEdge` swaps them.
+    const sweep = (((ea - sa) % TAU) + TAU) % TAU;
     return {
       entity, kind: 'arc', start, end,
-      arcCenter: [cx, cy], arcRadius: r, arcStartAngle: sa, arcEndAngle: ea,
+      arcCenter: [cx, cy], arcRadius: r, arcStartAngle: sa, arcEndAngle: sa + sweep,
     };
   }
 
@@ -325,7 +344,8 @@ function getCurveEdge(entity: SketchEntity): CurveEdge | null {
 
 /** Flip an edge end-for-end, swapping the orientation-dependent analytic
  *  data (arc angles, Bézier poles) so the reversed edge still describes
- *  the same physical curve. */
+ *  the same physical curve. Swapping the unwrapped arc angles negates the
+ *  sweep, so a reversed arc is sampled clockwise over the same span. */
 function reverseCurveEdge(e: CurveEdge): CurveEdge {
   // Analytic fields are guaranteed present for their kind (set in
   // `getCurveEdge`); the `!` asserts that against the optional typing.
@@ -381,6 +401,7 @@ function sampleEdgeVertices(e: CurveEdge): [number, number][] {
   if (e.kind === 'arc') {
     const [cx, cy] = e.arcCenter!;
     const r = e.arcRadius!;
+    // Signed traversal sweep (see `getCurveEdge`), never wrapped to ±π.
     const sweep = e.arcEndAngle! - e.arcStartAngle!;
     const pts: [number, number][] = [];
     for (let i = 0; i < CURVE_VERTEX_SAMPLES; i++) {
@@ -453,44 +474,75 @@ function detectCurveLoopRegions(entities: Record<EntityId, SketchEntity>): Sketc
     .map(getCurveEdge)
     .filter((e): e is CurveEdge => e !== null);
 
+  // Endpoint index: point key → indices of the edges touching it, in edge
+  // order, so each walk step only visits edges incident to the current
+  // point instead of scanning every edge.
+  const startKeys = edges.map(e => pointKey(e.start));
+  const endKeys = edges.map(e => pointKey(e.end));
+  const incident = new Map<string, number[]>();
+  const link = (key: string, index: number): void => {
+    const list = incident.get(key);
+    if (!list) incident.set(key, [index]);
+    else if (list[list.length - 1] !== index) list.push(index);
+  };
+  for (let i = 0; i < edges.length; i++) {
+    link(startKeys[i]!, i);
+    link(endKeys[i]!, i);
+  }
+
   const regions: SketchRegion[] = [];
   const seen = new Set<string>();
+  // Edges on the current path (the walk tracks edges, not points, so a
+  // loop may pass through a point twice).
+  const onPath = new Uint8Array(edges.length);
 
-  for (const seed of edges) {
-    const visited = new Set<EntityId>([seed.entity.id]);
-    const oriented: CurveEdge[] = [seed];
+  for (let seedIndex = 0; seedIndex < edges.length; seedIndex++) {
+    onPath[seedIndex] = 1;
+    const closeKey = startKeys[seedIndex]!;
+    const oriented: CurveEdge[] = [edges[seedIndex]!];
+    const path: number[] = [];
+    // Depth-first walk with an explicit stack (outlines can run to
+    // thousands of edges). Frame d is the point reached after `path[d-1]`.
+    const frames: { at: string; cursor: number }[] = [{ at: endKeys[seedIndex]!, cursor: 0 }];
 
-    const walk = (current: [number, number]): void => {
-      if (visited.size > edges.length) return;
+    while (frames.length > 0) {
+      const frame = frames[frames.length - 1]!;
+      const candidates = incident.get(frame.at)!;
+      if (frame.cursor >= candidates.length) {
+        frames.pop();
+        if (path.length > 0) {
+          onPath[path.pop()!] = 0;
+          oriented.pop();
+        }
+        continue;
+      }
 
-      for (const candidate of edges) {
-        if (visited.has(candidate.entity.id)) continue;
+      const index = candidates[frame.cursor++]!;
+      if (onPath[index]) continue;
+      const forward = startKeys[index] === frame.at;
+      const orientedEdge = forward ? edges[index]! : reverseCurveEdge(edges[index]!);
+      const nextKey = forward ? endKeys[index]! : startKeys[index]!;
 
-        const connectsToStart = pointKey(candidate.start) === pointKey(current);
-        const connectsToEnd = pointKey(candidate.end) === pointKey(current);
-        if (!connectsToStart && !connectsToEnd) continue;
-
-        const orientedEdge = connectsToStart ? candidate : reverseCurveEdge(candidate);
-        const next = orientedEdge.end;
-        visited.add(candidate.entity.id);
+      if (nextKey === closeKey) {
         oriented.push(orientedEdge);
-
-        if (pointKey(next) === pointKey(seed.start)) {
+        // A loop is found again from each of its edges; check its id
+        // before sampling it into a region.
+        if (!seen.has(canonicalRegionId([...new Set(oriented.map(e => e.entity.id))]))) {
           const region = makeCurveLoopRegion([...oriented]);
-          if (region && !seen.has(region.id)) {
+          if (region) {
             seen.add(region.id);
             regions.push(region);
           }
-        } else {
-          walk(next);
         }
-
         oriented.pop();
-        visited.delete(candidate.entity.id);
+      } else {
+        onPath[index] = 1;
+        path.push(index);
+        oriented.push(orientedEdge);
+        frames.push({ at: nextKey, cursor: 0 });
       }
-    };
-
-    walk(seed.end);
+    }
+    onPath[seedIndex] = 0;
   }
 
   return regions.sort((a, b) => b.area - a.area || a.id.localeCompare(b.id));

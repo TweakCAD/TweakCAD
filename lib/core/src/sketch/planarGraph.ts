@@ -32,6 +32,8 @@ type GraphEdge = {
   center?: Point2;
   radius?: number;
   startAngle?: number;
+  /** Unwrapped: `endAngle - startAngle` is the signed sweep in face
+   *  traversal order (positive CCW), not wrapped to ±π. */
   endAngle?: number;
 };
 
@@ -472,8 +474,19 @@ export function detectIntersectionRegions(entities: Record<EntityId, SketchEntit
       const last = faceEdges[runEnd]!;
       const startPt = vertices[first.from]!;
       const endPt = vertices[last.to]!;
-      const startAngle = Math.atan2(startPt[1] - circle.center[1], startPt[0] - circle.center[0]);
-      const endAngle = Math.atan2(endPt[1] - circle.center[1], endPt[0] - circle.center[0]);
+      // Sum the per-subedge angle steps (each well under π) so the sweep
+      // keeps its traversal direction and can exceed π — the larger piece
+      // of a circle cut by a chord is a major arc.
+      const angleOf = (p: Point2): number => Math.atan2(p[1] - circle.center[1], p[0] - circle.center[0]);
+      const startAngle = angleOf(startPt);
+      let sweep = 0;
+      for (let k = i; k <= runEnd; k++) {
+        let step = angleOf(vertices[faceEdges[k]!.to]!) - angleOf(vertices[faceEdges[k]!.from]!);
+        if (step > Math.PI) step -= 2 * Math.PI;
+        else if (step <= -Math.PI) step += 2 * Math.PI;
+        sweep += step;
+      }
+      const endAngle = startAngle + sweep;
       consolidated.push({
         id: `arc:${first.from}-${last.to}`,
         entityId: he.entityId,
