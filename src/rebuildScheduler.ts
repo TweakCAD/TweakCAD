@@ -5,6 +5,9 @@
  * via the WorkerPool. The kernel runs entirely in a Web Worker thread -
  * the main thread only receives serializable meshes and diagnostics.
  *
+ * One rebuild per part at a time: requests that arrive while one runs
+ * collapse into a single follow-up (see `createRebuildQueue`).
+ *
  * Stale result guard: if the document changes while a rebuild is in flight,
  * the result is discarded (revision check).
  *
@@ -14,6 +17,7 @@
 
 import type { PartId, BodyId, FeatureId } from '@tweakcad/core/src/ids.ts';
 import type { DocumentStore } from '@tweakcad/core/src/store/documentStore.ts';
+import type { createViewportStore } from '@tweakcad/core/src/store/viewportStore.ts';
 import type { CadPart, FeatureNode } from '@tweakcad/core/src/document/schema.ts';
 import { consoleLog } from '@tweakcad/core/src/store/consoleStore.ts';
 import { WorkerPool } from '@tweakcad/worker/src/pool.ts';
@@ -26,6 +30,8 @@ import type { AppState } from './appInit.ts';
 
 let pool: WorkerPool | null = null;
 let useWorker = true;
+/** Unsubscribes the dirty-feature listener `initRebuildScheduler` registered. */
+let stopListening: (() => void) | null = null;
 
 // Fallback: main-thread kernel + rebuilder (lazy loaded only if worker fails)
 let mainThreadFallback: {
@@ -87,48 +93,94 @@ export async function initRebuildScheduler(
     useWorker = false;
   }
 
+  const requestRebuild = createRebuildQueue(documentStore, viewportStore);
+
   // Listen for dirty features - always rebuild from 0 to ensure
   // all bodies are accumulated in the build context correctly.
   // TODO: implement context caching for true incremental rebuilds.
-  documentStore.onDirtyFeature(async (_fromIndex, partId) => {
+  stopListening = documentStore.onDirtyFeature(async (_fromIndex, partId) => {
     // A part can also *leave* the document (undo of `CreatePart`), and
     // nothing schedules a rebuild for a part that no longer exists — so
     // sweep the published results before building.
     viewportStore.getState().retainParts(
       Object.keys(documentStore.getState().parts) as PartId[],
     );
-    await scheduleRebuild(documentStore, viewportStore, partId, 0);
+    await requestRebuild(partId);
   });
 
   // Trigger initial build for all parts
   const project = documentStore.getState();
   for (const partId of Object.keys(project.parts) as PartId[]) {
-    await scheduleRebuild(documentStore, viewportStore, partId, 0);
+    await requestRebuild(partId);
   }
 }
 
+type ViewportStoreApi = ReturnType<typeof createViewportStore>;
+
 /**
- * Schedule a rebuild for a specific part.
- * Routes to WorkerPool or main-thread fallback.
- * Discards stale results if document changed during rebuild.
+ * Coalesce rebuild requests: at most one rebuild per part runs at a time,
+ * and requests that arrive while it runs collapse into one follow-up that
+ * builds the latest document.
  *
- * The `rebuilding` flag is cleared in a `finally`, not on each exit
- * path. `setRebuildResult` / `setRebuildError` clear it as part of
- * publishing, but the early returns don't publish anything — and the
- * stale-result guard can't assume a follow-up rebuild is coming to clear
- * it, because `revision` is also bumped by mutations that dirty no
- * feature (a visibility toggle, a rename, an undo of either). Left set,
- * the toolbar indicator never goes out and `waitForRebuildIdle` — which
- * the AI tool path awaits after every dispatch — times out.
+ * Every rebuild is a full one, and every edit dirties the part — a sketch
+ * line, a constraint, each point of a drag. Running one rebuild per request
+ * queued them all on the single rebuild worker, and each re-ran and
+ * re-tessellated every body in the part only to be discarded as stale. With
+ * a body that is slow to mesh (a revolved or shelled spline surface takes
+ * seconds), a handful of edits kept the worker busy for minutes.
+ *
+ * The returned promise settles when the part has no rebuild running or
+ * requested.
+ *
+ * The `rebuilding` flag is set synchronously on the first request and
+ * cleared in a `finally` once no part is rebuilding. `setRebuildResult` /
+ * `setRebuildError` clear it as part of publishing, but a stale result
+ * publishes nothing — and the stale-result guard can't assume a follow-up
+ * rebuild is coming to clear it, because `revision` is also bumped by
+ * mutations that dirty no feature (a visibility toggle, a rename, an undo of
+ * either). Left set, the toolbar indicator never goes out and
+ * `waitForRebuildIdle` (the `wait_for_rebuild` tool) times out.
  */
-async function scheduleRebuild(
+function createRebuildQueue(
   documentStore: DocumentStore,
-  viewportStore: ReturnType<typeof import('@tweakcad/core/src/store/viewportStore.ts').createViewportStore>,
+  viewportStore: ViewportStoreApi,
+): (partId: PartId) => Promise<void> {
+  const running = new Map<PartId, Promise<void>>();
+  const requested = new Set<PartId>();
+
+  return (partId) => {
+    requested.add(partId);
+    const inFlight = running.get(partId);
+    if (inFlight) return inFlight;
+
+    viewportStore.getState().setRebuilding(true);
+    const loop = (async () => {
+      try {
+        while (requested.delete(partId)) {
+          await rebuildPart(documentStore, viewportStore, partId, 0);
+        }
+      } finally {
+        running.delete(partId);
+        if (running.size === 0) viewportStore.getState().setRebuilding(false);
+      }
+    })();
+    running.set(partId, loop);
+    return loop;
+  };
+}
+
+/**
+ * Rebuild one part now. Routes to WorkerPool or main-thread fallback.
+ * Discards the result if the document changed during the rebuild.
+ */
+async function rebuildPart(
+  documentStore: DocumentStore,
+  viewportStore: ViewportStoreApi,
   partId: PartId,
   fromIndex: number,
 ): Promise<void> {
   const revisionBefore = documentStore.getRevision();
-  viewportStore.getState().setRebuilding(true);
+  const workerPool = useWorker ? pool : null;
 
   try {
     const project = documentStore.getState();
@@ -137,9 +189,9 @@ async function scheduleRebuild(
 
     let result: WorkerRebuildResult;
 
-    if (useWorker && pool) {
+    if (workerPool) {
       // Worker path: kernel runs off main thread
-      result = await pool.requestRebuild(part, project, fromIndex);
+      result = await workerPool.requestRebuild(part, project, fromIndex);
 
       if (result.diagnostics.length > 0) {
         console.warn('[RebuildScheduler] Diagnostics:', result.diagnostics);
@@ -190,23 +242,24 @@ async function scheduleRebuild(
     console.error('[RebuildScheduler] Rebuild failed:', error);
     consoleLog('error', `Rebuild failed: ${error instanceof Error ? error.message : String(error)}`, 'rebuild');
 
-    // If worker fails, switch to main-thread mode for future rebuilds
-    if (useWorker) {
+    // If worker fails, switch to main-thread mode for future rebuilds —
+    // unless the pool was disposed while this rebuild ran; then the
+    // scheduler that owned it is gone and its replacement is unaffected.
+    if (workerPool) {
+      if (workerPool !== pool) return;
       console.warn('[RebuildScheduler] Switching to main-thread mode after worker failure');
       useWorker = false;
       pool?.dispose();
       pool = null;
 
       // Retry on main thread
-      await scheduleRebuild(documentStore, viewportStore, partId, fromIndex);
+      await rebuildPart(documentStore, viewportStore, partId, fromIndex);
       return;
     }
 
     viewportStore.getState().setRebuildError(
       error instanceof Error ? error.message : String(error),
     );
-  } finally {
-    viewportStore.getState().setRebuilding(false);
   }
 }
 
@@ -298,9 +351,14 @@ function describeExtrude(feature: FeatureNode): string {
 }
 
 /**
- * Dispose the worker pool (called on app unmount).
+ * Stop rebuilding: unsubscribe from the document and terminate the worker
+ * pool. The app calls it on unmount; under React StrictMode the mount effect
+ * runs twice in development, and without it every edit would rebuild on two
+ * schedulers and two workers.
  */
 export function disposeRebuildScheduler(): void {
+  stopListening?.();
+  stopListening = null;
   pool?.dispose();
   pool = null;
 }

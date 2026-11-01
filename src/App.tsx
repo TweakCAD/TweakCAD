@@ -3,7 +3,7 @@ import { Check, X } from 'lucide-react';
 import { newProjectWithPart } from '@tweakcad/core/src/document/factory.ts';
 import { Shell } from './layout/Shell.tsx';
 import { initializeApp } from './appInit.ts';
-import { initRebuildScheduler, exportActivePart } from './rebuildScheduler.ts';
+import { initRebuildScheduler, disposeRebuildScheduler, exportActivePart } from './rebuildScheduler.ts';
 import { generateProjectName } from './storage/projectName.ts';
 import {
   runAutoExport,
@@ -90,6 +90,7 @@ export function App() {
 
   useEffect(() => {
     initRebuildScheduler(appState);
+    return disposeRebuildScheduler;
   }, [appState]);
 
   // Boot the local MCP bridge WS client. Reads settings on mount; opens /

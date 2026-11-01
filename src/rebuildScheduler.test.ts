@@ -24,7 +24,7 @@ import { newProjectWithPart } from '@tweakcad/core/src/document/factory.ts';
 import { WorkerPool } from '@tweakcad/worker/src/pool.ts';
 import type { CadWorkerApi, WorkerRebuildResult } from '@tweakcad/worker/src/cadWorker.ts';
 import type { CadPart, CadProject } from '@tweakcad/core/src/document/schema.ts';
-import { initRebuildScheduler } from './rebuildScheduler.ts';
+import { initRebuildScheduler, disposeRebuildScheduler } from './rebuildScheduler.ts';
 import type { AppState } from './appInit.ts';
 
 function emptyResult(partId: string): WorkerRebuildResult {
@@ -72,6 +72,7 @@ describe('rebuild scheduler — rebuilding flag', () => {
   });
 
   afterEach(() => {
+    disposeRebuildScheduler();
     vi.restoreAllMocks();
   });
 
@@ -103,5 +104,101 @@ describe('rebuild scheduler — rebuilding flag', () => {
 
     expect(appState.viewportStore.getState().rebuilding).toBe(false);
     expect(appState.viewportStore.getState().featureResults).toHaveProperty('f_marker');
+  });
+});
+
+/** Append a feature to the part's timeline: a mutation that dirties the part. */
+function addFeature(documentStore: DocumentStore, n: number): void {
+  documentStore.mutate(`Add ${n}`, (draft) => {
+    const part = Object.values(draft.parts)[0]!;
+    part.timeline.push({ id: `f_${n}`, type: 'sketch', name: `F${n}`, inputs: {}, dependsOn: [] } as never);
+  });
+}
+
+describe('rebuild scheduler — coalescing', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    disposeRebuildScheduler();
+    vi.restoreAllMocks();
+  });
+
+  it('collapses edits made during a rebuild into one follow-up that builds the latest document', async () => {
+    const { appState, documentStore } = makeAppState();
+    const builds: { timelineLength: number; finish: () => void }[] = [];
+    const pool = new StubPool((part) => new Promise((resolve) => {
+      builds.push({ timelineLength: part.timeline.length, finish: () => resolve(emptyResult(part.id)) });
+    }));
+
+    const init = initRebuildScheduler(appState, { pool });
+    await vi.waitFor(() => expect(builds).toHaveLength(1));
+    builds[0]!.finish();
+    await init;
+
+    // A burst of edits, the way a sketch or an AI tool sequence makes them.
+    for (let n = 1; n <= 8; n++) addFeature(documentStore, n);
+    await vi.waitFor(() => expect(builds).toHaveLength(2));
+
+    // More edits while that rebuild runs: it is now stale, and they must
+    // queue one follow-up rather than one rebuild each.
+    for (let n = 9; n <= 12; n++) addFeature(documentStore, n);
+    builds[1]!.finish();
+    await vi.waitFor(() => expect(builds).toHaveLength(3));
+    expect(builds[2]!.timelineLength).toBe(12);
+    expect(appState.viewportStore.getState().rebuilding).toBe(true);
+    // The stale result was not published.
+    expect(appState.viewportStore.getState().featureResults).toEqual({ f_marker: expect.anything() });
+
+    builds[2]!.finish();
+    await vi.waitFor(() => expect(appState.viewportStore.getState().rebuilding).toBe(false));
+    expect(builds).toHaveLength(3);
+  });
+
+  it('keeps the flag set from the first request until the follow-up finishes', async () => {
+    const { appState, documentStore } = makeAppState();
+    const finishers: (() => void)[] = [];
+    const pool = new StubPool((part) => new Promise((resolve) => {
+      finishers.push(() => resolve(emptyResult(part.id)));
+    }));
+    const init = initRebuildScheduler(appState, { pool });
+    await vi.waitFor(() => expect(finishers).toHaveLength(1));
+    finishers[0]!();
+    await init;
+    const flags: boolean[] = [];
+    appState.viewportStore.subscribe((s) => flags.push(s.rebuilding));
+
+    addFeature(documentStore, 1);
+    expect(appState.viewportStore.getState().rebuilding).toBe(true);
+    await vi.waitFor(() => expect(finishers).toHaveLength(2));
+    addFeature(documentStore, 2);
+    finishers[1]!();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(finishers).toHaveLength(3);
+    expect(appState.viewportStore.getState().rebuilding).toBe(true);
+    finishers[2]!();
+    await vi.waitFor(() => expect(appState.viewportStore.getState().rebuilding).toBe(false));
+
+    // Set once, cleared once: `wait_for_rebuild` never sees an idle gap
+    // between the stale rebuild and its follow-up.
+    expect(flags.filter((f, i) => f !== (flags[i - 1] ?? false))).toEqual([true, false]);
+  });
+
+  it('a disposed scheduler stops rebuilding, so a remount does not double every rebuild', async () => {
+    // React StrictMode mounts, unmounts and remounts the app in development.
+    const { appState, documentStore } = makeAppState();
+    let first = 0;
+    let second = 0;
+    await initRebuildScheduler(appState, { pool: new StubPool(async (part) => { first++; return emptyResult(part.id); }) });
+    disposeRebuildScheduler();
+    await initRebuildScheduler(appState, { pool: new StubPool(async (part) => { second++; return emptyResult(part.id); }) });
+
+    addFeature(documentStore, 1);
+    await vi.waitFor(() => expect(appState.viewportStore.getState().rebuilding).toBe(false));
+    expect(first).toBe(1);
+    expect(second).toBe(2);
   });
 });

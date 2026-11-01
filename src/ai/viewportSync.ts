@@ -6,8 +6,8 @@
  * settling behavior. The dispatch path is racy:
  *
  *   bus.dispatch(cmd)                  // sync: notifies dirtyListeners
- *     → scheduleRebuild()              // async fn, body runs sync up to first await
- *       → viewportStore.setRebuilding(true)   // sync
+ *     → requestRebuild(partId)         // rebuild queue in rebuildScheduler.ts
+ *       → viewportStore.setRebuilding(true)   // sync, unless one is running
  *       → await pool.requestRebuild(...)      // first suspension point
  *
  * By the time dispatchCommand returns to the caller, `rebuilding === true`
