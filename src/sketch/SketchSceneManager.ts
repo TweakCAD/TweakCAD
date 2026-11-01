@@ -96,6 +96,12 @@ export type SketchPlaneName = 'XY' | 'XZ' | 'YZ';
  */
 export type SketchPlaneInput = SketchPlaneName | SketchPlaneConfig;
 
+/** Screen right / up as unit vectors in sketch coordinates. */
+export interface ScreenFrame {
+  right: [number, number];
+  up: [number, number];
+}
+
 /**
  * Build a plane config from a resolved construction-plane basis. The basis
  * comes from {@link ConstructionPlaneDisplay} (origin/uAxis/vAxis/normal as
@@ -406,6 +412,28 @@ export class SketchSceneManager {
     const u = offset.dot(this.plane.uAxis);
     const v = offset.dot(this.plane.vAxis);
     return [u, v];
+  }
+
+  /**
+   * The screen's right and up directions at a cursor position, expressed as
+   * unit vectors in sketch coordinates. Content laid out along them reads
+   * upright and unmirrored from the current camera, whichever way the plane's
+   * u/v axes happen to face (XZ and YZ have left-handed bases). `up` is made
+   * exactly perpendicular to `right`. Null when the plane is edge-on.
+   */
+  screenFrameAt(clientX: number, clientY: number): ScreenFrame | null {
+    const STEP_PX = 50;
+    const o = this.screenToSketch(clientX, clientY);
+    const r = this.screenToSketch(clientX + STEP_PX, clientY);
+    const u = this.screenToSketch(clientX, clientY - STEP_PX);
+    if (!o || !r || !u) return null;
+    const rx = r[0] - o[0], ry = r[1] - o[1];
+    const len = Math.hypot(rx, ry);
+    if (len < 1e-9) return null;
+    const right: [number, number] = [rx / len, ry / len];
+    const perp: [number, number] = [-right[1], right[0]];
+    const sign = perp[0] * (u[0] - o[0]) + perp[1] * (u[1] - o[1]) >= 0 ? 1 : -1;
+    return { right, up: [perp[0] * sign, perp[1] * sign] };
   }
 
   /**
@@ -1000,6 +1028,13 @@ export class SketchSceneManager {
         const sampled = catmullRomSpline(all, 16);
         const pts: THREE.Vector3[] = sampled.map(([x, y]) => this.toWorld(x, y));
         this.previewGroup.add(this.makeLine2(pts, this.previewMaterial));
+        break;
+      }
+      case 'outline': {
+        for (const loop of preview.loops) {
+          if (loop.length < 2) continue;
+          this.previewGroup.add(this.makeLine2(loop.map(([x, y]) => this.toWorld(x, y)), this.previewMaterial));
+        }
         break;
       }
     }

@@ -294,6 +294,15 @@ export function SplineToolIcon({ size = defaults.size, color = defaults.color, s
   );
 }
 
+/** Outlined capital T - Text tool */
+export function TextToolIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+      <path d="M2.5 2.5H13.5V5.5H9.5V13.5H6.5V5.5H2.5Z" stroke={color} strokeWidth={strokeWidth} strokeLinejoin="round" fill="none" />
+    </svg>
+  );
+}
+
 /** Small dot - Point tool */
 export function PointToolIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
   return (

@@ -65,6 +65,7 @@ import {
 import { applyConstraintWithSolver } from '../../sketch/applyConstraintPipeline.ts';
 import { getSolver, solveDrag } from '../../sketch/solver/index.ts';
 import type { SketchConstraintInput } from '../../sketch/types.ts';
+import { addPrimitivesToEditorState, type DxfPrimitive } from '../../sketch/io/dxfImport.ts';
 
 // ---- Shared helpers --------------------------------------------------------
 
@@ -756,6 +757,85 @@ export const sketchDrawSplineHandler: CommandHandler = {
     if (command.tolerance !== undefined) opts.tolerance = command.tolerance;
     const result = drawSpline(current, command.points, opts);
     applyEditorStateUpdate(draft, command.sketchId, result.state);
+  },
+};
+
+// ---- SketchInsertPrimitives ------------------------------------------------
+
+/** Upper bound on one insert — a long line of text is a few hundred. */
+export const MAX_INSERT_PRIMITIVES = 5000;
+
+function validatePrimitive(i: number, p: DxfPrimitive): Result<void, ValidationError> {
+  const at = `primitives[${i}]`;
+  const vecs = (...pairs: Array<[string, unknown]>): Result<void, ValidationError> => {
+    for (const [name, v] of pairs) {
+      const r = validateVec2(`${at}.${name}`, v);
+      if (!r.ok) return r;
+    }
+    return ok(undefined);
+  };
+  if (typeof p !== 'object' || p === null) {
+    return err({ code: 'INVALID_INPUT', message: `${at} must be an object`, field: at });
+  }
+  switch (p.kind) {
+    case 'line':
+      return vecs(['start', p.start], ['end', p.end]);
+    case 'bezier':
+      return vecs(['start', p.start], ['cp1', p.cp1], ['cp2', p.cp2], ['end', p.end]);
+    case 'circle': {
+      const v = vecs(['center', p.center]);
+      return v.ok ? validateFiniteNumber(`${at}.radius`, p.radius, { positive: true }) : v;
+    }
+    case 'arc': {
+      const v = vecs(['center', p.center]);
+      if (!v.ok) return v;
+      const r = validateFiniteNumber(`${at}.radius`, p.radius, { positive: true });
+      if (!r.ok) return r;
+      const a = validateFiniteNumber(`${at}.startAngle`, p.startAngle);
+      return a.ok ? validateFiniteNumber(`${at}.endAngle`, p.endAngle) : a;
+    }
+    case 'ellipse': {
+      const v = vecs(['center', p.center], ['majorEnd', p.majorEnd]);
+      return v.ok ? validateFiniteNumber(`${at}.minorRadius`, p.minorRadius, { positive: true }) : v;
+    }
+    case 'spline':
+      if (!Array.isArray(p.points) || p.points.length < 2) {
+        return err({ code: 'INVALID_INPUT', message: `${at}: spline needs at least 2 points`, field: at });
+      }
+      return vecs(...p.points.map((pt, j): [string, unknown] => [`points[${j}]`, pt]));
+    default:
+      return err({ code: 'INVALID_INPUT', message: `${at}: unknown primitive kind`, field: at });
+  }
+}
+
+export const sketchInsertPrimitivesHandler: CommandHandler = {
+  validate(command: CadCommand, state: Readonly<CadProject>): Result<void, ValidationError> {
+    if (command.type !== 'SketchInsertPrimitives') {
+      return err({ code: 'WRONG_TYPE', message: 'Expected SketchInsertPrimitives command' });
+    }
+    const found = findSketch(state, command.sketchId);
+    if (!found.ok) return err(found.error);
+    if (!Array.isArray(command.primitives) || command.primitives.length === 0) {
+      return err({ code: 'INVALID_INPUT', message: 'primitives must be a non-empty array', field: 'primitives' });
+    }
+    if (command.primitives.length > MAX_INSERT_PRIMITIVES) {
+      return err({
+        code: 'INVALID_INPUT',
+        message: `at most ${MAX_INSERT_PRIMITIVES} primitives per insert`,
+        field: 'primitives',
+      });
+    }
+    for (let i = 0; i < command.primitives.length; i++) {
+      const v = validatePrimitive(i, command.primitives[i]!);
+      if (!v.ok) return err(v.error);
+    }
+    return ok(undefined);
+  },
+  execute(draft: CadProject, command: CadCommand): void {
+    if (command.type !== 'SketchInsertPrimitives') return;
+    const current = loadEditorState(draft, command.sketchId);
+    const next = addPrimitivesToEditorState(current, command.primitives);
+    applyEditorStateUpdate(draft, command.sketchId, next);
   },
 };
 

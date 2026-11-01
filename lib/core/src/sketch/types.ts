@@ -558,6 +558,9 @@ export type SketchToolId =
   | 'slot'
   | 'ellipse'
   | 'spline'
+  // Text: places a line of text as glyph-outline lines + beziers (no text
+  // entity — see sketch/text/textOutline.ts).
+  | 'text'
   | 'point'
   | 'trim'
   | 'extend'
@@ -580,6 +583,8 @@ export type SketchPreviewData =
   | { type: 'slot'; x1: number; y1: number; x2: number; y2: number; width: number }
   | { type: 'ellipse'; centerX: number; centerY: number; majorX: number; majorY: number; minorRadius: number }
   | { type: 'spline'; points: [number, number][]; cursorX: number; cursorY: number }
+  // Text tool: the sampled glyph outlines, already placed at the cursor.
+  | { type: 'outline'; loops: [number, number][][] }
   | null;
 
 // ---- Hit Test ----

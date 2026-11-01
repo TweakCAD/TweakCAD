@@ -54,6 +54,7 @@ import {
   sketchDrawPointHandler,
   sketchDrawEllipseHandler,
   sketchDrawSplineHandler,
+  sketchInsertPrimitivesHandler,
   sketchMovePointHandler,
   sketchMovePointsBatchHandler,
   sketchSetRadiusHandler,
@@ -131,6 +132,7 @@ export function initializeApp(): AppState {
   commandBus.register('SketchDrawPoint', sketchDrawPointHandler);
   commandBus.register('SketchDrawEllipse', sketchDrawEllipseHandler);
   commandBus.register('SketchDrawSpline', sketchDrawSplineHandler);
+  commandBus.register('SketchInsertPrimitives', sketchInsertPrimitivesHandler);
   commandBus.register('SketchMovePoint', sketchMovePointHandler);
   commandBus.register('SketchMovePointsBatch', sketchMovePointsBatchHandler);
   commandBus.register('SketchSetRadius', sketchSetRadiusHandler);

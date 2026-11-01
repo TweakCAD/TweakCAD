@@ -35,6 +35,7 @@ import type {
   ConfigurationRow,
   SketchEditorSnapshot,
 } from '../document/schema.ts';
+import type { DxfPrimitive } from '../sketch/io/dxfImport.ts';
 
 /** Union of all possible document mutation commands */
 export type CadCommand =
@@ -59,6 +60,7 @@ export type CadCommand =
   | SketchDrawPointCommand
   | SketchDrawEllipseCommand
   | SketchDrawSplineCommand
+  | SketchInsertPrimitivesCommand
   | SketchMovePointCommand
   | SketchMovePointsBatchCommand
   | SketchSetRadiusCommand
@@ -524,6 +526,21 @@ export type SketchDrawSplineCommand = {
 };
 
 /**
+ * Insert a batch of ready-made primitives (lines, arcs, circles, ellipses,
+ * splines, cubic beziers — the importers' normalized shape) into an existing
+ * sketch as one undo entry. Endpoints that meet within the import tolerance
+ * get removable `coincident` constraints, exactly like DXF/SVG import; no
+ * solve runs. The sketch Text tool uses it to place glyph outlines.
+ */
+export type SketchInsertPrimitivesCommand = {
+  type: 'SketchInsertPrimitives';
+  sketchId: FeatureId;
+  primitives: ReadonlyArray<DxfPrimitive>;
+  /** Undo-history label, e.g. `Text "ANNA"`. Defaults to `Insert N curves`. */
+  label?: string;
+};
+
+/**
  * Move an existing sketch point to new coordinates. Dispatched at
  * drag-end so each drag becomes one undo entry. Mid-drag positions
  * stay in the editor store and are not persisted.
@@ -850,6 +867,8 @@ export function commandLabel(command: CadCommand): string {
       return 'Draw Ellipse';
     case 'SketchDrawSpline':
       return 'Draw Spline';
+    case 'SketchInsertPrimitives':
+      return command.label ?? `Insert ${command.primitives.length} curve${command.primitives.length === 1 ? '' : 's'}`;
     case 'SketchMovePoint':
       return 'Move Point';
     case 'SketchMovePointsBatch':

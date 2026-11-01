@@ -530,11 +530,26 @@ export function buildEditorStateFromPrimitives(
   primitives: readonly DxfPrimitive[],
   opts: { idFactory?: IdFactory } = {},
 ): EditorState {
+  return addPrimitivesToEditorState(emptyEditorState(), primitives, opts);
+}
+
+/**
+ * Add normalized primitives to an existing `EditorState` — the shared body of
+ * `buildEditorStateFromPrimitives`, also used to insert generated outlines
+ * (sketch text) into a sketch that already has geometry. Junction coincidents
+ * are only added between the NEW primitives' endpoints; existing geometry is
+ * left untouched.
+ */
+export function addPrimitivesToEditorState(
+  initial: EditorState,
+  primitives: readonly DxfPrimitive[],
+  opts: { idFactory?: IdFactory } = {},
+): EditorState {
   const base: { tolerance: number; idFactory?: IdFactory } = { tolerance: MERGE_EPSILON_MM };
   if (opts.idFactory) base.idFactory = opts.idFactory;
   const idOpts = opts.idFactory ? { idFactory: opts.idFactory } : {};
 
-  let state = emptyEditorState();
+  let state = initial;
   // Line / arc endpoints, captured for the coincidence pass below. Each is the
   // point id the builder allocated plus its drawing-space coordinate.
   const endpoints: { id: SketchPointId; x: number; y: number }[] = [];

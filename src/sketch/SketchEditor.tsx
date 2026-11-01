@@ -22,6 +22,7 @@ import type { FeatureId } from '@tweakcad/core/src/ids.ts';
 import { SketchSceneManager, type SketchPlaneInput } from './SketchSceneManager.ts';
 import { useSketchEditorStore } from './SketchEditorStore.ts';
 import { DimensionsOverlay } from './DimensionsOverlay.tsx';
+import { TextToolPanel } from './TextToolPanel.tsx';
 import { subscribeSketchHydration } from './sketchHydration.ts';
 import {
   resetToolSession,
@@ -32,6 +33,12 @@ import {
   handleToolEnter,
 } from './sketchTools.ts';
 import { dispatchRemoveSketchEntity } from './sketchDispatch.ts';
+
+/** Refresh the Text tool's screen frame from the camera at the cursor. */
+function syncTextFrame(manager: SketchSceneManager, clientX: number, clientY: number): void {
+  const frame = manager.screenFrameAt(clientX, clientY);
+  if (frame) useSketchEditorStore.getState().setTextFrame(frame);
+}
 
 // ---- Props ----
 
@@ -210,6 +217,7 @@ export function SketchEditor({
     if (!activeTool) {
       resetToolSession('select');
     }
+    if (activeTool === 'text') syncTextFrame(manager, e.clientX, e.clientY);
     handleToolClick(store.getState(), sketchPos[0], sketchPos[1], e.shiftKey);
   }, [activeTool, store, viewportCtrl]);
 
@@ -257,6 +265,7 @@ export function SketchEditor({
     // geometry movement. Shell enters every sketch with sketchTool=null
     // (Shell.tsx:518/610/674), so the bare `if (activeTool)` branch was
     // dead for every fresh sketch session.
+    if (activeTool === 'text') syncTextFrame(manager, e.clientX, e.clientY);
     handleToolMove(store.getState(), sketchPos[0], sketchPos[1]);
   }, [activeTool, store, viewportCtrl]);
 
@@ -396,6 +405,7 @@ export function SketchEditor({
         onContextMenu={(e) => e.preventDefault()}
       />
       <DimensionsOverlay sceneManager={sceneManagerState} />
+      {effectiveTool === 'text' && <TextToolPanel onClose={() => onActiveToolChange?.('select')} />}
     </>
   );
 }

@@ -15,6 +15,9 @@
  */
 
 import { create } from 'zustand';
+import type { DxfPrimitive } from '@tweakcad/core/src/sketch/io/dxfImport.ts';
+import { DEFAULT_SKETCH_FONT, type SketchFontId } from './text/sketchFonts.ts';
+import type { ScreenFrame } from './SketchSceneManager.ts';
 import type {
   SketchPoint,
   SketchPointId,
@@ -70,6 +73,22 @@ export type SketchSelectionIntent = 'editGeometry' | 'selectProfileForFeature';
  * is non-null. Committing the input applies the matching value constraint
  * (length / radius / distance) and snaps geometry to match.
  */
+export interface TextToolOptions {
+  text: string;
+  fontId: SketchFontId;
+  /** Cap height in mm. */
+  height: number;
+}
+
+export interface TextPlacement {
+  /** Outline primitives at the origin. */
+  primitives: DxfPrimitive[];
+  /** The same outline sampled into closed polylines, for the cursor preview. */
+  loops: [number, number][][];
+  /** Undo-history label. */
+  label: string;
+}
+
 export type PendingDimension =
   | { kind: 'length'; geometryId: SketchGeometryId; current: number; screenX: number; screenY: number }
   | { kind: 'radius'; geometryId: SketchGeometryId; current: number; screenX: number; screenY: number }
@@ -285,6 +304,24 @@ export interface SketchEditorState {
   pendingDimension: PendingDimension | null;
   setPendingDimension: (p: PendingDimension | null) => void;
 
+  /** Text tool options, kept across tool switches for the session. */
+  textToolOptions: TextToolOptions;
+  setTextToolOptions: (patch: Partial<TextToolOptions>) => void;
+  /**
+   * The Text tool's current outline, laid out at the origin (baseline-left at
+   * 0,0). Null while the font loads or the text is blank. A click places a
+   * translated copy.
+   */
+  textPlacement: TextPlacement | null;
+  setTextPlacement: (p: TextPlacement | null) => void;
+  /**
+   * Screen right/up in sketch coordinates at the cursor, refreshed by the
+   * editor while the Text tool is active. Text is laid out along it so it
+   * reads correctly from the camera on every plane.
+   */
+  textFrame: ScreenFrame;
+  setTextFrame: (f: ScreenFrame) => void;
+
   /**
    * IDs of constraints the solver couldn't satisfy after the last
    * move/edit. Empty when the sketch is consistent. Browser rows badge
@@ -479,6 +516,19 @@ export const useSketchEditorStore = create<SketchEditorState>((set, get) => ({
   gridSnapEnabled: false,
   pendingDimension: null,
   setPendingDimension: (p: PendingDimension | null): void => { set({ pendingDimension: p }); },
+  textToolOptions: { text: 'Text', fontId: DEFAULT_SKETCH_FONT, height: 10 },
+  setTextToolOptions: (patch: Partial<TextToolOptions>): void => {
+    set((st) => ({ textToolOptions: { ...st.textToolOptions, ...patch } }));
+  },
+  textPlacement: null,
+  setTextPlacement: (p: TextPlacement | null): void => { set({ textPlacement: p }); },
+  textFrame: { right: [1, 0], up: [0, 1] },
+  setTextFrame: (f: ScreenFrame): void => {
+    const cur = get().textFrame;
+    const same = Math.abs(cur.right[0] - f.right[0]) < 1e-9 && Math.abs(cur.right[1] - f.right[1]) < 1e-9
+      && Math.abs(cur.up[0] - f.up[0]) < 1e-9 && Math.abs(cur.up[1] - f.up[1]) < 1e-9;
+    if (!same) set({ textFrame: f });
+  },
   unsatisfiedConstraints: new Set<SketchConstraintId>(),
   dof: undefined,
   inferredHint: null,

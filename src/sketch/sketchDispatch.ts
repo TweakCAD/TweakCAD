@@ -44,6 +44,7 @@ import { enqueueToast } from '../components/toastStore.ts';
 import { consoleLog } from '@tweakcad/core/src/store/consoleStore.ts';
 import type { CadCommand } from '@tweakcad/core/src/commands/types.ts';
 import type { FeatureId } from '@tweakcad/core/src/ids.ts';
+import type { DxfPrimitive } from '@tweakcad/core/src/sketch/io/dxfImport.ts';
 import type {
   SketchConstraintInput,
   SketchGeometryId,
@@ -218,6 +219,21 @@ export function dispatchDrawSpline(
     points,
     construction,
   })).ok;
+}
+
+/** Insert ready-made primitives (e.g. text outlines) as one undo entry. */
+export function dispatchInsertPrimitives(
+  primitives: ReadonlyArray<DxfPrimitive>,
+  label?: string,
+): boolean {
+  const r = dispatchInSketch((sketchId) => ({
+    type: 'SketchInsertPrimitives',
+    sketchId,
+    primitives,
+    ...(label !== undefined ? { label } : {}),
+  }));
+  if (!r.ok) enqueueToast({ tone: 'warning', title: 'Insert failed', message: r.reason });
+  return r.ok;
 }
 
 export function dispatchDrawPoint(

@@ -57,6 +57,7 @@ import {
   EllipseToolIcon,
   SlotToolIcon,
   SplineToolIcon,
+  TextToolIcon,
   PointToolIcon,
   TrimToolIcon,
   ExtendToolIcon,
@@ -352,6 +353,7 @@ const SKETCH_CREATE_TOOLS: SketchToolDef[] = [
   { id: 'circle',       label: 'Circle',    shortcut: 'C', icon: (c) => <CircleToolIcon size={26} color={c} />, primary: true },
   { id: 'arc-3point',   label: 'Arc',       shortcut: 'A', icon: (c) => <ArcToolIcon size={26} color={c} />, primary: true },
   { id: 'point',        label: 'Point',                    icon: (c) => <PointToolIcon size={26} color={c} />, primary: true },
+  { id: 'text',         label: 'Text',                     icon: (c) => <TextToolIcon size={26} color={c} />, primary: true },
   // Overflow — accessible from the CREATE dropdown.
   // Alternate circle constructors.
   { id: 'circle-2point', label: 'Circle 2-pt', icon: (c) => <CircleToolIcon size={26} color={c} /> },

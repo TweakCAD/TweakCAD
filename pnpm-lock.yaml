@@ -138,6 +138,9 @@ importers:
       occt-wasm:
         specifier: 5.8.0
         version: 5.8.0
+      opentype.js:
+        specifier: 2.0.0
+        version: 2.0.0
       react:
         specifier: 19.3.1
         version: 19.3.1
@@ -1242,6 +1245,10 @@ packages:
 
   occt-wasm@5.8.0:
     resolution: {integrity: sha512-uAVUiwTCnJeJnPmSK22OiChZquvFVTo3jN65FmnF/h99ad54ksYSpSv5sJATFrPiaNpYGlxpD+mtr8j+jir0TA==}
+
+  opentype.js@2.0.0:
+    resolution: {integrity: sha512-kCyjv6xdDY1W/jLWZ/L3QhhTlKUqDZMQ5+Jdlw12b3dXkKNpYBqqlMMj0YDQPShWFTMwgZI1hG14kN3XUDSg/A==}
+    hasBin: true
 
   optionator@0.9.4:
     resolution: {integrity: sha512-6IpQ7mKUxRcZNLIObR0hz7lxsapSSIYNZJwXPGeF0mTVqGKFIXj1DQcMoT22S3ROcLyY/rz0PWaWZ9ayWmad9g==}
@@ -2495,6 +2502,8 @@ snapshots:
   occt-wasm@5.8.0:
     dependencies:
       comlink: 4.4.2
+
+  opentype.js@2.0.0: {}
 
   optionator@0.9.4:
     dependencies:

@@ -35,7 +35,10 @@ import {
   dispatchMovePointsBatch,
   dispatchSetRadius,
   dispatchApplyConstraint,
+  dispatchInsertPrimitives,
 } from './sketchDispatch.ts';
+import type { DxfPrimitive } from '@tweakcad/core/src/sketch/io/dxfImport.ts';
+import type { ScreenFrame } from './SketchSceneManager.ts';
 import {
   bindSession,
   handleArc3PointClick,
@@ -88,6 +91,7 @@ export type ToolSessionState =
   | { tool: 'ellipse'; phase: 'idle' | 'center' | 'major'; centerX?: number; centerY?: number; majorX?: number; majorY?: number }
   | { tool: 'spline'; phase: 'idle' | 'drawing'; points: [number, number][] }
   | { tool: 'point'; phase: 'idle' }
+  | { tool: 'text'; phase: 'idle' }
   | { tool: 'trim'; phase: 'idle' }
   | { tool: 'extend'; phase: 'idle' }
   | { tool: 'sketch-fillet'; phase: 'idle' | 'first'; firstGeomId?: SketchGeometryId }
@@ -174,6 +178,7 @@ export function resetToolSession(tool: SketchToolId): void {
     case 'ellipse':        session = { tool: 'ellipse', phase: 'idle' }; break;
     case 'spline':         session = { tool: 'spline', phase: 'idle', points: [] }; break;
     case 'point':          session = { tool: 'point', phase: 'idle' }; break;
+    case 'text':           session = { tool: 'text', phase: 'idle' }; break;
     case 'trim':           session = { tool: 'trim', phase: 'idle' }; break;
     case 'extend':         session = { tool: 'extend', phase: 'idle' }; break;
     case 'sketch-fillet':  session = { tool: 'sketch-fillet', phase: 'idle' }; break;
@@ -219,6 +224,7 @@ export function handleToolClick(
     case 'ellipse':        handleEllipseClick(store, x, y, snap.targetId); break;
     case 'spline':         handleSplineClick(store, x, y); break;
     case 'point':          handlePointToolClick(store, x, y); break;
+    case 'text':           handleTextClick(store, x, y); break;
     case 'trim':           handleTrimClick(store, sketchX, sketchY); break;
     case 'extend':         handleExtendClick(store, sketchX, sketchY); break;
     case 'sketch-fillet':  handleSketchFilletClick(store, sketchX, sketchY); break;
@@ -372,6 +378,12 @@ export function handleToolMove(
         store.setPreview({ type: 'spline', points: session.points.slice(), cursorX: x, cursorY: y });
       }
       break;
+    case 'text': {
+      const placement = store.textPlacement;
+      const place = textPlacer(store.textFrame, x, y);
+      store.setPreview(placement ? { type: 'outline', loops: placement.loops.map((loop) => loop.map(place)) } : null);
+      break;
+    }
     case 'select':
       if (session.phase === 'dragging' && session.resizeGeometryId) {
         // Radius follows the cursor's distance from the centre. Floored rather
@@ -510,6 +522,7 @@ export function handleToolEscape(store: SketchEditorState): boolean {
     case 'ellipse':          session = { tool: 'ellipse', phase: 'idle' }; break;
     case 'spline':           session = { tool: 'spline', phase: 'idle', points: [] }; break;
     case 'point':            session = { tool: 'point', phase: 'idle' }; break;
+    case 'text':             session = { tool: 'text', phase: 'idle' }; break;
     case 'trim':             session = { tool: 'trim', phase: 'idle' }; break;
     case 'extend':           session = { tool: 'extend', phase: 'idle' }; break;
     case 'sketch-fillet':    session = { tool: 'sketch-fillet', phase: 'idle' }; break;
@@ -534,6 +547,37 @@ export function handleToolEscape(store: SketchEditorState): boolean {
       break;
   }
   return false;
+}
+
+// ---- Text Tool ----
+
+/**
+ * Place the current text outline with its baseline-left at the click, laid
+ * out along the screen's right/up directions so it reads correctly from the
+ * camera. The outline is built by the Text panel (font + height + string) and
+ * lands as plain lines + beziers in one undo entry; the tool stays armed so
+ * the next click places another copy.
+ */
+function handleTextClick(store: SketchEditorState, x: number, y: number): void {
+  const placement = store.textPlacement;
+  if (!placement || placement.primitives.length === 0) return;
+  const place = textPlacer(store.textFrame, x, y);
+  dispatchInsertPrimitives(placement.primitives.map((p) => mapPrimitive(p, place)), placement.label);
+}
+
+/** Map text-space (x right, y up) to sketch space at an anchor. */
+function textPlacer(frame: ScreenFrame, x: number, y: number): (p: readonly [number, number]) => [number, number] {
+  const { right, up } = frame;
+  return ([px, py]) => [x + px * right[0] + py * up[0], y + px * right[1] + py * up[1]];
+}
+
+/** Map every point of a line / bezier primitive (the only kinds text emits). */
+function mapPrimitive(p: DxfPrimitive, f: (v: readonly [number, number]) => [number, number]): DxfPrimitive {
+  switch (p.kind) {
+    case 'line': return { kind: 'line', start: f(p.start), end: f(p.end) };
+    case 'bezier': return { kind: 'bezier', start: f(p.start), cp1: f(p.cp1), cp2: f(p.cp2), end: f(p.end) };
+    default: return p;
+  }
 }
 
 // ---- Line Tool ----
