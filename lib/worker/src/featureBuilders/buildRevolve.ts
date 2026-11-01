@@ -28,8 +28,9 @@ import type { SketchRegion } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import {
   regionHasCurveSegments,
   regionSegmentsToWire,
-  sketchToWorld as sharedSketchToWorld,
+  sketchToWorld,
 } from './wireProfile.ts';
+import { DEFAULT_PLANES } from './resolvePlane.ts';
 import type {
   ResolvedSketchEntityData,
   ResolvedSketchPlaneData,
@@ -167,9 +168,7 @@ function regionToKernelProfile(
   const resolvedEntities = sketchOutputs?.data?.resolvedEntities as
     | Record<string, ResolvedSketchEntityData>
     | undefined;
-  const normal: Vec3 = plane?.normal ?? [0, 1, 0];
-  const uAxis: Vec3 = plane?.uAxis ?? [1, 0, 0];
-  const vAxis: Vec3 = plane?.vAxis ?? [0, 0, 1];
+  const { normal, uAxis, vAxis } = plane ?? DEFAULT_PLANES.XZ;
 
   if (region.type === 'circle') {
     const entityId = region.entityIds[0];
@@ -200,7 +199,7 @@ function regionToKernelProfile(
     // see wireProfile.ts.
     if (regionHasCurveSegments(region)) {
       const wireSegments = regionSegmentsToWire(region, plane);
-      const center = sharedSketchToWorld(region.center, plane);
+      const center = sketchToWorld(region.center, plane);
       return {
         type: 'wire',
         segments: wireSegments,
@@ -252,22 +251,4 @@ function offsetProfile(profile: ResolvedProfile, distance: number): ResolvedProf
     ] as Vec3);
   }
   return result;
-}
-
-function sketchToWorld(
-  point: [number, number],
-  plane: ResolvedSketchPlaneData | undefined,
-): Vec3 {
-  const p = plane ?? {
-    name: 'XZ' as const,
-    origin: [0, 0, 0] as Vec3,
-    uAxis: [1, 0, 0] as Vec3,
-    vAxis: [0, 0, 1] as Vec3,
-    normal: [0, 1, 0] as Vec3,
-  };
-  return [
-    p.origin[0] + point[0] * p.uAxis[0] + point[1] * p.vAxis[0],
-    p.origin[1] + point[0] * p.uAxis[1] + point[1] * p.vAxis[1],
-    p.origin[2] + point[0] * p.uAxis[2] + point[1] * p.vAxis[2],
-  ];
 }

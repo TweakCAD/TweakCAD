@@ -15,6 +15,7 @@ import type { SketchRegion } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import { catmullRomSpline } from '@tweakcad/core/src/sketch/curveSampling.ts';
 import type { WireSegment } from '@tweakcad/kernel/src/types.ts';
 import type { ResolvedSketchPlaneData } from './buildSketch.ts';
+import { DEFAULT_PLANES } from './resolvePlane.ts';
 
 /** Catmull-Rom samples per control-point span when turning a `spline`
  *  boundary into kernel B-spline interpolation points. */
@@ -22,20 +23,13 @@ const SPLINE_WIRE_SUBDIVISIONS = 8;
 
 /**
  * Map a sketch-local 2D point through the resolved sketch plane into a
- * world 3D point. Defaults to the XZ plane if no plane data is provided
- * — same fallback used by buildExtrude / buildRevolve / buildLoft.
+ * world 3D point. Defaults to the XZ plane if no plane data is provided.
  */
 export function sketchToWorld(
   point: [number, number],
   plane: ResolvedSketchPlaneData | undefined,
 ): Vec3 {
-  const p = plane ?? {
-    name: 'XZ' as const,
-    origin: [0, 0, 0] as Vec3,
-    uAxis: [1, 0, 0] as Vec3,
-    vAxis: [0, 0, 1] as Vec3,
-    normal: [0, 1, 0] as Vec3,
-  };
+  const p = plane ?? DEFAULT_PLANES.XZ;
   return [
     p.origin[0] + point[0] * p.uAxis[0] + point[1] * p.vAxis[0],
     p.origin[1] + point[0] * p.uAxis[1] + point[1] * p.vAxis[1],

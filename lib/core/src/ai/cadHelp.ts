@@ -97,8 +97,13 @@ hallucinated ids get \`NOT_FOUND\` errors. Cheaper to \`list_*\` first.
 ## Coordinate system & units
 
 - Distances are in **millimeters** unless stated otherwise.
-- Default planes: \`XY\`, \`XZ\`, \`YZ\`. A sketch on XY sees X→right,
-  Y→up; extrudes along Z.
+- World is Y-up. Default planes and their sketch axes (sketch x, sketch y,
+  normal), each right-handed and seen from the +normal side so sketch x
+  reads right and sketch y reads up:
+  - \`XY\` (front): x = +X, y = +Y, normal +Z.
+  - \`XZ\` (ground): x = +X, y = −Z, normal +Y.
+  - \`YZ\` (side): x = −Z, y = +Y, normal +X.
+  An extrude grows along +normal unless its direction is reversed.
 - Sketch coords are 2D in sketch-plane local coordinates.
 - Pass numbers (e.g. \`5\`) where schemas say \`type: number\`; the
   wrapper handles Expression-string conversion for the underlying

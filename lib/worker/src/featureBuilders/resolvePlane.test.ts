@@ -24,18 +24,30 @@ describe('resolvePlaneRef — default planes', () => {
     expect(plane.normal).toEqual([0, 0, 1]);
   });
 
-  it('XZ resolves to u=+X, v=+Z, n=+Y (matches buildSketch + SketchPlanePicker)', () => {
+  it('XZ resolves to u=+X, v=-Z, n=+Y (matches the editor planeConfigFromName)', () => {
     const plane = resolvePlaneRef({ type: 'defaultPlane', name: 'XZ' }, emptyBuildContext({}), {});
     expect(plane.uAxis).toEqual([1, 0, 0]);
-    expect(plane.vAxis).toEqual([0, 0, 1]);
+    expect(plane.vAxis).toEqual([0, 0, -1]);
     expect(plane.normal).toEqual([0, 1, 0]);
   });
 
-  it('YZ resolves to u=+Z, v=+Y, n=+X (matches sketch editor V=world-up convention)', () => {
+  it('YZ resolves to u=-Z, v=+Y, n=+X (V stays world-up on the upright plane)', () => {
     const plane = resolvePlaneRef({ type: 'defaultPlane', name: 'YZ' }, emptyBuildContext({}), {});
-    expect(plane.uAxis).toEqual([0, 0, 1]);
+    expect(plane.uAxis).toEqual([0, 0, -1]);
     expect(plane.vAxis).toEqual([0, 1, 0]);
     expect(plane.normal).toEqual([1, 0, 0]);
+  });
+
+  it.each(['XY', 'XZ', 'YZ'] as const)('%s is right-handed: u × v = normal', (name) => {
+    const { uAxis: u, vAxis: v, normal: n } = resolvePlaneRef(
+      { type: 'defaultPlane', name }, emptyBuildContext({}), {},
+    );
+    const cross = [
+      u[1] * v[2] - u[2] * v[1],
+      u[2] * v[0] - u[0] * v[2],
+      u[0] * v[1] - u[1] * v[0],
+    ];
+    expect(cross.map(c => c + 0)).toEqual(n);
   });
 });
 
@@ -221,7 +233,7 @@ describe('offsetPlaneAlongNormal', () => {
     const yz: ResolvedSketchPlaneData = {
       name: 'YZ',
       origin: [0, 0, 0],
-      uAxis: [0, 0, 1],
+      uAxis: [0, 0, -1],
       vAxis: [0, 1, 0],
       normal: [1, 0, 0],
     };

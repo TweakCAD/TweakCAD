@@ -27,11 +27,11 @@ import type {
   ResolvedSketchEntityData,
   ResolvedSketchPlaneData,
 } from './buildSketch.ts';
-import { resolvePlaneRef } from './resolvePlane.ts';
+import { DEFAULT_PLANES, resolvePlaneRef } from './resolvePlane.ts';
 import {
   regionHasCurveSegments,
   regionSegmentsToWire,
-  sketchToWorld as sharedSketchToWorld,
+  sketchToWorld,
 } from './wireProfile.ts';
 
 /**
@@ -292,9 +292,7 @@ export function regionToKernelProfile(
   const sketchOutputs = context.featureOutputs.get(sketchId);
   const plane = sketchOutputs?.data?.plane as ResolvedSketchPlaneData | undefined;
   const resolvedEntities = sketchOutputs?.data?.resolvedEntities as Record<string, ResolvedSketchEntityData> | undefined;
-  const normal: Vec3 = plane?.normal ?? [0, 1, 0];
-  const uAxis: Vec3 = plane?.uAxis ?? [1, 0, 0];
-  const vAxis: Vec3 = plane?.vAxis ?? [0, 0, 1];
+  const { normal, uAxis, vAxis } = plane ?? DEFAULT_PLANES.XZ;
 
   if (region.type === 'circle') {
     const entityId = region.entityIds[0];
@@ -357,7 +355,7 @@ export function regionToKernelProfile(
     // shared implementation.
     if (regionHasCurveSegments(region)) {
       const wireSegments = regionSegmentsToWire(region, plane);
-      const center = sharedSketchToWorld(region.center, plane);
+      const center = sketchToWorld(region.center, plane);
       return {
         type: 'wire',
         segments: wireSegments,
@@ -560,23 +558,4 @@ function offsetProfile(profile: ResolvedProfile, distance: number): ResolvedProf
   }
 
   return result;
-}
-
-function sketchToWorld(
-  point: [number, number],
-  plane: ResolvedSketchPlaneData | undefined,
-): Vec3 {
-  const resolvedPlane = plane ?? {
-    name: 'XZ' as const,
-    origin: [0, 0, 0] as Vec3,
-    uAxis: [1, 0, 0] as Vec3,
-    vAxis: [0, 0, 1] as Vec3,
-    normal: [0, 1, 0] as Vec3,
-  };
-
-  return [
-    resolvedPlane.origin[0] + point[0] * resolvedPlane.uAxis[0] + point[1] * resolvedPlane.vAxis[0],
-    resolvedPlane.origin[1] + point[0] * resolvedPlane.uAxis[1] + point[1] * resolvedPlane.vAxis[1],
-    resolvedPlane.origin[2] + point[0] * resolvedPlane.uAxis[2] + point[1] * resolvedPlane.vAxis[2],
-  ];
 }

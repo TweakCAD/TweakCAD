@@ -22,11 +22,12 @@ import type {
 } from './buildSketch.ts';
 
 /**
- * Canonical bases for the three default planes. The {u, v, n} triad is
- * right-handed: u × v = n. Mirrors the basis baked into
- * `buildSketch.ts` and `SketchPlanePicker`.
+ * Canonical bases for the three default planes. Each {u, v, n} triad is
+ * right-handed (u × v = n), so sketch coordinates read unmirrored from the
+ * +normal side, where the sketch camera sits. Must match the editor's
+ * `planeConfigFromName` in `SketchSceneManager.ts`.
  */
-const DEFAULT_PLANES = {
+export const DEFAULT_PLANES = {
   XY: {
     name: 'XY' as const,
     origin: [0, 0, 0] as [number, number, number],
@@ -38,13 +39,13 @@ const DEFAULT_PLANES = {
     name: 'XZ' as const,
     origin: [0, 0, 0] as [number, number, number],
     uAxis: [1, 0, 0] as [number, number, number],
-    vAxis: [0, 0, 1] as [number, number, number],
+    vAxis: [0, 0, -1] as [number, number, number],
     normal: [0, 1, 0] as [number, number, number],
   },
   YZ: {
     name: 'YZ' as const,
     origin: [0, 0, 0] as [number, number, number],
-    uAxis: [0, 0, 1] as [number, number, number],
+    uAxis: [0, 0, -1] as [number, number, number],
     vAxis: [0, 1, 0] as [number, number, number],
     normal: [1, 0, 0] as [number, number, number],
   },

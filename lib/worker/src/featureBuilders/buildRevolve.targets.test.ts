@@ -79,7 +79,8 @@ async function revolve(
 ) {
   const sketch = node('sk', 'sketch', sketchInputs({
     plane: { type: 'defaultPlane', name: 'XZ' },
-    circles: [{ id: 'c', center: [opts.R, opts.z], diameter: 2 * opts.r }],
+    // XZ's sketch y is world -Z, so height z sits at sketch y = -z.
+    circles: [{ id: 'c', center: [opts.R, -opts.z], diameter: 2 * opts.r }],
   }), []);
   const sketchResult = await buildSketch(sketch, {}, context, kernel);
   context.featureOutputs.set(sketch.id, sketchResult.outputs!);

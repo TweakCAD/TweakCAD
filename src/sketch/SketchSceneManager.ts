@@ -139,17 +139,23 @@ export function sketchPlaneKey(input: SketchPlaneInput): string {
   return `cfg:${f(input.origin)}:${f(input.uAxis)}:${f(input.vAxis)}:${f(input.normal)}`;
 }
 
-/** Create plane config from a plane name */
+/**
+ * Create plane config from a plane name. Every default plane is right-handed
+ * (u × v = normal) and must match `DEFAULT_PLANES` in the worker's
+ * `resolvePlane.ts`.
+ */
 export function planeConfigFromName(name: 'XY' | 'XZ' | 'YZ'): SketchPlaneConfig {
   const origin = new THREE.Vector3(0, 0, 0);
 
   switch (name) {
     case 'XZ':
-      // Y-up: sketch X = world X, sketch Y = world Z, normal = world Y
+      // Y-up ground plane: sketch U = world X, sketch V = world -Z,
+      // normal = world Y. u × v = normal, so seen from +Y (the sketch
+      // camera's side) U points right and V points up on screen.
       return {
         origin,
         uAxis: new THREE.Vector3(1, 0, 0),
-        vAxis: new THREE.Vector3(0, 0, 1),
+        vAxis: new THREE.Vector3(0, 0, -1),
         normal: new THREE.Vector3(0, 1, 0),
       };
     case 'XY':
@@ -161,13 +167,14 @@ export function planeConfigFromName(name: 'XY' | 'XZ' | 'YZ'): SketchPlaneConfig
         normal: new THREE.Vector3(0, 0, 1),
       };
     case 'YZ':
-      // sketch U = world Z (sketch's "horizontal"), sketch V = world Y
+      // sketch U = world -Z (sketch's "horizontal"), sketch V = world Y
       // (sketch's "vertical" — aligned with real-world up). Keeping V tied
       // to world +Y makes "vertical" constraints visually vertical on every
-      // upright sketch plane.
+      // upright sketch plane; U = -Z keeps u × v = normal, so seen from +X
+      // U points right on screen.
       return {
         origin,
-        uAxis: new THREE.Vector3(0, 0, 1),
+        uAxis: new THREE.Vector3(0, 0, -1),
         vAxis: new THREE.Vector3(0, 1, 0),
         normal: new THREE.Vector3(1, 0, 0),
       };
@@ -418,7 +425,8 @@ export class SketchSceneManager {
    * The screen's right and up directions at a cursor position, expressed as
    * unit vectors in sketch coordinates. Content laid out along them reads
    * upright and unmirrored from the current camera, whichever way the plane's
-   * u/v axes happen to face (XZ and YZ have left-handed bases). `up` is made
+   * u/v axes happen to face (on a default plane seen head-on they match u/v;
+   * on a face or construction plane, or after orbiting, they may not). `up` is made
    * exactly perpendicular to `right`. Null when the plane is edge-on.
    */
   screenFrameAt(clientX: number, clientY: number): ScreenFrame | null {

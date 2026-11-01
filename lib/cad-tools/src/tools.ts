@@ -263,7 +263,10 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
         plane: {
           type: 'string',
           enum: ['XY', 'XZ', 'YZ'],
-          description: 'Which default plane to sketch on.',
+          description:
+            'Which default plane to sketch on (Y-up world). Sketch x / y ' +
+            'map to world XY: +X / +Y, XZ: +X / -Z, YZ: -Z / +Y, so a ' +
+            'shape reads unmirrored from the +Z, +Y and +X side respectively.',
         },
       },
       required: ['partId', 'plane'],

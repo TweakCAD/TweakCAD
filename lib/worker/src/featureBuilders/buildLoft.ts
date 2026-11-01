@@ -16,7 +16,6 @@ import { mintBodyId } from './bodyIdentity.ts';
 import { selectTargetCandidates, joinTouchingBodies, cutTouchingBodies } from './bodyOperation.ts';
 import type { EmittedBody } from './bodyOperation.ts';
 import type { FeatureId, BodyId } from '@tweakcad/core/src/ids.ts';
-import type { Vec3 } from '@tweakcad/core/src/math.ts';
 import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
 import type { KernelFace, ResolvedProfile } from '@tweakcad/kernel/src/types.ts';
 import type { BuildContext, BuildResult } from '@tweakcad/core/src/features/contracts.ts';
@@ -29,8 +28,9 @@ import type {
 import {
   regionHasCurveSegments,
   regionSegmentsToWire,
-  sketchToWorld as sharedSketchToWorld,
+  sketchToWorld,
 } from './wireProfile.ts';
+import { DEFAULT_PLANES } from './resolvePlane.ts';
 
 const MIN_PROFILES = 2;
 const MAX_PROFILES = 16;
@@ -141,9 +141,7 @@ function regionToKernelProfile(
   const resolvedEntities = sketchOutputs?.data?.resolvedEntities as
     | Record<string, ResolvedSketchEntityData>
     | undefined;
-  const normal: Vec3 = plane?.normal ?? [0, 1, 0];
-  const uAxis: Vec3 = plane?.uAxis ?? [1, 0, 0];
-  const vAxis: Vec3 = plane?.vAxis ?? [0, 0, 1];
+  const { normal, uAxis, vAxis } = plane ?? DEFAULT_PLANES.XZ;
 
   if (region.type === 'circle') {
     const entityId = region.entityIds[0];
@@ -173,7 +171,7 @@ function regionToKernelProfile(
     // helper used by buildExtrude / buildRevolve.
     if (regionHasCurveSegments(region)) {
       const wireSegments = regionSegmentsToWire(region, plane);
-      const center = sharedSketchToWorld(region.center, plane);
+      const center = sketchToWorld(region.center, plane);
       return {
         type: 'wire',
         segments: wireSegments,
@@ -202,22 +200,4 @@ function regionToKernelProfile(
   }
 
   throw new Error(`Unable to convert region to loft profile: ${region.type}`);
-}
-
-function sketchToWorld(
-  point: [number, number],
-  plane: ResolvedSketchPlaneData | undefined,
-): Vec3 {
-  const p = plane ?? {
-    name: 'XZ' as const,
-    origin: [0, 0, 0] as Vec3,
-    uAxis: [1, 0, 0] as Vec3,
-    vAxis: [0, 0, 1] as Vec3,
-    normal: [0, 1, 0] as Vec3,
-  };
-  return [
-    p.origin[0] + point[0] * p.uAxis[0] + point[1] * p.vAxis[0],
-    p.origin[1] + point[0] * p.uAxis[1] + point[1] * p.vAxis[1],
-    p.origin[2] + point[0] * p.uAxis[2] + point[1] * p.vAxis[2],
-  ];
 }
