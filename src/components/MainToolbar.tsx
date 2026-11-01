@@ -14,6 +14,7 @@
 
 import { Children, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { isSaasAvailable } from '../storage/saasState.ts';
+import { sketchToolForKey } from '../sketch/sketchShortcuts.ts';
 import type { SaasState } from '../storage/saasState.ts';
 import { useBridgeStatus } from '../hooks/useBridgeStatus.ts';
 import {
@@ -1325,6 +1326,21 @@ function SketchRibbon({
 
   const createPrimary = SKETCH_CREATE_TOOLS.filter(t => t.primary);
   const modifyPrimary = SKETCH_MODIFY_TOOLS.filter(t => t.primary);
+
+  // Single-letter tool shortcuts, the same letters the buttons and menus show.
+  useEffect(() => {
+    if (!onSketchToolChange) return;
+    const tools = [...SKETCH_CREATE_TOOLS, ...SKETCH_DIMENSION_TOOLS, ...SKETCH_MODIFY_TOOLS];
+    const handler = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      const tool = sketchToolForKey(e, tools);
+      if (!tool) return;
+      e.preventDefault();
+      onSketchToolChange(tool);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onSketchToolChange]);
 
   return (
     <>
