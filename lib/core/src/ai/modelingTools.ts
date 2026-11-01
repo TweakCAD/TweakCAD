@@ -2414,17 +2414,18 @@ export async function executeSketchFillet(
 
 /**
  * sketch_offset — `SketchOffset`. Diffs editor-state geometry ids to
- * return the new offset id (or null on no-op).
+ * return every new offset curve id (empty on no-op).
  */
 export async function executeSketchOffset(
   args: Record<string, unknown>,
   host: ToolHost,
-): Promise<Result<{ offsetId: SketchGeometryId | null }, ToolExecutionError>> {
+): Promise<Result<{ offsetIds: SketchGeometryId[] }, ToolExecutionError>> {
   const sketchId = args['sketchId'];
   const geometryId = args['geometryId'];
   const distance = args['distance'];
   const cursor = args['cursor'];
   const construction = args['construction'];
+  const chain = args['chain'];
   if (typeof sketchId !== 'string') return err(invalidInput('`sketchId` must be a string'));
   if (typeof geometryId !== 'string') return err(invalidInput('`geometryId` must be a string'));
   if (typeof distance !== 'number' || !Number.isFinite(distance)) {
@@ -2433,6 +2434,9 @@ export async function executeSketchOffset(
   if (!isVec2(cursor)) return err(invalidInput('`cursor` must be a [x, y] finite-number pair'));
   if (construction !== undefined && typeof construction !== 'boolean') {
     return err(invalidInput('`construction` (optional) must be a boolean'));
+  }
+  if (chain !== undefined && typeof chain !== 'boolean') {
+    return err(invalidInput('`chain` (optional) must be a boolean'));
   }
 
   const before = asProject(host.getDocument());
@@ -2445,12 +2449,13 @@ export async function executeSketchOffset(
     distance,
     cursor,
     ...(construction !== undefined ? { construction } : {}),
+    ...(chain !== undefined ? { chain } : {}),
   };
   try {
     const after = asProject(await host.dispatchCommand(cmd));
     const afterIds = sketchGeometryIds(after, sketchId);
-    const newId = diffNewGeometryId(beforeIds, afterIds);
-    return ok({ offsetId: (newId as SketchGeometryId | null) });
+    const offsetIds = [...afterIds].filter((id) => !beforeIds.has(id)) as SketchGeometryId[];
+    return ok({ offsetIds });
   } catch (e) {
     return err(hostError(e instanceof Error ? e.message : String(e)));
   }

@@ -1128,13 +1128,19 @@ export const sketchOffsetHandler: CommandHandler = {
     const vd = validateFiniteNumber('distance', command.distance, { positive: true });
     if (!vd.ok) return err(vd.error);
     const vc = validateVec2('cursor', command.cursor); if (!vc.ok) return err(vc.error);
+    if (command.chain !== undefined && typeof command.chain !== 'boolean') {
+      return err({ code: 'INVALID_INPUT', message: 'chain must be a boolean', field: 'chain' });
+    }
     return ok(undefined);
   },
   execute(draft: CadProject, command: CadCommand): void {
     if (command.type !== 'SketchOffset') return;
     const current = loadEditorState(draft, command.sketchId);
-    const next = offsetCurveAt(current, command.geometryId, command.distance, command.cursor, command.construction ?? false);
-    if (!next) return; // unsupported curve type — no-op
+    const next = offsetCurveAt(
+      current, command.geometryId, command.distance, command.cursor,
+      command.construction ?? false, command.chain ?? true,
+    );
+    if (!next) return; // not offsettable, or the offset vanished — no-op
     applyEditorStateUpdate(draft, command.sketchId, next);
   },
 };

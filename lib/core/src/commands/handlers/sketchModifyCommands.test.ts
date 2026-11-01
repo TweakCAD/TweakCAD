@@ -15,6 +15,7 @@ import { createSketchHandler } from './featureCommands.ts';
 import {
   sketchDrawLineHandler,
   sketchDrawCircleHandler,
+  sketchDrawRectangleHandler,
   sketchTrimHandler,
   sketchExtendHandler,
   sketchFilletHandler,
@@ -22,6 +23,8 @@ import {
   sketchMirrorHandler,
 } from './sketchDrawCommands.ts';
 import type { SketchFeatureInputs } from '../../document/schema.ts';
+import { sketchBuildGeometry } from '../../sketch/derivedGeometry.ts';
+import { detectSketchRegions, regionNetArea } from '../../sketch/profileRegions.ts';
 import type { PartId, FeatureId } from '../../ids.ts';
 import type { SketchGeometryId, SketchPointId } from '../../sketch/types.ts';
 
@@ -32,6 +35,7 @@ function newHarness() {
   bus.register('CreateSketch', createSketchHandler);
   bus.register('SketchDrawLine', sketchDrawLineHandler);
   bus.register('SketchDrawCircle', sketchDrawCircleHandler);
+  bus.register('SketchDrawRectangle', sketchDrawRectangleHandler);
   bus.register('SketchTrim', sketchTrimHandler);
   bus.register('SketchExtend', sketchExtendHandler);
   bus.register('SketchFillet', sketchFilletHandler);
@@ -243,6 +247,36 @@ describe('SketchOffset', () => {
     expect(after).toHaveLength(2);
     const newOne = after.find((g) => g.id !== c.id)!;
     expect(newOne.radius).toBeCloseTo(7, 6);
+  });
+
+  it('offsets the whole rectangle when one edge is picked: a 1 mm wall region', () => {
+    const { bus, store, partId } = newHarness();
+    const sketchId = createSketch(bus, store, partId);
+    bus.dispatch({ type: 'SketchDrawRectangle', sketchId, corner: [0, 0], width: 10, height: 6 });
+    const edge = geomsOf(store, partId, sketchId).find((g) => g.type === 'line')!;
+
+    const r = bus.dispatch({ type: 'SketchOffset', sketchId, geometryId: edge.id, distance: 1, cursor: [5, -3] });
+    expect(r.ok).toBe(true);
+    expect(geomsOf(store, partId, sketchId).filter((g) => g.type === 'line')).toHaveLength(8);
+    const regions = detectSketchRegions(sketchBuildGeometry(inputs(store, partId, sketchId)));
+    const wall = regions.find((reg) => (reg.holes?.length ?? 0) === 1)!;
+    expect(regionNetArea(wall)).toBeCloseTo(12 * 8 - 10 * 6, 9);
+  });
+
+  it('chain: false offsets only the picked edge; a non-boolean chain is rejected', () => {
+    const { bus, store, partId } = newHarness();
+    const sketchId = createSketch(bus, store, partId);
+    bus.dispatch({ type: 'SketchDrawRectangle', sketchId, corner: [0, 0], width: 10, height: 6 });
+    const edge = geomsOf(store, partId, sketchId).find((g) => g.type === 'line')!;
+
+    bus.dispatch({ type: 'SketchOffset', sketchId, geometryId: edge.id, distance: 1, cursor: [5, -3], chain: false });
+    expect(geomsOf(store, partId, sketchId).filter((g) => g.type === 'line')).toHaveLength(5);
+
+    const bad = bus.dispatch({
+      type: 'SketchOffset', sketchId, geometryId: edge.id, distance: 1, cursor: [5, -3],
+      chain: 'yes' as unknown as boolean,
+    });
+    expect(bad.ok).toBe(false);
   });
 });
 

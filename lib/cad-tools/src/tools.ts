@@ -1436,17 +1436,26 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
   {
     name: 'sketch_offset',
     description:
-      'Create a parallel copy of a line or circle at a fixed `distance`. ' +
-      '`cursor` selects which side of the original to offset toward — ' +
-      'the offset appears on the side the cursor is on. Set ' +
-      '`construction: true` to make the copy a construction curve. Arc / ' +
-      'ellipse / spline offset is not yet supported (returns no-op). ' +
-      'Returns `{ offsetId }` (the new geometry id) or `null` on no-op.',
+      'Offset a curve by a fixed `distance`. A circle offsets ' +
+      'concentrically. A line, arc, Bézier or spline offsets together with ' +
+      'the chain of curves connected end-to-end with it (stopping at ' +
+      'branches), so picking any edge of a closed outline (rectangle, ' +
+      'imported SVG logo) offsets the whole outline: use it for borders, ' +
+      'outlined strokes and walls (the original plus a 1 mm offset is a ' +
+      '1 mm wall region). `cursor` picks the side: for a closed chain, ' +
+      'inside = inward and outside = outward; for an open chain, the side ' +
+      'of its nearest point. The result is lines, arcs and Béziers sharing ' +
+      'joint points; convex line corners stay sharp, other convex corners ' +
+      'are rounded, concave corners are trimmed. Set `chain: false` to ' +
+      'offset only the picked curve, `construction: true` to make ' +
+      'construction curves. Ellipse / point are not offsettable. Returns ' +
+      '`{ offsetIds }` (every new geometry id; empty on no-op, e.g. an ' +
+      'inward offset larger than the shape).',
     inputSchema: {
       type: 'object',
       properties: {
         sketchId: { type: 'string', description: 'The sketch feature id.' },
-        geometryId: { type: 'string', description: 'The line or circle geometry id to offset.' },
+        geometryId: { type: 'string', description: 'Any curve of the chain to offset (or a circle).' },
         distance: { type: 'number', description: 'Offset distance in mm (positive).' },
         cursor: {
           type: 'array',
@@ -1458,6 +1467,10 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
         construction: {
           type: 'boolean',
           description: 'Optional. When true, the offset copy is a construction curve.',
+        },
+        chain: {
+          type: 'boolean',
+          description: 'Optional, default true. When false, offset only the picked curve, not its connected chain.',
         },
       },
       required: ['sketchId', 'geometryId', 'distance', 'cursor'],

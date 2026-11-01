@@ -445,7 +445,7 @@ export function dispatchFillet(
   })).ok;
 }
 
-/** Offset a line or circle by `distance` mm on the side the cursor sits. */
+/** Offset a curve's connected chain (or a circle) by `distance` mm on the side the cursor sits. */
 export function dispatchOffset(
   geometryId: SketchGeometryId,
   distance: number,

@@ -459,8 +459,9 @@ export function handleSketchFilletClick(store: SketchEditorState, x: number, y: 
 }
 
 /**
- * Offset: parallel copy of the clicked line/circle at the session's
- * configured distance. Handler picks the side from the cursor coords.
+ * Offset: copy of the clicked curve's connected chain (or circle) at the
+ * session's configured distance. Handler picks the side from the cursor
+ * coords: inside a closed outline = inward.
  */
 export function handleOffsetClick(store: SketchEditorState, x: number, y: number): void {
   const s = getSession();

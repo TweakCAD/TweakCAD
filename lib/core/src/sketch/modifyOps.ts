@@ -38,6 +38,14 @@ import {
   projectOntoLine,
   pointOnArc,
 } from './sketchMath.ts';
+import {
+  findChain,
+  chainToPieces,
+  offsetPieces,
+  signedDistanceForCursor,
+  pointAt,
+  type OffsetPath,
+} from './chainOffset.ts';
 
 // ---- Internal helpers ----------------------------------------------------
 
@@ -568,10 +576,19 @@ export function filletBetweenLines(
 // ---- Offset --------------------------------------------------------------
 
 /**
- * Offset a line or circle by `distance` mm, picking the side based on
- * which side of the source the cursor sits. Adds the offset as new
- * geometry (the original is untouched). Returns the new state, or
- * null if the target isn't an offsettable curve / coords degenerate.
+ * Offset a curve by `distance` mm toward the side the cursor sits on. Adds
+ * the offset as new geometry (the original is untouched). Returns the new
+ * state, or null if the target can't be offset or the offset vanishes.
+ *
+ * A circle offsets concentrically. A line, arc, Bézier or spline offsets
+ * together with the chain of curves connected end-to-end with it (see
+ * `findChain` in `chainOffset.ts`); `chain: false` offsets the picked curve
+ * alone. A closed chain offsets inward when the cursor is inside it and
+ * outward otherwise, and comes back as a closed chain of lines, arcs and
+ * Béziers sharing their joint points: convex line corners stay sharp,
+ * other convex corners are rounded, concave corners are trimmed, and loops
+ * the offset folds over are removed. An inward offset that pinches a neck
+ * apart yields several closed chains.
  */
 export function offsetCurveAt(
   state: EditorState,
@@ -579,26 +596,11 @@ export function offsetCurveAt(
   distance: number,
   cursor: readonly [number, number],
   construction: boolean,
+  chain = true,
 ): EditorState | null {
   const geom = state.geometries.get(targetId);
   if (!geom) return null;
   const next = makeWorking(state);
-
-  if (geom.type === 'line') {
-    const a = state.points.get(geom.startId);
-    const b = state.points.get(geom.endId);
-    if (!a || !b) return null;
-    const len = Math.hypot(b.x - a.x, b.y - a.y);
-    if (len < 1e-6) return null;
-    const nx = -(b.y - a.y) / len;
-    const ny = (b.x - a.x) / len;
-    const side = Math.sign((cursor[0] - a.x) * nx + (cursor[1] - a.y) * ny) || 1;
-    const d = distance * side;
-    const np1 = addPointMut(next.points, a.x + nx * d, a.y + ny * d);
-    const np2 = addPointMut(next.points, b.x + nx * d, b.y + ny * d);
-    addGeometryMut(next.geometries, { type: 'line', startId: np1, endId: np2, construction });
-    return { ...state, points: next.points, geometries: next.geometries };
-  }
 
   if (geom.type === 'circle') {
     const c = state.points.get(geom.centerId);
@@ -610,8 +612,61 @@ export function offsetCurveAt(
     return { ...state, points: next.points, geometries: next.geometries };
   }
 
-  // Arc / ellipse / spline offset not yet supported.
-  return null;
+  const found = chain
+    ? findChain(state.points, state.geometries, targetId)
+    : findChain(state.points, new Map([[targetId, geom]]), targetId);
+  if (!found) return null; // ellipse / point / degenerate curve
+  const src = chainToPieces(state.points, state.geometries, found);
+  if (src.length === 0) return null;
+  const d = signedDistanceForCursor(src, found.closed, distance, [cursor[0], cursor[1]]);
+  const paths = offsetPieces(src, found.closed, d);
+  if (paths.length === 0) return null;
+  for (const path of paths) addOffsetPathMut(next, path, construction);
+  return { ...state, points: next.points, geometries: next.geometries };
+}
+
+/**
+ * Add one offset path as sketch geometry. Consecutive pieces share their
+ * joint point (closed paths wrap to the first joint), so the result chains
+ * the same way a drawn outline does. An arc's own endpoint wins a joint so
+ * the arc stays exact; editor arcs run counter-clockwise, so a clockwise
+ * piece swaps its ends.
+ */
+function addOffsetPathMut(
+  next: ReturnType<typeof makeWorking>,
+  path: OffsetPath,
+  construction: boolean,
+): void {
+  const { pieces, closed } = path;
+  const n = pieces.length;
+  const jointXY = (k: number): [number, number] => {
+    const cur = k < n ? pieces[k] : undefined;
+    const prev = k > 0 ? pieces[k - 1] : closed ? pieces[n - 1] : undefined;
+    if (cur?.kind === 'arc' || !prev) return pointAt(cur!, 0);
+    if (prev.kind === 'arc' || !cur) return pointAt(prev, 1);
+    return pointAt(cur, 0);
+  };
+  const joints: SketchPointId[] = [];
+  for (let k = 0; k < (closed ? n : n + 1); k++) {
+    const [x, y] = jointXY(k);
+    joints.push(addPointMut(next.points, x, y));
+  }
+  if (closed) joints.push(joints[0]!);
+
+  pieces.forEach((p, k) => {
+    const startId = joints[k]!, endId = joints[k + 1]!;
+    if (p.kind === 'line') {
+      addGeometryMut(next.geometries, { type: 'line', startId, endId, construction });
+    } else if (p.kind === 'arc') {
+      const centerId = addPointMut(next.points, p.c[0], p.c[1]);
+      const [s, e] = p.sweep > 0 ? [startId, endId] : [endId, startId];
+      addGeometryMut(next.geometries, { type: 'arc', centerId, startId: s, endId: e, radius: p.r, construction });
+    } else {
+      const cp1Id = addPointMut(next.points, p.p1[0], p.p1[1]);
+      const cp2Id = addPointMut(next.points, p.p2[0], p.p2[1]);
+      addGeometryMut(next.geometries, { type: 'bezier', startId, cp1Id, cp2Id, endId, construction });
+    }
+  });
 }
 
 // ---- Mirror --------------------------------------------------------------

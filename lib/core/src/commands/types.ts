@@ -413,10 +413,12 @@ export type SketchFilletCommand = {
 };
 
 /**
- * Parallel copy of a line or circle at a fixed distance. The side of
- * the offset is determined by the cursor — clicking on the +normal
- * side puts the copy on that side. Arc / ellipse / spline offset is
- * not yet supported (returns no-op).
+ * Offset a curve by a fixed distance toward the cursor's side. A circle
+ * offsets concentrically; a line / arc / Bézier / spline offsets together
+ * with the chain of curves connected end-to-end with it (`chain`, default
+ * true; false offsets the picked curve alone). A closed chain offsets
+ * inward when the cursor is inside it, outward otherwise. Ellipse and
+ * point are not offsettable (no-op).
  */
 export type SketchOffsetCommand = {
   type: 'SketchOffset';
@@ -425,6 +427,7 @@ export type SketchOffsetCommand = {
   distance: number;
   cursor: [number, number];
   construction?: boolean;
+  chain?: boolean;
 };
 
 /**
