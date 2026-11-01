@@ -72,6 +72,7 @@ import { fromSnapshot } from '../sketch/operations.ts';
 import { pickGeometryAt } from '../sketch/sketchPicking.ts';
 import type { CadCommand } from '../commands/types.ts';
 import { CAD_WORKFLOW_GUIDE } from './cadHelp.ts';
+import { edgeMatchesFaceFilter } from '../document/edgeQueries.ts';
 
 // ---- Generic helpers -------------------------------------------------------
 
@@ -1923,20 +1924,8 @@ export async function executeFindEdges(
       const adjA = String(e.adjacentFaces[0]);
       const adjB = String(e.adjacentFaces[1]);
 
-      // adjacentToFaceIds — match-ANY semantics.
-      if (adjacentSet !== null) {
-        if (!adjacentSet.has(adjA) && !adjacentSet.has(adjB)) continue;
-      }
-
-      // betweenFaces — exact unordered pair match.
-      if (betweenPair !== null) {
-        const want = new Set(betweenPair);
-        const have = new Set([adjA, adjB]);
-        if (want.size !== have.size) continue;
-        let allHit = true;
-        for (const w of want) if (!have.has(w)) { allHit = false; break; }
-        if (!allHit) continue;
-      }
+      // adjacentToFaceIds (match-ANY) and betweenFaces (exact unordered pair).
+      if (!edgeMatchesFaceFilter(e.adjacentFaces, { adjacentToFaceIds: adjacentSet, betweenFaces: betweenPair })) continue;
 
       // Compute start/end + length.
       const arr = toNumberArray(e.lineSegments);
