@@ -13,6 +13,8 @@ import { TransformGizmo } from './TransformGizmo.ts';
 import type { FeatureDisplayMode } from './displayMode.ts';
 import { triangleToFaceId, segmentToEdgeId } from './topologyLookup.ts';
 import { SelectionHighlight } from './selectionHighlight.ts';
+import { fitFraming, homeFraming, lerpFraming, HOME_THETA, HOME_PHI } from './cameraFraming.ts';
+import type { CameraFraming } from './cameraFraming.ts';
 
 /** What kind of topology element clicks should resolve to. */
 export type PickMode = 'face' | 'edge' | 'body' | 'none';
@@ -120,6 +122,9 @@ export class ViewportController {
   private animating = false;
   private animStart = { theta: 0, phi: 0 };
   private animEnd = { theta: 0, phi: 0 };
+  // Target/radius to blend toward alongside the angles; null when only the
+  // angles animate. Cleared by pan/zoom so user input isn't overridden.
+  private animFraming: { from: CameraFraming; to: CameraFraming } | null = null;
   private animStartTime = 0;
   private readonly animDuration = 400; // ms
 
@@ -784,6 +789,7 @@ export class ViewportController {
 
   /** Zoom in by reducing spherical radius */
   zoomIn(): void {
+    this.animFraming = null;
     this.spherical.radius *= 0.8;
     this.spherical.radius = Math.max(1, this.spherical.radius);
     this.updateCameraFromSpherical();
@@ -791,6 +797,7 @@ export class ViewportController {
 
   /** Zoom out by increasing spherical radius */
   zoomOut(): void {
+    this.animFraming = null;
     this.spherical.radius *= 1.25;
     this.spherical.radius = Math.min(1000, this.spherical.radius);
     this.updateCameraFromSpherical();
@@ -803,25 +810,21 @@ export class ViewportController {
     // highlights, the transform gizmo), which either skew the framing or, if
     // one has a degenerate bounding box, poison the union with NaN and send
     // the camera nowhere. The body registry is the real model content.
-    const box = this.meshRegistry.getBodiesBoundingBox();
-    if (box.isEmpty()) return;
+    const framing = fitFraming(this.meshRegistry.getBodiesBoundingBox(), this.camera.fov);
+    if (!framing) return;
 
-    const center = box.getCenter(new THREE.Vector3());
-    const size = box.getSize(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z);
-    // Bail on any non-finite result rather than flinging the camera to NaN.
-    if (!Number.isFinite(maxDim) || !Number.isFinite(center.length())) return;
-
-    const fov = this.camera.fov * (Math.PI / 180);
-    const distance = maxDim / (2 * Math.tan(fov / 2)) * 1.5; // 1.5x padding
-
-    this.target.copy(center);
-    this.spherical.radius = Math.max(distance, 5);
+    this.animFraming = null;
+    this.target.copy(framing.target);
+    this.spherical.radius = framing.radius;
     this.updateCameraFromSpherical();
   }
 
-  /** Snap to a standard view by name */
+  /** Snap to a standard view by name. `home` also frames the model, like {@link resetView}. */
   setStandardView(view: 'front' | 'back' | 'top' | 'bottom' | 'left' | 'right' | 'home'): void {
+    if (view === 'home') {
+      this.resetView();
+      return;
+    }
     // THREE.Spherical: theta=azimuth from +Z around Y, phi=polar from Y+
     // theta=0,phi=PI/2 => camera on +Z looking at -Z => sees FRONT (z+ face)
     const views: Record<string, { theta: number; phi: number }> = {
@@ -831,7 +834,6 @@ export class ViewportController {
       bottom: { theta: 0,               phi: Math.PI - 0.001 },
       right:  { theta: Math.PI / 2,     phi: Math.PI / 2 },
       left:   { theta: -Math.PI / 2,    phi: Math.PI / 2 },
-      home:   { theta: Math.PI / 4,     phi: Math.PI / 3 },
     };
     const v = views[view];
     if (v) {
@@ -839,11 +841,13 @@ export class ViewportController {
     }
   }
 
-  /** Reset to default home view */
+  /**
+   * Animate to the home angles while framing the model bodies the way Fit All
+   * does. With no bodies, home is the origin at the default distance.
+   */
   resetView(): void {
-    this.target.set(0, 0, 0);
-    this.spherical.radius = 50;
-    this.animateToView(Math.PI / 4, Math.PI / 3);
+    const framing = homeFraming(this.meshRegistry.getBodiesBoundingBox(), this.camera.fov);
+    this.animateToView(HOME_THETA, HOME_PHI, framing);
   }
 
   /** Save current camera view state (for restore after sketch mode) */
@@ -1124,8 +1128,14 @@ export class ViewportController {
     this.camera.lookAt(this.target);
   }
 
-  /** Animate camera to a target view over animDuration ms */
-  private animateToView(theta: number, phi: number): void {
+  /**
+   * Animate camera to a target view over animDuration ms. When `framing` is
+   * given, the orbit target and radius blend toward it on the same curve.
+   */
+  private animateToView(theta: number, phi: number, framing?: CameraFraming): void {
+    this.animFraming = framing
+      ? { from: { target: this.target.clone(), radius: this.spherical.radius }, to: framing }
+      : null;
     this.animStart.theta = this.spherical.theta;
     this.animStart.phi = this.spherical.phi;
 
@@ -1150,10 +1160,16 @@ export class ViewportController {
 
     this.spherical.theta = this.animStart.theta + (this.animEnd.theta - this.animStart.theta) * t;
     this.spherical.phi = this.animStart.phi + (this.animEnd.phi - this.animStart.phi) * t;
+    if (this.animFraming) {
+      const out = { target: this.target, radius: 0 };
+      lerpFraming(this.animFraming.from, this.animFraming.to, t, out);
+      this.spherical.radius = out.radius;
+    }
     this.updateCameraFromSpherical();
 
     if (t >= 1) {
       this.animating = false;
+      this.animFraming = null;
     }
   }
 
@@ -1198,11 +1214,13 @@ export class ViewportController {
         const up = new THREE.Vector3();
         right.setFromMatrixColumn(this.camera.matrix, 0);
         up.setFromMatrixColumn(this.camera.matrix, 1);
+        this.animFraming = null;
         this.target.addScaledVector(right, -dx * panSpeed);
         this.target.addScaledVector(up, dy * panSpeed);
       } else {
         // Left/right button: orbit
         this.animating = false;
+        this.animFraming = null;
         this.spherical.theta -= dx * 0.005;
         this.spherical.phi -= dy * 0.005;
         this.spherical.phi = Math.max(0.1, Math.min(Math.PI - 0.1, this.spherical.phi));
@@ -1245,6 +1263,7 @@ export class ViewportController {
     // Zoom toward mouse cursor: dolly radius + shift orbit target toward cursor
     canvas.addEventListener('wheel', (e: WheelEvent) => {
       e.preventDefault();
+      this.animFraming = null;
 
       const zoomIn = e.deltaY < 0;
       const factor = zoomIn ? 0.9 : 1.1;
