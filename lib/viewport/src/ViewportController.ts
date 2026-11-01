@@ -7,7 +7,7 @@
 import * as THREE from 'three';
 import type { DisplayMesh, TopologyMap, Selection, ConstructionPlaneDisplay } from '@tweakcad/core/src/document/schema.ts';
 import type { BodyId, FaceId, EdgeId, FeatureId } from '@tweakcad/core/src/ids.ts';
-import { MeshRegistry } from './MeshRegistry.ts';
+import { MeshRegistry, SECTION_STENCIL_RENDER_ORDER } from './MeshRegistry.ts';
 import { ConstructionPlaneLayer } from './ConstructionPlaneLayer.ts';
 import { TransformGizmo } from './TransformGizmo.ts';
 import type { FeatureDisplayMode } from './displayMode.ts';
@@ -61,6 +61,8 @@ export interface ManipulatorHandlers {
 
 /** Pixels of pointer movement allowed between mousedown and mouseup to still count as a click. */
 const CLICK_DRAG_TOLERANCE = 3;
+/** Fill colour of the section-view cap (a lighter shade of the body colour). */
+const SECTION_CAP_COLOR = 0xa9c0d8;
 // ViewCube disabled until rendering pipeline is stabilized
 // import { ViewCube } from './ViewCube.ts';
 
@@ -86,6 +88,7 @@ export class ViewportController {
   private sectionState: {
     visual: THREE.Mesh;
     outline: THREE.LineSegments;
+    cap: THREE.Mesh;
     clipPlane: THREE.Plane;
     normal: THREE.Vector3;
   } | null = null;
@@ -142,6 +145,8 @@ export class ViewportController {
       // buffer after each render and toDataURL returns a blank PNG.
       // The cost is marginal — one extra GPU memory copy per frame.
       preserveDrawingBuffer: true,
+      // Section-view caps are drawn with the stencil buffer.
+      stencil: true,
     });
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.setClearColor(0xf0f0f0, 1);
@@ -312,6 +317,10 @@ export class ViewportController {
    * centre so the cut starts mid-body. A translucent section rectangle is
    * drawn with a drag handle that slides the cut along its normal live (this
    * is a view aid — no document change, no rebuild). Pass `null` to clear.
+   *
+   * The cut is capped: a plane-sized cap mesh is drawn only where the body
+   * stencil passes (MeshRegistry.setClippingPlanes) leave a non-zero count,
+   * i.e. where the plane passes through solid material.
    */
   setSectionPlane(
     spec: { normal: [number, number, number]; point?: [number, number, number] } | null,
@@ -322,10 +331,12 @@ export class ViewportController {
       const s = this.sectionState;
       this.scene.remove(s.visual);
       this.scene.remove(s.outline);
+      this.scene.remove(s.cap);
       s.visual.geometry.dispose();
       (s.visual.material as THREE.Material).dispose();
       s.outline.geometry.dispose();
       (s.outline.material as THREE.Material).dispose();
+      (s.cap.material as THREE.Material).dispose();
       this.sectionState = null;
       this.meshRegistry.setClippingPlanes([]);
     }
@@ -361,13 +372,34 @@ export class ViewportController {
     outline.renderOrder = 1461;
     this.scene.add(outline);
 
+    // Opaque, so it draws in the opaque pass after the stencil passes and
+    // before the translucent section rectangle. Not clipped: it lies on the
+    // clip plane. The stencil is reset where the cap draws.
+    const cap = new THREE.Mesh(planeGeom, new THREE.MeshPhongMaterial({
+      color: SECTION_CAP_COLOR,
+      specular: 0x111111,
+      shininess: 10,
+      side: THREE.DoubleSide,
+      stencilWrite: true,
+      stencilRef: 0,
+      stencilFunc: THREE.NotEqualStencilFunc,
+      stencilFail: THREE.ReplaceStencilOp,
+      stencilZFail: THREE.ReplaceStencilOp,
+      stencilZPass: THREE.ReplaceStencilOp,
+    }));
+    cap.applyMatrix4(basis);
+    cap.renderOrder = SECTION_STENCIL_RENDER_ORDER + 1;
+    cap.raycast = () => {};
+    this.scene.add(cap);
+
     const clipPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, point);
     this.meshRegistry.setClippingPlanes([clipPlane]);
-    this.sectionState = { visual, outline, clipPlane, normal };
+    this.sectionState = { visual, outline, cap, clipPlane, normal };
 
     // Drag handle slides the cut along the normal — view-only, no commit.
     const sync = () => {
       outline.position.copy(visual.position);
+      cap.position.copy(visual.position);
       clipPlane.setFromNormalAndCoplanarPoint(normal, visual.position);
     };
     this.attachManipulator(

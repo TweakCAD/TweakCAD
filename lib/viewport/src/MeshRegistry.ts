@@ -23,11 +23,39 @@ const EDGE_LINE_MATERIAL = new THREE.LineBasicMaterial({
   linewidth: 1,
 });
 
+/**
+ * Section-cap stencil materials. While a section cut is active every body
+ * mesh gets two invisible children sharing its geometry: back faces
+ * increment the stencil, front faces decrement it. Where the cut plane
+ * passes through solid material the count is non-zero, and the cap drawn
+ * by the ViewportController (stencil test `NotEqual 0`) fills it.
+ */
+function makeStencilMaterial(side: THREE.Side, op: THREE.StencilOp): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    side,
+    colorWrite: false,
+    depthWrite: false,
+    depthTest: false,
+    stencilWrite: true,
+    stencilFunc: THREE.AlwaysStencilFunc,
+    stencilFail: op,
+    stencilZFail: op,
+    stencilZPass: op,
+  });
+}
+const STENCIL_BACK_MATERIAL = makeStencilMaterial(THREE.BackSide, THREE.IncrementWrapStencilOp);
+const STENCIL_FRONT_MATERIAL = makeStencilMaterial(THREE.FrontSide, THREE.DecrementWrapStencilOp);
+
+/** Render order of the cap stencil passes; the cap itself must draw after. */
+export const SECTION_STENCIL_RENDER_ORDER = 1;
+
 export type MeshEntry = {
   bodyId: BodyId;
   mesh: THREE.Mesh;
   edges?: THREE.LineSegments;
   topoMap?: TopologyMap;
+  /** Section-cap stencil passes (children of `mesh`), present while sectioning. */
+  stencil?: THREE.Group;
 };
 
 export class MeshRegistry {
@@ -115,6 +143,8 @@ export class MeshRegistry {
     mat.opacity = opacity;
     mat.depthWrite = opacity >= 1.0;
     mat.needsUpdate = true;
+    // Ghosted bodies are see-through, so they get no section cap.
+    if (entry.stencil) entry.stencil.visible = opacity >= 1.0;
   }
 
   /**
@@ -182,16 +212,40 @@ export class MeshRegistry {
    * objects and may mutate their `constant` in place for a live cut — the
    * materials hold the same array reference, so the renderer picks it up
    * next frame (with `renderer.localClippingEnabled = true`).
+   *
+   * While planes are set, each body also gets the section-cap stencil passes
+   * (see STENCIL_BACK_MATERIAL). They are children of the body mesh, so they
+   * follow its visibility and Move-gizmo transform.
    */
   setClippingPlanes(planes: THREE.Plane[]): void {
     const value = planes.length > 0 ? planes : null;
+    const sectioning = value !== null;
     for (const entry of this.entries.values()) {
-      const mat = entry.mesh.material as THREE.Material;
+      const mat = entry.mesh.material as THREE.MeshPhongMaterial;
       mat.clippingPlanes = value;
       mat.needsUpdate = true;
+      if (sectioning && !entry.stencil) {
+        const group = new THREE.Group();
+        for (const stencilMat of [STENCIL_BACK_MATERIAL, STENCIL_FRONT_MATERIAL]) {
+          const pass = new THREE.Mesh(entry.mesh.geometry, stencilMat);
+          pass.renderOrder = SECTION_STENCIL_RENDER_ORDER;
+          // Not pickable: the picker raycasts body meshes non-recursively,
+          // but keep these inert for any recursive raycast too.
+          pass.raycast = () => {};
+          group.add(pass);
+        }
+        group.visible = !mat.transparent;
+        entry.mesh.add(group);
+        entry.stencil = group;
+      } else if (!sectioning && entry.stencil) {
+        entry.mesh.remove(entry.stencil);
+        delete entry.stencil;
+      }
     }
-    EDGE_LINE_MATERIAL.clippingPlanes = value;
-    EDGE_LINE_MATERIAL.needsUpdate = true;
+    for (const m of [EDGE_LINE_MATERIAL, STENCIL_BACK_MATERIAL, STENCIL_FRONT_MATERIAL]) {
+      m.clippingPlanes = value;
+      m.needsUpdate = true;
+    }
   }
 
   /** World-space bounding box of all body meshes (empty box if none). */
