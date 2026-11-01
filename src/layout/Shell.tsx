@@ -3899,6 +3899,13 @@ export function Shell({
           <MainRibbon
             sketchActive={sketchActive && !extrudeState.visible && !revolveState.visible && !loftState.visible}
             sketchPickingPlane={sketchPickingPlane}
+            toolShortcutsEnabled={!(
+              extrudeState.visible || revolveState.visible || loftState.visible
+              || sweepState.visible || filletState.visible || chamferState.visible
+              || holeState.visible || planeState.visible || booleanState.visible
+              || primitiveState.visible || mirrorState.visible || shellState.visible
+              || patternState.visible || moveState !== null
+            )}
             onSketchClick={handleSketchButton}
             onSketchCancelPlanePick={handleCancelPlanePick}
             onSketchEnd={handleExitSketch}

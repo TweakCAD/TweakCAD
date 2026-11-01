@@ -1,8 +1,8 @@
 /**
- * Single-letter keyboard shortcuts for sketch tools. The letters come from
- * the toolbar's tool definitions (the same `shortcut` shown on the buttons
- * and in the dropdown menus), so a shortcut is advertised exactly when it
- * works.
+ * Single-letter keyboard shortcuts for ribbon tools (modeling and sketch).
+ * The letters come from the toolbar's tool definitions (the same `shortcut`
+ * shown on the buttons and in the dropdown menus), so a shortcut is
+ * advertised exactly when it works.
  */
 
 /** Minimal slice of a keydown event the matcher reads. */
@@ -29,7 +29,7 @@ export function isEditableTarget(target: EventTarget | null): boolean {
  * modified keys (Ctrl+O opens a file), auto-repeat, and keys typed into a
  * text field. Letters match case-insensitively.
  */
-export function sketchToolForKey<Id extends string>(
+export function toolForShortcutKey<Id extends string>(
   e: ShortcutKeyEvent,
   tools: readonly { id: Id; shortcut?: string | undefined }[],
 ): Id | null {

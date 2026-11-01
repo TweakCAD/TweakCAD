@@ -14,7 +14,7 @@
 
 import { Children, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { isSaasAvailable } from '../storage/saasState.ts';
-import { sketchToolForKey } from '../sketch/sketchShortcuts.ts';
+import { toolForShortcutKey } from './toolShortcuts.ts';
 import type { SaasState } from '../storage/saasState.ts';
 import { useBridgeStatus } from '../hooks/useBridgeStatus.ts';
 import {
@@ -207,6 +207,11 @@ interface RibbonProps {
   sketchActive?: boolean | undefined;
   /** True while the plane picker is open (between clicking Sketch and choosing a plane) */
   sketchPickingPlane?: boolean | undefined;
+  /**
+   * Whether the modeling ribbon's letter shortcuts (S, E, H, F) fire. Off
+   * while a feature dialog is open, where a stray letter would restart it.
+   */
+  toolShortcutsEnabled?: boolean | undefined;
   /** Open the sketch plane picker overlay (creates sketch once a plane is chosen) */
   onSketchClick?: (() => void) | undefined;
   /** Cancel the plane picker without creating a sketch */
@@ -1026,6 +1031,7 @@ const accountStyles: Record<string, React.CSSProperties> = {
 export function MainRibbon({
   sketchActive,
   sketchPickingPlane,
+  toolShortcutsEnabled,
   onSketchClick,
   onSketchCancelPlanePick,
   onSketchEnd,
@@ -1067,6 +1073,7 @@ export function MainRibbon({
       ) : (
         <ModelingRibbon
           sketchPickingPlane={sketchPickingPlane ?? false}
+          toolShortcutsEnabled={toolShortcutsEnabled ?? true}
           onSketchClick={onSketchClick}
           onSketchCancelPlanePick={onSketchCancelPlanePick}
           onExtrudeClick={onExtrudeClick}
@@ -1097,6 +1104,7 @@ export function MainRibbon({
 
 function ModelingRibbon({
   sketchPickingPlane,
+  toolShortcutsEnabled,
   onSketchClick,
   onSketchCancelPlanePick,
   onExtrudeClick,
@@ -1119,6 +1127,7 @@ function ModelingRibbon({
   sectionActive,
 }: {
   sketchPickingPlane: boolean;
+  toolShortcutsEnabled: boolean;
   onSketchClick?: (() => void) | undefined;
   onSketchCancelPlanePick?: (() => void) | undefined;
   onExtrudeClick?: (() => void) | undefined;
@@ -1219,6 +1228,21 @@ function ModelingRibbon({
     }
     // Other tools: no-op for now (stubs)
   };
+
+  // Single-letter tool shortcuts, the same letters the buttons and menus
+  // show. Rebound every render so the handler sees the current callbacks.
+  useEffect(() => {
+    if (!toolShortcutsEnabled) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      const tool = toolForShortcutKey(e, TOOLS);
+      if (!tool) return;
+      e.preventDefault();
+      handleToolClick(tool);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  });
 
   const toMenuItem = (tool: ToolDef): MenuItem => ({
     id: tool.id,
@@ -1333,7 +1357,7 @@ function SketchRibbon({
     const tools = [...SKETCH_CREATE_TOOLS, ...SKETCH_DIMENSION_TOOLS, ...SKETCH_MODIFY_TOOLS];
     const handler = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
-      const tool = sketchToolForKey(e, tools);
+      const tool = toolForShortcutKey(e, tools);
       if (!tool) return;
       e.preventDefault();
       onSketchToolChange(tool);
