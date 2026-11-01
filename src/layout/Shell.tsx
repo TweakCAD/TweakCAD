@@ -40,6 +40,7 @@ import type { ContextMenuAction, TreeBody } from '../components/ProjectTree.tsx'
 import { SketchEditor, SketchPalette, useSketchEditorStore } from '../sketch/index.ts';
 import { SketchViewer } from '../sketch/SketchViewer.tsx';
 import { planeConfigFromBasis, type SketchPlaneInput, type SketchPlaneConfig } from '../sketch/SketchSceneManager.ts';
+import { sketchViewForPlane } from '../sketch/sketchView.ts';
 import { ErrorBoundary } from '../components/ErrorBoundary.tsx';
 import { SketchBrowser } from '../sketch/SketchBrowser.tsx';
 import { SketchPlanePicker } from '../sketch/SketchPlanePicker.tsx';
@@ -125,20 +126,6 @@ import { targetsExactly } from '@tweakcad/worker/src/featureBuilders/buildMove.t
 //     doc is always current; there is no exit-time sync.
 
 /**
- * Spherical-coordinates view that looks straight down the normal of the
- * three default sketch planes. Used both when ENTERING sketch mode (auto
- * snap) and when the user clicks Home in the viewport toolbar while a
- * sketch is open — same view in both cases keeps muscle memory consistent.
- */
-function sketchViewForPlane(plane: 'XY' | 'XZ' | 'YZ'): { theta: number; phi: number } {
-  switch (plane) {
-    case 'XY': return { theta: 0, phi: Math.PI / 2 };
-    case 'XZ': return { theta: 0, phi: 0.01 };
-    case 'YZ': return { theta: Math.PI / 2, phi: Math.PI / 2 };
-  }
-}
-
-/**
  * Resolve a sketch's stored plane reference to a renderer plane input.
  *
  * - A **default plane** maps to its bare name ('XY'/'XZ'/'YZ'), drawn through
@@ -166,9 +153,10 @@ function resolveSketchPlaneInput(
 }
 
 /**
- * Pick the closest default-plane orientation for a plane input — used to point
- * the camera head-on when entering a sketch. For a construction plane we snap
- * to whichever default view best matches the plane's normal.
+ * Pick the closest default-plane name for a plane input. For a construction
+ * plane this snaps to whichever default plane best matches its normal; it only
+ * labels the sketch and serves as the name fallback — the camera looks along
+ * the real normal via `sketchViewForPlane`.
  */
 function viewNameForPlaneInput(input: SketchPlaneInput): 'XY' | 'XZ' | 'YZ' {
   if (typeof input === 'string') return input;
@@ -659,23 +647,25 @@ export function Shell({
   // Explicit world basis for the active sketch when it's on a CONSTRUCTION
   // plane. Null for default-plane sketches (the name above suffices). When
   // set, it's handed to SketchEditor so geometry draws at the datum plane's
-  // real offset/orientation. `sketchPlaneName` still drives the camera view.
+  // real offset/orientation, and the camera looks along its real normal.
   const [sketchPlaneConfig, setSketchPlaneConfig] = useState<SketchPlaneConfig | null>(null);
   const wasSketchActiveRef = useRef(false);
 
   // Auto-position the camera when ENTERING sketch mode so the user sees
-  // the active sketch plane head-on. Ghost-mode application is no longer
-  // done here — it lives in the centralized computeAllBodyDisplayModes
-  // pass below so it composes correctly with per-body hide state.
+  // the active sketch plane head-on — along the plane's own normal, so an
+  // oblique construction plane is square to the screen too. Ghost-mode
+  // application is no longer done here — it lives in the centralized
+  // computeAllBodyDisplayModes pass below so it composes correctly with
+  // per-body hide state.
   useEffect(() => {
     const ctrl = ctrlRef.current;
     if (!ctrl) return;
     if (sketchActive && !wasSketchActiveRef.current) {
-      const view = sketchViewForPlane(sketchPlaneName);
+      const view = sketchViewForPlane(sketchPlaneConfig ?? sketchPlaneName);
       ctrl.goToView(view.theta, view.phi);
     }
     wasSketchActiveRef.current = sketchActive;
-  }, [sketchActive, sketchPlaneName]);
+  }, [sketchActive, sketchPlaneName, sketchPlaneConfig]);
 
   // Log initial message
   useEffect(() => {
@@ -4114,7 +4104,7 @@ export function Shell({
             // head-on (same view used on sketch entry). Outside sketch
             // mode the default global iso-home is right.
             onHome={sketchActive ? () => {
-              const v = sketchViewForPlane(sketchPlaneName);
+              const v = sketchViewForPlane(sketchPlaneConfig ?? sketchPlaneName);
               viewportCtrl?.goToView(v.theta, v.phi);
             } : undefined}
           />
