@@ -13,12 +13,15 @@
  *     (v1 dialog only emits x/y/z; "axis from edge/face" picker
  *     lights up custom later)
  *
- * Note: our kernel's `circularPattern(body, axis, count)` always
- * sweeps 2π distributed over `count` instances. To honor `fullAngle`
- * we re-derive the per-step angle here and stop OCCT short — but
- * occt-wasm doesn't expose a partial-sweep variant, so v1 forces
- * `fullAngle = 360°` and treats anything else as a v2 follow-up.
- * Reflected at runtime as a warn-log + clamp to 360.
+ * Output: the source body keeps its id and stays in the context. Each of
+ * the `count - 1` copies is its own body, `body_<featureId>_<i>` for
+ * i = 0 … count - 2 in rotation order, so the bodies list, the viewport
+ * and booleans see every instance separately.
+ *
+ * `fullAngle`: the kernel's `circularPattern(body, axis, count)` always
+ * spreads the instances over a full turn (step 360° / count). Partial
+ * sweeps are not wired yet, so anything other than 360° logs a warning
+ * and builds the full turn.
  */
 
 import type {
@@ -28,11 +31,11 @@ import type {
 } from '@tweakcad/core/src/document/schema.ts';
 import type { ResolvedParams } from '@tweakcad/core/src/expressions.ts';
 import { evaluateExpression } from '@tweakcad/core/src/expressions.ts';
-import { bodyId as bodyIdBrand } from '@tweakcad/core/src/ids.ts';
 import type { BodyId } from '@tweakcad/core/src/ids.ts';
 import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
 import type { KernelBody, ResolvedAxis } from '@tweakcad/kernel/src/types.ts';
 import type { BuildContext, BuildResult } from '@tweakcad/core/src/features/contracts.ts';
+import { mintBodyId } from './bodyIdentity.ts';
 
 export async function buildCircularPattern(
   node: FeatureNode,
@@ -69,9 +72,8 @@ export async function buildCircularPattern(
     throw new Error(`Pattern count must be at least 1 (got ${count})`);
   }
 
-  // 4. fullAngle. v1 only supports full 360° revolutions because our
-  // kernel's circularPattern is fixed-sweep. Warn if the user asked
-  // for partial and proceed with 360.
+  // 4. fullAngle. Only full 360° turns are built; warn if the user
+  // asked for a partial sweep and proceed with 360.
   if (inputs.fullAngle !== undefined) {
     const angleResult = evaluateExpression(inputs.fullAngle, params);
     if (angleResult.ok && Math.abs(angleResult.value - 360) > 0.01) {
@@ -87,12 +89,14 @@ export async function buildCircularPattern(
     throw new Error(`Circular Pattern failed: ${patternResult.error.message}`);
   }
 
-  // 6. Publish — source stays in context, pattern under a fresh id.
-  const newBodyId = bodyIdBrand(`body_${node.id}_0`);
+  // 6. Publish — source stays in context, each copy under its own id.
+  const copies = patternResult.value.map((handle, i) => ({ bodyId: mintBodyId(node.id, i), handle }));
   return {
-    bodies: [{ bodyId: newBodyId, handle: patternResult.value }],
+    bodies: copies,
     outputs: {
-      bodies: { main: newBodyId },
+      bodies: Object.fromEntries(
+        copies.map((b, i) => [i === 0 ? 'main' : `body_${i}`, b.bodyId]),
+      ) as Record<string, BodyId>,
     },
   };
 }

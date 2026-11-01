@@ -197,20 +197,29 @@ export interface CadKernel {
     tolerance?: number,
   ): Promise<Result<KernelBody, KernelError>>;
 
-  /** Create a linear pattern of a body */
+  /**
+   * Linear pattern of a body. `count` includes the source; returns the
+   * `count - 1` copies (instance i translated `i * spacing` along `dir`),
+   * each a separate body. The source body is not part of the result.
+   */
   linearPattern(
     body: KernelBody,
     dir: Vec3,
     count: number,
     spacing: number,
-  ): Promise<Result<KernelBody, KernelError>>;
+  ): Promise<Result<KernelBody[], KernelError>>;
 
-  /** Create a circular pattern of a body */
+  /**
+   * Circular pattern of a body over a full turn. `count` includes the
+   * source; returns the `count - 1` copies (instance i rotated
+   * `i * 360° / count` about `axis`), each a separate body. The source
+   * body is not part of the result.
+   */
   circularPattern(
     body: KernelBody,
     axis: ResolvedAxis,
     count: number,
-  ): Promise<Result<KernelBody, KernelError>>;
+  ): Promise<Result<KernelBody[], KernelError>>;
 
   // --- Query ---
 

@@ -774,35 +774,45 @@ describe('OcctKernel — modify ops', () => {
     expect(bb.max[0]).toBeCloseTo(-10, 4);
   });
 
-  it('linearPattern produces N translated copies along a direction', async () => {
+  it('linearPattern returns count - 1 translated copies, each its own body', async () => {
     const k = await newKernel();
     const r = await k.makeBox({ origin: [0, 0, 0], width: 5, height: 5, depth: 5 });
     if (!r.ok) throw new Error('precondition failed');
-    const p = await k.linearPattern(r.value, [1, 0, 0], 3, 10);
+    // A non-unit direction still steps `spacing` mm per instance.
+    const p = await k.linearPattern(r.value, [2, 0, 0], 3, 10);
     expect(p.ok).toBe(true);
     if (!p.ok) return;
-    const bb = await k.getBoundingBox(p.value);
-    // 3 copies with spacing=10 starting at the first box (origin..5) →
-    // copy at [0..5], [10..15], [20..25].
-    expect(bb.min[0]).toBeCloseTo(0, 4);
-    expect(bb.max[0]).toBeCloseTo(25, 4);
+    expect(p.value).toHaveLength(2);
+    const boxes = await Promise.all(p.value.map(b => k.getBoundingBox(b)));
+    expect(boxes.map(bb => [bb.min[0], bb.max[0]])).toEqual([
+      [expect.closeTo(10, 4), expect.closeTo(15, 4)],
+      [expect.closeTo(20, 4), expect.closeTo(25, 4)],
+    ]);
+    // Each copy keeps the source's face IDs.
+    const src = await k.getTopology(r.value);
+    const copy = await k.getTopology(p.value[1]!);
+    expect(copy.faces.every(f => f.stableFaceId !== undefined)).toBe(true);
+    expect(copy.faces.map(f => f.stableFaceId).sort()).toEqual(src.faces.map(f => f.stableFaceId).sort());
   });
 
-  it('circularPattern produces a non-trivial compound around an axis', async () => {
+  it('circularPattern spreads count instances evenly over a full turn', async () => {
     const k = await newKernel();
-    // Box offset on +X so its copies form a ring around the Z axis.
-    const r = await k.makeBox({ origin: [20, -2.5, -2.5], width: 5, height: 5, depth: 5 });
+    // Box centred at radius 25 on +X, around the Y axis.
+    const r = await k.makeBox({ origin: [20, 0, -2], width: 10, height: 10, depth: 4 });
     if (!r.ok) throw new Error('precondition failed');
-    const p = await k.circularPattern(r.value, { origin: [0, 0, 0], direction: [0, 0, 1] }, 4);
+    const p = await k.circularPattern(r.value, { origin: [0, 0, 0], direction: [0, 1, 0] }, 6);
     expect(p.ok).toBe(true);
     if (!p.ok) return;
-    // Plan §0e treats modify ops as "kernel-only smoke" — exact geometry
-    // semantics weren't pinned down in v1 either. Just confirm the result
-    // body extends meaningfully beyond a single box footprint (5 mm wide).
-    const bb = await k.getBoundingBox(p.value);
-    const xSpan = bb.max[0] - bb.min[0];
-    const ySpan = bb.max[1] - bb.min[1];
-    expect(Math.max(xSpan, ySpan)).toBeGreaterThan(15);
+    expect(p.value).toHaveLength(5);
+    const angles: number[] = [];
+    for (const copy of p.value) {
+      const bb = await k.getBoundingBox(copy);
+      const cx = (bb.min[0] + bb.max[0]) / 2;
+      const cz = (bb.min[2] + bb.max[2]) / 2;
+      expect(Math.hypot(cx, cz)).toBeCloseTo(25, 3);
+      angles.push(Math.round(((Math.atan2(cz, cx) * 180) / Math.PI + 360) % 360));
+    }
+    expect(angles.sort((a, b) => a - b)).toEqual([60, 120, 180, 240, 300]);
   });
 });
 

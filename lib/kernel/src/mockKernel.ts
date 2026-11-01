@@ -204,18 +204,18 @@ export class MockKernel implements CadKernel {
   async linearPattern(
     _body: KernelBody,
     _dir: Vec3,
-    _count: number,
+    count: number,
     _spacing: number,
-  ): Promise<Result<KernelBody, KernelError>> {
-    return ok({ handle: this.nextHandle(), source: 'mock' });
+  ): Promise<Result<KernelBody[], KernelError>> {
+    return ok(Array.from({ length: Math.max(0, count - 1) }, () => ({ handle: this.nextHandle(), source: 'mock' })));
   }
 
   async circularPattern(
     _body: KernelBody,
     _axis: ResolvedAxis,
-    _count: number,
-  ): Promise<Result<KernelBody, KernelError>> {
-    return ok({ handle: this.nextHandle(), source: 'mock' });
+    count: number,
+  ): Promise<Result<KernelBody[], KernelError>> {
+    return ok(Array.from({ length: Math.max(0, count - 1) }, () => ({ handle: this.nextHandle(), source: 'mock' })));
   }
 
   async getTopology(_body: KernelBody): Promise<TopologyMap> {

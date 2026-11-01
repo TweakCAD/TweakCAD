@@ -135,14 +135,20 @@ describe('buildLinearPattern', () => {
     warnSpy.mockRestore();
   });
 
-  it('publishes a fresh body id and leaves source in the context', async () => {
+  it('publishes one fresh body per copy and leaves source in the context', async () => {
     const kernel = new MockKernel();
     await kernel.init();
     const ctx = makeCtxWithBody();
     const result = await buildLinearPattern(makeNode(), {} as ResolvedParams, ctx, kernel);
     expect(ctx.bodies.has(BODY)).toBe(true); // source NOT consumed
-    expect(result.bodies).toHaveLength(1);
-    expect(String(result.bodies[0]!.bodyId)).toBe('body_linpat_1_0');
+    expect(result.bodies.map(b => String(b.bodyId))).toEqual(['body_linpat_1_0', 'body_linpat_1_1']);
+  });
+
+  it('count 1 publishes no bodies', async () => {
+    const kernel = new MockKernel();
+    await kernel.init();
+    const result = await buildLinearPattern(makeNode({ count: '1' }), {} as ResolvedParams, makeCtxWithBody(), kernel);
+    expect(result.bodies).toEqual([]);
   });
 
   it('propagates kernel.linearPattern failure', async () => {

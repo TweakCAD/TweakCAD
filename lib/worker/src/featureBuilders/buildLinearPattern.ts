@@ -5,11 +5,11 @@
  * `count` times at `spacing` mm intervals. This is the body-level
  * "rectangular pattern" operation.
  *
- * The kernel call returns a single body containing all instances as
- * sub-solids (occt-wasm's `linearPattern` produces a compound shape
- * internally). The result body is published under a fresh deterministic
- * id derived from the feature; the *source* body stays in the context
- * so other features can reference it.
+ * Output: the source body keeps its id and stays in the context so other
+ * features can reference it. Each of the `count - 1` copies is its own
+ * body, `body_<featureId>_<i>` for i = 0 … count - 2 in order along the
+ * direction, so the bodies list, the viewport and booleans see every
+ * instance separately.
  *
  * Direction resolution:
  *   - `{ type: 'x' }` → world +X
@@ -20,11 +20,8 @@
  *     vector). v1 dialog only emits x/y/z; custom lights up when a
  *     "direction from edge" picker lands.
  *
- * Topology naming: the kernel's `linearPattern` uses the legacy hash-
- * match propagator (no `linearPatternWithHistory` exists in occt-wasm).
- * For pattern instances, this is usually fine — the copies are
- * rigid-body transforms of the source, so OCCT preserves the TShape
- * and hash-match catches every face.
+ * Topology naming: each copy is a `translateWithHistory` of the source,
+ * so every face on a copy carries its source face's stable ID.
  */
 
 import type {
@@ -34,12 +31,12 @@ import type {
 } from '@tweakcad/core/src/document/schema.ts';
 import type { ResolvedParams } from '@tweakcad/core/src/expressions.ts';
 import { evaluateExpression } from '@tweakcad/core/src/expressions.ts';
-import { bodyId as bodyIdBrand } from '@tweakcad/core/src/ids.ts';
 import type { BodyId } from '@tweakcad/core/src/ids.ts';
 import type { Vec3 } from '@tweakcad/core/src/math.ts';
 import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
 import type { KernelBody } from '@tweakcad/kernel/src/types.ts';
 import type { BuildContext, BuildResult } from '@tweakcad/core/src/features/contracts.ts';
+import { mintBodyId } from './bodyIdentity.ts';
 
 export async function buildLinearPattern(
   node: FeatureNode,
@@ -95,14 +92,16 @@ export async function buildLinearPattern(
     throw new Error(`Linear Pattern failed: ${patternResult.error.message}`);
   }
 
-  // 5. Publish the pattern as a new body. Source stays in context so
+  // 5. Publish each copy as a new body. Source stays in context so
   // downstream features can reference it (newBody-like semantics —
   // pattern doesn't consume the source).
-  const newBodyId = bodyIdBrand(`body_${node.id}_0`);
+  const copies = patternResult.value.map((handle, i) => ({ bodyId: mintBodyId(node.id, i), handle }));
   return {
-    bodies: [{ bodyId: newBodyId, handle: patternResult.value }],
+    bodies: copies,
     outputs: {
-      bodies: { main: newBodyId },
+      bodies: Object.fromEntries(
+        copies.map((b, i) => [i === 0 ? 'main' : `body_${i}`, b.bodyId]),
+      ) as Record<string, BodyId>,
     },
   };
 }

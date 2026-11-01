@@ -126,13 +126,16 @@ describe('buildCircularPattern', () => {
     warnSpy.mockRestore();
   });
 
-  it('publishes fresh body id and leaves source alone', async () => {
+  it('publishes one fresh body per copy and leaves source alone', async () => {
     const kernel = new MockKernel();
     await kernel.init();
     const ctx = makeCtxWithBody();
     const result = await buildCircularPattern(makeNode(), {} as ResolvedParams, ctx, kernel);
     expect(ctx.bodies.has(BODY)).toBe(true);
-    expect(String(result.bodies[0]!.bodyId)).toBe('body_circpat_1_0');
+    expect(result.bodies.map(b => String(b.bodyId))).toEqual(
+      [0, 1, 2, 3, 4].map(i => `body_circpat_1_${i}`),
+    );
+    expect(result.outputs?.bodies?.main).toBe(result.bodies[0]!.bodyId);
   });
 
   it('propagates kernel.circularPattern failure', async () => {

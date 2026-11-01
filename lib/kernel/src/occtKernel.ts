@@ -1181,20 +1181,35 @@ export class OcctKernel implements CadKernel {
     dir: Vec3,
     count: number,
     spacing: number,
-  ): Promise<Result<KernelBody, KernelError>> {
+  ): Promise<Result<KernelBody[], KernelError>> {
     try {
       if (count < 1) {
         return err(kernelError('parameter', 'PATTERN_COUNT', 'Pattern count must be at least 1'));
       }
+      const len = Math.hypot(dir[0], dir[1], dir[2]);
+      if (len === 0) {
+        return err(kernelError('parameter', 'PATTERN_DIRECTION', 'Pattern direction has zero length'));
+      }
       const k = this.getKernel();
       const shape = this.getBodyShape(body);
-      const result = k.linearPattern(
-        shape,
-        { x: dir[0], y: dir[1], z: dir[2] },
-        spacing,
-        count,
-      );
-      return ok(this.storeModifiedBody(result, [body], 'linearPattern'));
+      const inputFaceHashes = this.collectInputFaceHashes([body]);
+      // One translated copy per instance after the source, each its own
+      // body. occt-wasm's `linearPattern` returns one compound whose first
+      // solid coincides with the source, which would double the source.
+      const copies: KernelBody[] = [];
+      for (let i = 1; i < count; i++) {
+        const d = (spacing * i) / len;
+        const evo = k.translateWithHistory(
+          shape,
+          dir[0] * d,
+          dir[1] * d,
+          dir[2] * d,
+          inputFaceHashes,
+          HASH_UPPER_BOUND,
+        );
+        copies.push(this.storeBodyWithHistory(evo.result, [body], evo, 'linearPattern'));
+      }
+      return ok(copies);
     } catch (e) {
       console.error('[OcctKernel] linearPattern failed:', e);
       return err(
@@ -1207,21 +1222,35 @@ export class OcctKernel implements CadKernel {
     body: KernelBody,
     axis: ResolvedAxis,
     count: number,
-  ): Promise<Result<KernelBody, KernelError>> {
+  ): Promise<Result<KernelBody[], KernelError>> {
     try {
       if (count < 1) {
         return err(kernelError('parameter', 'PATTERN_COUNT', 'Pattern count must be at least 1'));
       }
       const k = this.getKernel();
       const shape = this.getBodyShape(body);
-      const result = k.circularPattern(
-        shape,
-        { x: axis.origin[0], y: axis.origin[1], z: axis.origin[2] },
-        { x: axis.direction[0], y: axis.direction[1], z: axis.direction[2] },
-        (2 * Math.PI) / count,
-        count,
-      );
-      return ok(this.storeModifiedBody(result, [body], 'circularPattern'));
+      const inputFaceHashes = this.collectInputFaceHashes([body]);
+      const rotationAxis = {
+        point: { x: axis.origin[0], y: axis.origin[1], z: axis.origin[2] },
+        direction: { x: axis.direction[0], y: axis.direction[1], z: axis.direction[2] },
+      };
+      // One rotated copy per instance after the source, evenly spaced over
+      // a full turn, each its own body. (occt-wasm's `circularPattern`
+      // takes the total sweep, not the step, and its compound also
+      // repeats the source as instance 0.)
+      const step = (2 * Math.PI) / count;
+      const copies: KernelBody[] = [];
+      for (let i = 1; i < count; i++) {
+        const evo = k.rotateWithHistory(
+          shape,
+          rotationAxis,
+          step * i,
+          inputFaceHashes,
+          HASH_UPPER_BOUND,
+        );
+        copies.push(this.storeBodyWithHistory(evo.result, [body], evo, 'circularPattern'));
+      }
+      return ok(copies);
     } catch (e) {
       console.error('[OcctKernel] circularPattern failed:', e);
       return err(
