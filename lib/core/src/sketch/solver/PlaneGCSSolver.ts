@@ -566,15 +566,18 @@ export class PlaneGCSSolver implements ISketchSolver {
       }
     }
 
-    // Geometry params (radius, etc.) — only circle radius is currently free
-    // in our schema. Return the input map by reference when nothing changed
-    // so React's identity check skips a re-render.
+    // Geometry params: circle and arc radius are solver variables. An arc's
+    // radius must be read back too — the residual check below evaluates
+    // `radius`, `tangent` and `equal` against it, and a stale value would
+    // flag them unsatisfied even though the points moved correctly. Return
+    // the input map by reference when nothing changed so React's identity
+    // check skips a re-render.
     let geomChanged = false;
     const outGeoms = new Map<SketchGeometryId, SketchGeometry>(geometries);
     for (const [gid, g] of geometries) {
-      if (g.type !== 'circle') continue;
+      if (g.type !== 'circle' && g.type !== 'arc') continue;
       const updated = w.sketch_index.get_primitive(GID(gid));
-      if (updated && updated.type === 'circle') {
+      if (updated && updated.type === g.type) {
         const newR = Math.max(1e-4, updated.radius);
         if (Math.abs(newR - g.radius) > 1e-9) {
           outGeoms.set(gid, { ...g, radius: newR });

@@ -263,13 +263,6 @@ function commitPendingDimension(value: number): void {
     const geom = store.geometries.get(pd.geometryId);
     if (geom && (geom.type === 'circle' || geom.type === 'arc')) {
       dispatchApplyConstraint({ type: 'radius', geometryId: pd.geometryId, value });
-      // Radius lives on the geometry (not a solver variable), and the
-      // pre-commit pipeline's solve doesn't reassign it on its own — the
-      // legacy `setRadius` call wrote the new value directly and we keep
-      // it for the explicit geometry update. The hydration subscriber
-      // will overwrite this with the doc state on the next dispatch, so
-      // any divergence corrects itself immediately.
-      store.setRadius(pd.geometryId, value);
     }
   } else if (pd.kind === 'distance') {
     const a = store.points.get(pd.pointA);
