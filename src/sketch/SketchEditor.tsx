@@ -23,6 +23,7 @@ import { SketchSceneManager, type SketchPlaneInput } from './SketchSceneManager.
 import { useSketchEditorStore } from './SketchEditorStore.ts';
 import { DimensionsOverlay } from './DimensionsOverlay.tsx';
 import { TextToolPanel } from './TextToolPanel.tsx';
+import { OffsetDistanceInput } from './OffsetDistanceInput.tsx';
 import { subscribeSketchHydration } from './sketchHydration.ts';
 import {
   resetToolSession,
@@ -384,7 +385,7 @@ export function SketchEditor({
   if (!isActive) return null;
 
   // Render an invisible overlay for pointer event capture, plus the dimension
-  // labels / value input overlay on top.
+  // labels / value input overlay and the Offset tool's distance field on top.
   return (
     <>
       <div
@@ -406,6 +407,7 @@ export function SketchEditor({
       />
       <DimensionsOverlay sceneManager={sceneManagerState} />
       {effectiveTool === 'text' && <TextToolPanel onClose={() => onActiveToolChange?.('select')} />}
+      {effectiveTool === 'offset' && <OffsetDistanceInput />}
     </>
   );
 }

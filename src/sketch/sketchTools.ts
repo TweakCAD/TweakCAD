@@ -158,6 +158,12 @@ function hasRadiusConstraint(
 
 let session: ToolSessionState = null;
 
+/**
+ * Offset distance in mm. Lives outside the session so it survives tool
+ * switches and re-entering the sketch editor.
+ */
+let offsetDistance = 5;
+
 // Share the session with sketchToolsExt so its handlers can mutate it too.
 bindSession(() => session, (next) => { session = next; });
 
@@ -182,7 +188,7 @@ export function resetToolSession(tool: SketchToolId): void {
     case 'trim':           session = { tool: 'trim', phase: 'idle' }; break;
     case 'extend':         session = { tool: 'extend', phase: 'idle' }; break;
     case 'sketch-fillet':  session = { tool: 'sketch-fillet', phase: 'idle' }; break;
-    case 'offset':         session = { tool: 'offset', phase: 'idle', distance: 5 }; break;
+    case 'offset':         session = { tool: 'offset', phase: 'idle', distance: offsetDistance }; break;
     case 'sketch-mirror':  session = { tool: 'sketch-mirror', phase: 'idle' }; break;
     case 'dimension':      session = { tool: 'dimension', phase: 'idle' }; break;
     case 'dimension-x':    session = { tool: 'dimension-x', phase: 'idle' }; break;
@@ -190,6 +196,22 @@ export function resetToolSession(tool: SketchToolId): void {
     case 'select':         session = { tool: 'select', phase: 'idle' }; break;
     default:               session = null;
   }
+}
+
+/** Offset tool distance in mm, as last set by the user. */
+export function getOffsetDistance(): number {
+  return offsetDistance;
+}
+
+/**
+ * Set the Offset tool's distance. Returns false and keeps the current value
+ * unless `value` is a finite number greater than zero.
+ */
+export function setOffsetDistance(value: number): boolean {
+  if (!Number.isFinite(value) || value <= 0) return false;
+  offsetDistance = value;
+  if (session?.tool === 'offset') session = { ...session, distance: value };
+  return true;
 }
 
 /** Get current tool session state */
