@@ -40,36 +40,38 @@ export function useCommandBus() {
 export function useUndoRedo() {
   const { documentStore } = getAppState();
 
-  // Subscribe to state changes to re-check undo/redo availability
+  // Availability changes with the document, and also when a transaction
+  // opens or closes (undo is refused while one is open), which is not a
+  // document change.
+  const subscribe = useCallback(
+    (callback: () => void) => {
+      const offState = documentStore.subscribe(callback);
+      const offHistory = documentStore.subscribeHistory(callback);
+      return () => {
+        offState();
+        offHistory();
+      };
+    },
+    [documentStore],
+  );
+
   const canUndo = useSyncExternalStore(
-    useCallback(
-      (callback: () => void) => documentStore.subscribe(callback),
-      [documentStore],
-    ),
+    subscribe,
     useCallback(() => documentStore.canUndo(), [documentStore]),
   );
 
   const canRedo = useSyncExternalStore(
-    useCallback(
-      (callback: () => void) => documentStore.subscribe(callback),
-      [documentStore],
-    ),
+    subscribe,
     useCallback(() => documentStore.canRedo(), [documentStore]),
   );
 
   const undoLabel = useSyncExternalStore(
-    useCallback(
-      (callback: () => void) => documentStore.subscribe(callback),
-      [documentStore],
-    ),
+    subscribe,
     useCallback(() => documentStore.undoLabel(), [documentStore]),
   );
 
   const redoLabel = useSyncExternalStore(
-    useCallback(
-      (callback: () => void) => documentStore.subscribe(callback),
-      [documentStore],
-    ),
+    subscribe,
     useCallback(() => documentStore.redoLabel(), [documentStore]),
   );
 

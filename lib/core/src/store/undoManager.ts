@@ -62,9 +62,16 @@ export class UndoManager {
 
   /**
    * Apply undo - restores previous state.
+   *
+   * Refused while a transaction is open. The open transaction's patches were
+   * recorded against the current state; undoing an older entry underneath
+   * them changes what those patches describe, so the transaction's own undo
+   * later replays against a document it was never recorded on (a removed
+   * part makes it throw; a shifted array index makes it undo the wrong thing).
    * @param apply - Function that applies patches to the document state
    */
   undo(apply: (patches: Patch[]) => void): void {
+    if (this.depth > 0) return;
     const entry = this.past.pop();
     if (!entry) return;
     apply(entry.inversePatches);
@@ -72,24 +79,31 @@ export class UndoManager {
   }
 
   /**
-   * Apply redo - reapplies undone state.
+   * Apply redo - reapplies undone state. Refused while a transaction is
+   * open, for the same reason as {@link undo}.
    * @param apply - Function that applies patches to the document state
    */
   redo(apply: (patches: Patch[]) => void): void {
+    if (this.depth > 0) return;
     const entry = this.future.pop();
     if (!entry) return;
     apply(entry.patches);
     this.past.push(entry);
   }
 
-  /** @returns Whether undo is available */
+  /** @returns Whether undo is available (never while a transaction is open) */
   canUndo(): boolean {
-    return this.past.length > 0;
+    return this.depth === 0 && this.past.length > 0;
   }
 
-  /** @returns Whether redo is available */
+  /** @returns Whether redo is available (never while a transaction is open) */
   canRedo(): boolean {
-    return this.future.length > 0;
+    return this.depth === 0 && this.future.length > 0;
+  }
+
+  /** @returns Whether a transaction is open */
+  isTransactionOpen(): boolean {
+    return this.depth > 0;
   }
 
   /**

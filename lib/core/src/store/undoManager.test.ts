@@ -193,7 +193,8 @@ describe('UndoManager — transactions', () => {
     // `record` returns early inside a transaction, so its `future = []` never
     // runs; the discard happens in `endTransaction`. Pinning the boundary
     // because an in-flight transaction that is never closed must not silently
-    // strand a redo stack the user can still see.
+    // strand a redo stack. Redo itself is refused while the transaction is
+    // open, but the entry is still there.
     const m = new UndoManager();
     m.record(entry('a'));
     m.undo(() => {});
@@ -201,9 +202,11 @@ describe('UndoManager — transactions', () => {
 
     m.beginTransaction('Batch');
     m.record(entry('b'));
-    expect(m.canRedo()).toBe(true);
+    expect(m.redoLabel()).toBe('a');
+    expect(m.canRedo()).toBe(false);
 
     m.endTransaction();
+    expect(m.redoLabel()).toBeUndefined();
     expect(m.canRedo()).toBe(false);
   });
 
@@ -361,5 +364,56 @@ describe('UndoManager — nesting', () => {
     m.record(entry('a'));
     m.record(entry('b'));
     expect(m.canUndo()).toBe(false);
+  });
+});
+
+describe('UndoManager — undo and redo while a transaction is open', () => {
+  // The open transaction's patches were recorded against the current state.
+  // Undoing an older entry underneath them changes what they describe, so
+  // the transaction's own undo would later replay against a document it was
+  // never recorded on.
+  it('refuses undo, and reports nothing to undo, until the transaction closes', () => {
+    const m = new UndoManager();
+    m.record(entry('before'));
+    m.beginTransaction('open');
+    const { apply, seen } = recorder();
+
+    expect(m.isTransactionOpen()).toBe(true);
+    expect(m.canUndo()).toBe(false);
+    m.undo(apply);
+    expect(seen).toEqual([]);
+
+    m.endTransaction();
+    expect(m.isTransactionOpen()).toBe(false);
+    expect(m.canUndo()).toBe(true);
+    expect(m.undoLabel()).toBe('before');
+  });
+
+  it('refuses redo until the transaction closes', () => {
+    const m = new UndoManager();
+    m.record(entry('a'));
+    m.undo(() => {});
+    m.beginTransaction('open');
+    const { apply, seen } = recorder();
+
+    expect(m.canRedo()).toBe(false);
+    m.redo(apply);
+    expect(seen).toEqual([]);
+
+    m.endTransaction(); // no patches: nothing committed, redo survives
+    expect(m.canRedo()).toBe(true);
+    m.redo(apply);
+    expect(seen).toEqual([['a.fwd0']]);
+  });
+
+  it('stays refused through nested levels until the outermost closes', () => {
+    const m = new UndoManager();
+    m.record(entry('before'));
+    m.beginTransaction('outer');
+    m.beginTransaction('inner');
+    m.endTransaction();
+    expect(m.canUndo()).toBe(false);
+    m.endTransaction();
+    expect(m.canUndo()).toBe(true);
   });
 });

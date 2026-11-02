@@ -50,11 +50,53 @@ export interface AgentTurnArgs {
   host: ToolHost;
 }
 
+/**
+ * Wrap a host so the transactions the model opens with `begin_transaction`
+ * stay balanced.
+ *
+ * The turn's own transaction already makes the whole turn one undo step, so
+ * the model's transactions only nest inside it. What matters is the count:
+ * a level the model leaves open (it never called `end_transaction`, or the
+ * turn was cancelled, errored or hit the round cap) would keep the undo
+ * stack open after the turn, so every later edit joined a transaction that
+ * never committed and nothing could be undone again. `closeOpen` ends those
+ * levels; an `end_transaction` with none of the model's own open is ignored,
+ * so it cannot close the turn's transaction early.
+ */
+export function withBalancedTransactions(host: ToolHost): {
+  host: ToolHost;
+  closeOpen: () => Promise<void>;
+} {
+  let open = 0;
+  // Inherit every other method (and the optional viewport ones) from the
+  // real host; only the transaction pair is replaced.
+  const wrapped = Object.create(host) as ToolHost;
+  wrapped.beginTransaction = async (label: string) => {
+    await host.beginTransaction(label);
+    open++;
+  };
+  wrapped.endTransaction = async () => {
+    if (open === 0) return;
+    open--;
+    await host.endTransaction();
+  };
+  return {
+    host: wrapped,
+    closeOpen: async () => {
+      while (open > 0) {
+        open--;
+        await host.endTransaction();
+      }
+    },
+  };
+}
+
 export async function* runAgentTurn(
   args: AgentTurnArgs,
 ): AsyncIterable<ChatTurnEvent> {
   const transactionLabel = `AI: ${args.text.slice(0, 60)}${args.text.length > 60 ? '...' : ''}`;
   let transactionOpen = false;
+  const tools = withBalancedTransactions(args.host);
 
   try {
     // Build the conversation from the panel's flat history + the new
@@ -146,7 +188,7 @@ export async function* runAgentTurn(
       const toolResults: NormalizedContent[] = [];
       for (const call of toolCalls) {
         if (args.signal.aborted) break;
-        const result = await executeTool(call.name, call.input, args.host);
+        const result = await executeTool(call.name, call.input, tools.host);
         if (result.ok) {
           toolResults.push({
             type: 'tool_result',
@@ -196,6 +238,14 @@ export async function* runAgentTurn(
       };
     }
   } finally {
+    try {
+      // The model's leftover levels first, so the turn's own close below is
+      // the one that commits.
+      await tools.closeOpen();
+    } catch {
+      // Swallow: we're already terminating, and the turn's own close below
+      // must still run.
+    }
     if (transactionOpen) {
       try {
         await args.host.endTransaction();
