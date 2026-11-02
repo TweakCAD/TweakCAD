@@ -8,7 +8,9 @@
  */
 import { ApiClient } from '@tweakcad/api-client';
 import type {
-  CreateProjectRequest} from '@tweakcad/api-types';
+  CreateProjectRequest,
+  RenameProjectRequest,
+} from '@tweakcad/api-types';
 import {
   ApiError,
   ProjectSummary,
@@ -129,6 +131,22 @@ export class CloudStorageProvider {
       '/api/v1/projects',
       ProjectSummary,
       input,
+    );
+    if (!res.ok) throw apiError(res.error);
+    return res.value;
+  }
+
+  /**
+   * Rename the project. The site's `project.name` is the name; the document's
+   * `metadata.name` is a copy of it. Owner-only on the server.
+   */
+  async rename(projectId: string, name: RenameProjectRequest['name']): Promise<ProjectSummary> {
+    const body: RenameProjectRequest = { name };
+    const res = await this.api.request(
+      'PATCH',
+      `/api/v1/projects/${encodeURIComponent(projectId)}`,
+      ProjectSummary,
+      body,
     );
     if (!res.ok) throw apiError(res.error);
     return res.value;

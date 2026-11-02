@@ -123,9 +123,16 @@ export const ExternalAttribution = z.object({
 });
 export type ExternalAttribution = z.infer<typeof ExternalAttribution>;
 
+/**
+ * A project's name as the owner sets it, on create and on rename. Trimmed
+ * before the length check, so a name of spaces is empty rather than valid.
+ * The editor clamps `metadata.name` to the same 200 characters.
+ */
+export const ProjectName = z.string().trim().min(1).max(200);
+
 export const CreateProjectRequest = z
   .object({
-    name: z.string().min(1).max(200),
+    name: ProjectName,
     /** Default 'model'. Reserved for future kind-specific create flows. */
     kind: ProjectKind.optional(),
     description: z.string().optional(),
@@ -137,3 +144,7 @@ export const CreateProjectRequest = z
   })
   .merge(ExternalAttribution);
 export type CreateProjectRequest = z.infer<typeof CreateProjectRequest>;
+
+/** `PATCH /projects/{id}` — rename. The slug is not touched. */
+export const RenameProjectRequest = z.object({ name: ProjectName });
+export type RenameProjectRequest = z.infer<typeof RenameProjectRequest>;

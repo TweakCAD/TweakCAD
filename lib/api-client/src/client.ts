@@ -20,7 +20,7 @@ export class ApiClient {
   }
 
   async request<TResponse>(
-    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
     path: string,
     responseSchema: z.ZodType<TResponse>,
     body?: unknown,

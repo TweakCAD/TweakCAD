@@ -49,7 +49,7 @@ import { SaveAsPicker } from './components/SaveAsPicker.tsx';
 import { HistoryPanel } from './components/HistoryPanel.tsx';
 import {
   listCloudRevisions, loadCloudRevision, restoreCloudRevision,
-  createCloudVersion, loadCloudProject,
+  createCloudVersion, loadCloudProject, createCloudProject,
 } from './storage/cloudAdapter.ts';
 import { useParametersEditor } from './components/ParametersDialog.tsx';
 import { useSettingsDialog } from './components/SettingsDialog.tsx';
@@ -891,25 +891,6 @@ function reportFileError(title: string, err: unknown): void {
   console.error(`[App] ${title}:`, err);
   consoleLog('error', `${title}: ${message}`, 'file');
   enqueueToast({ tone: 'warning', title, message });
-}
-
-/**
- * Create a new cloud project via the SaaS API.
- * Used by the Save-As → Cloud flow. Same-origin in prod, Vite-proxied in dev.
- */
-async function createCloudProject(name: string): Promise<{ id: string; slug: string }> {
-  const res = await fetch('/api/v1/projects', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify({ name }),
-  });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => null)) as { message?: string } | null;
-    throw new Error(body?.message ?? `Project creation failed (${res.status})`);
-  }
-  const json = (await res.json()) as { id: string; slug: string };
-  return json;
 }
 
 const saveStatusContainer: React.CSSProperties = {

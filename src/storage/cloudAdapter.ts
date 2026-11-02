@@ -36,6 +36,23 @@ function client(): CloudStorageProvider {
  */
 const liveEtags = new Map<string, string>();
 
+/**
+ * The project's name as the site last reported it, per project.
+ *
+ * The site's `project.name` is a cloud project's name. The document carries a
+ * copy in `metadata.name`, which the editor shows and the toolbar renames. On
+ * load the copy is overwritten with the site's name, so a rename made on the
+ * site shows up on the next open. On save, the copy is sent to the site only
+ * when it differs from this entry, so only a rename made in this tab is sent.
+ * An open tab that never renamed does not put its stale name back over a
+ * rename made on the site.
+ *
+ * A project bound without a load or a create (a document recovered from this
+ * browser's mirror) has no entry, and its first save sends its name. That
+ * save also writes the document with no precondition.
+ */
+const serverNames = new Map<string, string>();
+
 export type CloudLoadResult = {
   name: string;
   doc: CadProject;
@@ -44,10 +61,12 @@ export type CloudLoadResult = {
 
 export async function loadCloudProject(projectId: string): Promise<CloudLoadResult | null> {
   const result = await client().load(projectId);
+  const name = result.project.name;
+  serverNames.set(projectId, name);
   if (!result.downloadUrl) {
     // Fresh project — server has no document yet. Caller falls back to a
     // blank doc.
-    return { name: result.project.name, doc: null as unknown as CadProject, etag: null };
+    return { name, doc: null as unknown as CadProject, etag: null };
   }
   // `downloadUrl` only says a document exists. The bytes come through the app
   // (see `loadDocument`), because the signed URL is cross-origin.
@@ -67,8 +86,27 @@ export async function loadCloudProject(projectId: string): Promise<CloudLoadResu
   // its imports but does not carry them; without this the project opens to a
   // body that refuses to build, telling the user to re-link a file they never
   // unlinked.
-  const doc = await hydrateReferenceAssets(projectId, loaded.project);
-  return { name: result.project.name, doc, etag: liveEtag };
+  const hydrated = await hydrateReferenceAssets(projectId, loaded.project);
+  const doc = hydrated.metadata.name === name
+    ? hydrated
+    : { ...hydrated, metadata: { ...hydrated.metadata, name } };
+  return { name, doc, etag: liveEtag };
+}
+
+/**
+ * Create an empty cloud project. Its name is recorded as the site's, so the
+ * first save does not send it back.
+ */
+export async function createCloudProject(name: string): Promise<{ id: string; slug: string }> {
+  try {
+    const created = await client().create({ name, tags: [] });
+    serverNames.set(created.id, created.name);
+    return { id: created.id, slug: created.slug };
+  } catch (err) {
+    // Provider errors read "<code>: <message>". The code is for logs.
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(message.replace(/^[a-z_]+: /, ''), { cause: err });
+  }
 }
 
 
@@ -100,7 +138,28 @@ export async function saveCloudProject(
     ifMatch: liveEtags.get(projectId) ?? null,
   });
   liveEtags.set(projectId, result.etag);
+  await syncCloudName(projectId, doc.metadata.name);
   return result;
+}
+
+/**
+ * Send the document's name to the site when it was renamed here.
+ *
+ * After the document write, and never fatal to it: the document is saved
+ * either way, and failing the save would retry the upload for a rename. A
+ * network failure leaves the entry as it was, so the next save tries again.
+ * A refusal from the site (a name its policy blocks) is recorded as sent, so
+ * it is not retried on every save.
+ */
+async function syncCloudName(projectId: string, name: string): Promise<void> {
+  if (serverNames.get(projectId) === name) return;
+  try {
+    await client().rename(projectId, name);
+    serverNames.set(projectId, name);
+  } catch (err) {
+    if ((err as { code?: unknown }).code !== undefined) serverNames.set(projectId, name);
+    console.warn(`[cloud] Could not rename the project to "${name}"`, err);
+  }
 }
 
 /**

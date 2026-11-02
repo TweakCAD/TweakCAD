@@ -28,6 +28,8 @@ const referenceUrl = vi.fn();
 const createVersion = vi.fn();
 const load = vi.fn();
 const loadDocument = vi.fn();
+const rename = vi.fn();
+const create = vi.fn();
 
 class StubConflictError extends Error {}
 
@@ -41,6 +43,8 @@ vi.mock('@tweakcad/cloud-providers', () => ({
     createVersion = createVersion;
     load = load;
     loadDocument = loadDocument;
+    rename = rename;
+    create = create;
   },
   CloudConflictError: StubConflictError,
 }));
@@ -54,6 +58,7 @@ const {
   wouldExceedCloudLimit, CLOUD_DOCUMENT_MAX_BYTES,
   listCloudRevisions, restoreCloudRevision,
   splitReferenceAssets, hydrateReferenceAssets, loadCloudProject,
+  createCloudProject,
 } = await import('./cloudAdapter.ts');
 const { newProjectWithPart } = await import('@tweakcad/core/src/document/factory.ts');
 
@@ -65,6 +70,7 @@ beforeEach(() => {
   clearCloudEtag(PROJECT);
   save.mockResolvedValue({ etag: 'etag-1', savedAt: '2026-01-01T00:00:00.000Z' });
   createVersion.mockResolvedValue({ versionId: 'rev_1', createdAt: '2026-01-01T00:00:00.000Z' });
+  rename.mockImplementation(async (_id: string, name: string) => ({ name }));
 });
 
 describe('saveCloudProject — autosave', () => {
@@ -471,5 +477,95 @@ describe('loadCloudProject', () => {
     load.mockResolvedValue(summary);
     loadDocument.mockRejectedValue(new Error('internal: The project document is unavailable.'));
     await expect(loadCloudProject(PROJECT)).rejects.toThrow('unavailable');
+  });
+});
+
+describe('project name: the site name wins on load, a local rename is sent on save', () => {
+  // A project id per test: the adapter remembers the site's name per project
+  // for the life of the module.
+  let n = 0;
+  const nextId = () => `proj_name_${++n}`;
+  const named = (name: string) => ({ schemaVersion: 1, metadata: { name } }) as never;
+  const loadWith = (siteName: string, docName: string) => {
+    load.mockResolvedValue({
+      project: { name: siteName }, downloadUrl: 'https://bucket.example/doc', etag: 'e', sizeBytes: 10,
+    });
+    loadDocument.mockResolvedValue({ document: newProjectWithPart(docName, 'Part 1'), etag: 'e' });
+  };
+
+  it('opens with the name the site has, not the one in the document', async () => {
+    const id = nextId();
+    loadWith('Electronics enclosure', 'curious-ledger');
+    const result = await loadCloudProject(id);
+    expect(result?.name).toBe('Electronics enclosure');
+    expect(result?.doc.metadata.name).toBe('Electronics enclosure');
+  });
+
+  it('does not send the name when it was not changed here', async () => {
+    const id = nextId();
+    loadWith('Vase', 'Vase');
+    await loadCloudProject(id);
+    await saveCloudProject(id, named('Vase'));
+    expect(rename).not.toHaveBeenCalled();
+  });
+
+  it('sends a rename made in the editor with the next save, once', async () => {
+    const id = nextId();
+    loadWith('curious-ledger', 'curious-ledger');
+    await loadCloudProject(id);
+    await saveCloudProject(id, named('Electronics enclosure'));
+    expect(rename).toHaveBeenCalledWith(id, 'Electronics enclosure');
+    await saveCloudProject(id, named('Electronics enclosure'));
+    expect(rename).toHaveBeenCalledTimes(1);
+  });
+
+  it('renames after the document is written, and a failed rename does not fail the save', async () => {
+    const id = nextId();
+    loadWith('a', 'a');
+    await loadCloudProject(id);
+    const order: string[] = [];
+    save.mockImplementationOnce(async () => { order.push('save'); return { etag: 'e2', savedAt: 'now' }; });
+    rename.mockImplementationOnce(async () => { order.push('rename'); throw new TypeError('Failed to fetch'); });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(saveCloudProject(id, named('b'))).resolves.toMatchObject({ etag: 'e2' });
+    expect(order).toEqual(['save', 'rename']);
+    warn.mockRestore();
+  });
+
+  it('retries a rename lost to the network on the next save', async () => {
+    const id = nextId();
+    loadWith('a', 'a');
+    await loadCloudProject(id);
+    rename.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await saveCloudProject(id, named('b'));
+    await saveCloudProject(id, named('b'));
+    expect(rename).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
+  it('does not retry a name the site refused', async () => {
+    const id = nextId();
+    loadWith('a', 'a');
+    await loadCloudProject(id);
+    rename.mockRejectedValueOnce(Object.assign(new Error('validation: blocked'), { code: 'validation' }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await saveCloudProject(id, named('b'));
+    await saveCloudProject(id, named('b'));
+    expect(rename).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('a project it created does not send its own name back', async () => {
+    create.mockResolvedValue({ id: 'proj_created', slug: 'vase-abc123', name: 'Vase' });
+    const created = await createCloudProject('Vase');
+    expect(created).toEqual({ id: 'proj_created', slug: 'vase-abc123' });
+    await saveCloudProject('proj_created', named('Vase'));
+    expect(rename).not.toHaveBeenCalled();
+  });
+
+  it('reports a failed create without the error code', async () => {
+    create.mockRejectedValue(Object.assign(new Error('validation: Invalid input.'), { code: 'validation' }));
+    await expect(createCloudProject('')).rejects.toThrow(/^Invalid input\.$/);
   });
 });
