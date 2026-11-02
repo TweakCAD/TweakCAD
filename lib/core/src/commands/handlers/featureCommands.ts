@@ -1330,6 +1330,51 @@ export const deleteFeatureHandler: CommandHandler = {
   },
 };
 
+/**
+ * Keys that reach an object's prototype chain instead of its data. Assigning
+ * through any of them would write to a shared prototype (`Object.prototype`
+ * for a plain object), changing every object in the page.
+ */
+const FORBIDDEN_PATH_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+
+/**
+ * Resolve an `UpdateFeatureInput` path inside a feature's inputs to the
+ * object that holds the last key. Every intermediate segment must be an own
+ * property holding an object; only the last key may be new.
+ */
+function resolveInputPath(
+  inputs: Record<string, unknown>,
+  path: unknown,
+): Result<{ parent: Record<string, unknown>; key: string }, ValidationError> {
+  if (!Array.isArray(path) || path.length === 0) {
+    return err({ code: 'INVALID_INPUT', message: '`path` must be a non-empty array of keys', field: 'path' });
+  }
+  for (let i = 0; i < path.length; i++) {
+    const key: unknown = path[i];
+    if (typeof key !== 'string' || key === '') {
+      return err({ code: 'INVALID_INPUT', message: `path[${i}] must be a non-empty string`, field: 'path' });
+    }
+    if (FORBIDDEN_PATH_KEYS.has(key)) {
+      return err({ code: 'INVALID_INPUT', message: `path[${i}] "${key}" is not an input key`, field: 'path' });
+    }
+  }
+  const keys = path as string[];
+  const intermediates = keys.slice(0, -1);
+  let parent = inputs;
+  for (const [i, key] of intermediates.entries()) {
+    const next = Object.hasOwn(parent, key) ? parent[key] : undefined;
+    if (typeof next !== 'object' || next === null) {
+      return err({
+        code: 'INVALID_INPUT',
+        message: `path ${keys.slice(0, i + 1).join('.')} does not name an object in this feature's inputs`,
+        field: 'path',
+      });
+    }
+    parent = next as Record<string, unknown>;
+  }
+  return ok({ parent, key: keys[keys.length - 1] as string });
+}
+
 export const updateFeatureInputHandler: CommandHandler = {
   validate(command: CadCommand, state: Readonly<CadProject>): Result<void, ValidationError> {
     if (command.type !== 'UpdateFeatureInput') {
@@ -1337,6 +1382,8 @@ export const updateFeatureInputHandler: CommandHandler = {
     }
     const result = findFeature(state, command.partId, command.featureId);
     if (!result.ok) return err(result.error);
+    const target = resolveInputPath(result.value.feature.inputs, command.path);
+    if (!target.ok) return err(target.error);
     return ok(undefined);
   },
 
@@ -1347,18 +1394,11 @@ export const updateFeatureInputHandler: CommandHandler = {
     const feature = part.timeline.find(f => f.id === command.featureId);
     if (!feature) return;
 
-    // Navigate the path and set the value
-    let current: Record<string, unknown> = feature.inputs;
-    const pathParts = command.path;
-    for (let i = 0; i < pathParts.length - 1; i++) {
-      const key = pathParts[i]!;
-      if (typeof current[key] !== 'object' || current[key] === null) return;
-      current = current[key] as Record<string, unknown>;
-    }
-    const lastKey = pathParts[pathParts.length - 1];
-    if (lastKey !== undefined) {
-      current[lastKey] = command.value;
-    }
+    // Re-resolved on the draft: validate saw the frozen state, and the write
+    // has to land on the draft's own objects.
+    const target = resolveInputPath(feature.inputs, command.path);
+    if (!target.ok) return;
+    target.value.parent[target.value.key] = command.value;
     feature.updatedAt = new Date().toISOString();
   },
 };
