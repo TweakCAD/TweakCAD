@@ -43,10 +43,9 @@ export type ViewportState = {
    * concatenation of these, which is what the viewport, the tree and
    * the pickers all read.
    *
-   * Parts rebuild one at a time — the scheduler walks them, and a
-   * dirty feature only re-runs its own part — so a publish that
-   * replaced the flat lists wholesale showed the part that happened to
-   * finish last and nothing else.
+   * Parts rebuild independently — a dirty feature only re-runs its own
+   * part — so a publish that replaced the flat lists wholesale showed the
+   * part that happened to finish last and nothing else.
    */
   resultsByPart: Record<PartId, PartRebuildResult>;
   /**
@@ -57,7 +56,11 @@ export type ViewportState = {
    * Empty before the first rebuild completes.
    */
   featureResults: Record<FeatureId, FeatureBuildResult>;
-  /** Whether a rebuild is in progress */
+  /**
+   * Whether any part is rebuilding. Owned by the rebuild scheduler, which
+   * clears it once no part is left running; publishing one part's result
+   * or error does not clear it, since another part may still be building.
+   */
   rebuilding: boolean;
   /** Error message if last rebuild failed */
   rebuildError: string | null;
@@ -142,7 +145,6 @@ export function createViewportStore() {
         return {
           resultsByPart,
           ...flatten(resultsByPart),
-          rebuilding: false,
           rebuildError: null,
         };
       });
@@ -164,8 +166,7 @@ export function createViewportStore() {
 
     setRebuilding: (rebuilding: boolean) => set({ rebuilding }),
 
-    setRebuildError: (error: string | null) =>
-      set({ rebuildError: error, rebuilding: false }),
+    setRebuildError: (error: string | null) => set({ rebuildError: error }),
 
     clear: () =>
       set({

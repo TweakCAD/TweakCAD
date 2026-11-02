@@ -8,8 +8,8 @@
  * One rebuild per part at a time: requests that arrive while one runs
  * collapse into a single follow-up (see `createRebuildQueue`).
  *
- * Stale result guard: if the document changes while a rebuild is in flight,
- * the result is discarded (revision check).
+ * Stale result guard: if anything a rebuild read changes while it is in
+ * flight, the result is discarded and that part is rebuilt again.
  *
  * Falls back to main-thread execution if workers fail to initialize
  * (e.g., SharedArrayBuffer unavailable, WASM loading issue).
@@ -18,7 +18,7 @@
 import type { PartId, BodyId, FeatureId } from '@tweakcad/core/src/ids.ts';
 import type { DocumentStore } from '@tweakcad/core/src/store/documentStore.ts';
 import type { createViewportStore } from '@tweakcad/core/src/store/viewportStore.ts';
-import type { CadPart, FeatureNode } from '@tweakcad/core/src/document/schema.ts';
+import type { CadPart, CadProject, FeatureNode } from '@tweakcad/core/src/document/schema.ts';
 import { consoleLog } from '@tweakcad/core/src/store/consoleStore.ts';
 import { WorkerPool } from '@tweakcad/worker/src/pool.ts';
 import { resolveActivePartId } from '@tweakcad/core/src/document/featureLookup.ts';
@@ -134,14 +134,18 @@ type ViewportStoreApi = ReturnType<typeof createViewportStore>;
  * The returned promise settles when the part has no rebuild running or
  * requested.
  *
+ * A rebuild whose inputs changed while it ran is not published (see
+ * {@link sameBuildInputs}), and the part goes back on the queue. Edits that
+ * dirty the part already request a follow-up, but plenty of changes to a
+ * part's inputs dirty nothing — a visibility toggle edits the timeline and is
+ * deliberately not a rebuild trigger — and without the re-request the part
+ * kept the result from before the change until some later edit came along.
+ *
  * The `rebuilding` flag is set synchronously on the first request and
- * cleared in a `finally` once no part is rebuilding. `setRebuildResult` /
- * `setRebuildError` clear it as part of publishing, but a stale result
- * publishes nothing — and the stale-result guard can't assume a follow-up
- * rebuild is coming to clear it, because `revision` is also bumped by
- * mutations that dirty no feature (a visibility toggle, a rename, an undo of
- * either). Left set, the toolbar indicator never goes out and
- * `waitForRebuildIdle` (the `wait_for_rebuild` tool) times out.
+ * cleared here, in a `finally`, once no part is rebuilding — and only here.
+ * Publishing one part's result does not clear it: with two parts building,
+ * the first to finish would otherwise report idle while the second still ran,
+ * and `waitForRebuildIdle` (the `wait_for_rebuild` tool) returned early.
  */
 function createRebuildQueue(
   documentStore: DocumentStore,
@@ -159,7 +163,8 @@ function createRebuildQueue(
     const loop = (async () => {
       try {
         while (requested.delete(partId)) {
-          await rebuildPart(documentStore, viewportStore, partId, 0);
+          const outcome = await rebuildPart(documentStore, viewportStore, partId, 0);
+          if (outcome === 'stale') requested.add(partId);
         }
       } finally {
         running.delete(partId);
@@ -172,22 +177,47 @@ function createRebuildQueue(
 }
 
 /**
+ * Whether the document still holds everything a rebuild of `partId` read.
+ *
+ * A part's rebuild reads the part itself, the project parameter table, the
+ * imported-geometry references and the embedded components, and nothing
+ * else. Immer keeps each of those the same object unless it changed, so
+ * reference equality is exact for "this result describes the current
+ * document". Comparing the document revision instead threw away results for
+ * changes they don't depend on — a rename, metadata, another part's edit —
+ * and nothing rebuilt afterwards, so the part kept its old geometry (or, on
+ * first load, showed none).
+ */
+function sameBuildInputs(built: CadProject, now: Readonly<CadProject>, partId: PartId): boolean {
+  return now.parts[partId] === built.parts[partId]
+    && now.parameters === built.parameters
+    && now.references === built.references
+    && now.embeddedComponents === built.embeddedComponents;
+}
+
+/**
+ * What became of one rebuild: published, discarded because its inputs
+ * changed while it ran (the caller rebuilds again), or neither (the part is
+ * gone, or the rebuild failed and the error was published).
+ */
+type RebuildOutcome = 'published' | 'stale' | 'none';
+
+/**
  * Rebuild one part now. Routes to WorkerPool or main-thread fallback.
- * Discards the result if the document changed during the rebuild.
+ * Discards the result if the part's inputs changed during the rebuild.
  */
 async function rebuildPart(
   documentStore: DocumentStore,
   viewportStore: ViewportStoreApi,
   partId: PartId,
   fromIndex: number,
-): Promise<void> {
-  const revisionBefore = documentStore.getRevision();
+): Promise<RebuildOutcome> {
   const workerPool = useWorker ? pool : null;
 
   try {
     const project = documentStore.getState();
     const part = project.parts[partId];
-    if (!part) return;
+    if (!part) return 'none';
 
     let result: WorkerRebuildResult;
 
@@ -217,9 +247,11 @@ async function rebuildPart(
 
     logRebuildResult(part, result);
 
-    // Stale result guard: discard if document changed during rebuild
-    if (documentStore.getRevision() !== revisionBefore) {
-      return;
+    // Stale result guard: discard if anything this rebuild read changed while
+    // it ran. A part that left the document is not rebuilt again.
+    const now = documentStore.getState();
+    if (!sameBuildInputs(project, now, partId)) {
+      return now.parts[partId] ? 'stale' : 'none';
     }
 
     // Use the bodyToFeatureMap from the rebuild result
@@ -227,7 +259,7 @@ async function rebuildPart(
     console.log('[RebuildScheduler] bodyToFeature map:', JSON.stringify(bodyToFeature));
 
     // Push meshes + construction planes + per-feature results to viewport
-    // store, under this part's key: parts rebuild one at a time, and the
+    // store, under this part's key: parts rebuild independently, and the
     // store merges them so republishing one doesn't blank the others.
     // The CP layer in ViewportController re-renders translucent
     // rectangles when constructionPlanes changes; the ProjectTree uses
@@ -242,6 +274,7 @@ async function rebuildPart(
       bodyToFeature,
       result.sketchPlanes,
     );
+    return 'published';
   } catch (error) {
     console.error('[RebuildScheduler] Rebuild failed:', error);
     consoleLog('error', `Rebuild failed: ${error instanceof Error ? error.message : String(error)}`, 'rebuild');
@@ -250,20 +283,20 @@ async function rebuildPart(
     // unless the pool was disposed while this rebuild ran; then the
     // scheduler that owned it is gone and its replacement is unaffected.
     if (workerPool) {
-      if (workerPool !== pool) return;
+      if (workerPool !== pool) return 'none';
       console.warn('[RebuildScheduler] Switching to main-thread mode after worker failure');
       useWorker = false;
       pool?.dispose();
       pool = null;
 
       // Retry on main thread
-      await rebuildPart(documentStore, viewportStore, partId, fromIndex);
-      return;
+      return rebuildPart(documentStore, viewportStore, partId, fromIndex);
     }
 
     viewportStore.getState().setRebuildError(
       error instanceof Error ? error.message : String(error),
     );
+    return 'none';
   }
 }
 
