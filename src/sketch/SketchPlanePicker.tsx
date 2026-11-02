@@ -22,6 +22,7 @@ import type { ConstructionPlaneDisplay, Selection } from '@tweakcad/core/src/doc
 import type { BodyId, FaceId, FeatureId, PartId, StableFaceId } from '@tweakcad/core/src/ids.ts';
 import { sketchFrameOnPlane } from '@tweakcad/core/src/sketch/facePlane.ts';
 import type { FaceSketchFrame } from '@tweakcad/core/src/sketch/facePlane.ts';
+import { faceTakesPick } from './pickPriority.ts';
 
 // ---- Types ----
 
@@ -382,7 +383,9 @@ function applyHoverOpacity(pickables: readonly Pickable[], hovered: string | nul
 
 /**
  * Nearest thing under the cursor: one of the picker's planes or a body
- * face. A face in front of a plane hides it, as on screen.
+ * face. A flat face in front of a plane hides it, as on screen; a curved
+ * face can't be sketched on, so the plane behind it stays pickable
+ * ({@link faceTakesPick}).
  */
 function pickTarget(
   clientX: number,
@@ -393,7 +396,8 @@ function pickTarget(
 ): { kind: 'plane'; p: Pickable } | { kind: 'face'; face: FaceHover } | null {
   const plane = pickPlane(clientX, clientY, viewportCtrl, pickables);
   const hit = pickFaces ? viewportCtrl.faceAt(clientX, clientY) : null;
-  if (hit && (!plane || hit.distance < plane.dist)) {
+  const flat = Boolean(hit?.plane && hit.stableFaceId);
+  if (hit && faceTakesPick({ distance: hit.distance, flat }, plane ? plane.dist : null)) {
     const pick = hit.plane && hit.stableFaceId
       ? {
           kind: 'face' as const,
