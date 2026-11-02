@@ -517,3 +517,69 @@ describe('buildComponent — placement', () => {
     )).rejects.toThrow(/Failed to place component: bad matrix/);
   });
 });
+
+describe('buildComponent — cut and join keep the host bodies\' ids', () => {
+  beforeAll(attachTestSolver, 30_000);
+
+  // `bodyIdentity.ts`: a modifier carries the id of the body it changes. A
+  // downstream Move or fillet holds that id, so a cut instance inserted
+  // upstream must not rename the host out from under it.
+  async function hostsAndProject(): Promise<{
+    kernel: MockKernel;
+    ctx: ReturnType<typeof emptyBuildContext>;
+    project: CadProject;
+    hosts: { id: string; handle: unknown }[];
+  }> {
+    const kernel = await freshKernel();
+    const ctx = emptyBuildContext({} as ResolvedParams);
+    const hosts: { id: string; handle: unknown }[] = [];
+    for (const id of ['body_host_0', 'body_other_0']) {
+      const box = await kernel.makeBox({ origin: [0, 0, 0], width: 10, height: 10, depth: 10 });
+      if (!box.ok) throw new Error('box');
+      ctx.bodies.set(bodyIdBrand(id), box.value);
+      hosts.push({ id, handle: box.value });
+    }
+    const project: CadProject = emptyProject('Host');
+    project.embeddedComponents = { 'hash-dowel': makeDef('hash-dowel', makeSourceWithBody('Dowel'), 'Dowel') };
+    return { kernel, ctx, project, hosts };
+  }
+
+  it('a cut publishes each host under its own id', async () => {
+    const { kernel, ctx, project } = await hostsAndProject();
+    const result = await buildComponent(makeFeature('hash-dowel', 'cut'), {} as ResolvedParams, ctx, kernel, project, new Set());
+    expect(result.bodies.map((b) => String(b.bodyId))).toEqual(['body_host_0', 'body_other_0']);
+  });
+
+  it('a join publishes the merged body under the first host\'s id', async () => {
+    const { kernel, ctx, project } = await hostsAndProject();
+    const result = await buildComponent(makeFeature('hash-dowel', 'join'), {} as ResolvedParams, ctx, kernel, project, new Set());
+    expect(result.bodies.map((b) => String(b.bodyId))).toEqual(['body_host_0']);
+    expect(ctx.bodies.size).toBe(0);
+  });
+
+  it('a join with no host body fuses the component into a body of its own', async () => {
+    const kernel = await freshKernel();
+    const ctx = emptyBuildContext({} as ResolvedParams);
+    const project: CadProject = emptyProject('Host');
+    project.embeddedComponents = { 'hash-dowel': makeDef('hash-dowel', makeSourceWithBody('Dowel'), 'Dowel') };
+    const result = await buildComponent(makeFeature('hash-dowel', 'join'), {} as ResolvedParams, ctx, kernel, project, new Set());
+    expect(result.bodies.map((b) => String(b.bodyId))).toEqual(['body_imported_imp_1_0']);
+  });
+
+  it('a cut that fails on its second host leaves both hosts in the build', async () => {
+    const { kernel, ctx, project, hosts } = await hostsAndProject();
+    const realCut = kernel.booleanCut.bind(kernel);
+    let calls = 0;
+    vi.spyOn(kernel, 'booleanCut').mockImplementation(async (target, tools) => {
+      calls++;
+      if (calls === 2) return err({ code: 'BOOLEAN_FAILED', message: 'injected' });
+      return realCut(target, tools);
+    });
+
+    await expect(
+      buildComponent(makeFeature('hash-dowel', 'cut'), {} as ResolvedParams, ctx, kernel, project, new Set()),
+    ).rejects.toThrow(/Component cut/);
+    expect(ctx.bodies.get(bodyIdBrand('body_host_0'))).toBe(hosts[0]!.handle);
+    expect(ctx.bodies.get(bodyIdBrand('body_other_0'))).toBe(hosts[1]!.handle);
+  });
+});

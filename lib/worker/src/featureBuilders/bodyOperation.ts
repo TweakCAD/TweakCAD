@@ -61,6 +61,9 @@ async function touches(kernel: CadKernel, a: KernelBody, b: KernelBody): Promise
  * groups with no candidate go to `newBodies`.
  *
  * Joined bodies come first, in candidate order, then the new ones.
+ *
+ * All or nothing: the consumed candidates leave the build context only once
+ * every group has fused (see {@link commitConsumed}).
  */
 export async function joinTouchingBodies(opts: {
   tools: KernelBody[];
@@ -73,7 +76,9 @@ export async function joinTouchingBodies(opts: {
   const { tools, candidates, context, kernel } = opts;
   if (candidates.length === 0) return opts.newBodies(tools);
   if (opts.explicitTargets) {
-    return [await fuseGroup(candidates, tools, context, kernel)];
+    const group = await fuseGroup(candidates, tools, kernel);
+    commitConsumed(context, group.consumed);
+    return [group.body];
   }
   const n = tools.length;
 
@@ -111,46 +116,81 @@ export async function joinTouchingBodies(opts: {
   }
 
   const joined: { order: number; body: EmittedBody }[] = [];
+  const consumed: BodyId[] = [];
   const floating: KernelBody[] = [];
-  for (const group of groups.values()) {
-    if (group.tools.length === 0) continue; // a candidate no tool reached
-    if (group.targets.length === 0) {
-      for (const t of group.tools) floating.push(tools[t]!);
-      continue;
-    }
-    joined.push({
-      order: group.targets[0]!,
-      body: await fuseGroup(
+  try {
+    for (const group of groups.values()) {
+      if (group.tools.length === 0) continue; // a candidate no tool reached
+      if (group.targets.length === 0) {
+        for (const t of group.tools) floating.push(tools[t]!);
+        continue;
+      }
+      const fused = await fuseGroup(
         group.targets.map(j => candidates[j]!),
         group.tools.map(t => tools[t]!),
-        context,
         kernel,
-      ),
-    });
+      );
+      joined.push({ order: group.targets[0]!, body: fused.body });
+      consumed.push(...fused.consumed);
+    }
+    joined.sort((a, b) => a.order - b.order);
+    const created = floating.length > 0 ? await opts.newBodies(floating) : [];
+    commitConsumed(context, consumed);
+    return [...joined.map(j => j.body), ...created];
+  } catch (error) {
+    release(kernel, joined.map(j => j.body.handle));
+    throw error;
   }
-
-  joined.sort((a, b) => a.order - b.order);
-  const created = floating.length > 0 ? await opts.newBodies(floating) : [];
-  return [...joined.map(j => j.body), ...created];
 }
 
-/** Fuse targets and tools into one body carrying the first target's id. */
+/**
+ * Fuse targets and tools into one body carrying the first target's id. The
+ * targets are reported as consumed, not removed: the caller commits once
+ * every group has fused.
+ */
 async function fuseGroup(
   targets: [BodyId, KernelBody][],
   tools: KernelBody[],
-  context: BuildContext,
   kernel: CadKernel,
-): Promise<EmittedBody> {
+): Promise<{ body: EmittedBody; consumed: BodyId[] }> {
   const fused = await kernel.booleanFuse([...targets.map(([, h]) => h), ...tools]);
   if (!fused.ok) throw new Error(`Join failed: ${fused.error.message}`);
-  for (const [id] of targets) context.bodies.delete(id);
-  return { bodyId: carryBodyId(targets[0]![0]), handle: fused.value };
+  return {
+    body: { bodyId: carryBodyId(targets[0]![0]), handle: fused.value },
+    consumed: targets.map(([id]) => id),
+  };
+}
+
+/**
+ * Remove the bodies an operation consumed from the build context — only after
+ * the whole operation has succeeded. Removing each one as its boolean
+ * finished meant a later boolean's failure left the earlier bodies gone: the
+ * feature reported failed, and the bodies it never finished changing vanished
+ * from the model. The rebuilder frees the consumed shapes once the feature
+ * succeeds, by finding their ids gone from the context.
+ */
+function commitConsumed(context: BuildContext, consumed: readonly BodyId[]): void {
+  for (const id of consumed) context.bodies.delete(id);
+}
+
+/** Free result shapes an operation produced but will not return. */
+function release(kernel: CadKernel, handles: readonly KernelBody[]): void {
+  for (const handle of handles) {
+    try {
+      kernel.dispose(handle);
+    } catch (e) {
+      console.warn('[bodyOperation] Failed to release an unused result:', e);
+    }
+  }
 }
 
 /**
  * Cut the tools from every candidate they overlap. A candidate the tools only
  * touch, or that loses no volume, is left unchanged. Throws when no candidate
  * loses material.
+ *
+ * All or nothing: the cut candidates leave the build context only once every
+ * cut has succeeded (see {@link commitConsumed}).
  */
 export async function cutTouchingBodies(opts: {
   tools: KernelBody[];
@@ -161,29 +201,45 @@ export async function cutTouchingBodies(opts: {
 }): Promise<EmittedBody[]> {
   const { tools, candidates, context, kernel } = opts;
   const out: EmittedBody[] = [];
-  for (const [id, handle] of candidates) {
-    const reaching: KernelBody[] = [];
-    for (const tool of tools) {
-      if (await touches(kernel, tool, handle)) reaching.push(tool);
-    }
-    if (reaching.length === 0) continue;
+  const consumed: BodyId[] = [];
+  // Every result shape made so far, so a failure can free them all — including
+  // one whose volume check is still running.
+  const produced: KernelBody[] = [];
+  try {
+    for (const [id, handle] of candidates) {
+      const reaching: KernelBody[] = [];
+      for (const tool of tools) {
+        if (await touches(kernel, tool, handle)) reaching.push(tool);
+      }
+      if (reaching.length === 0) continue;
 
-    const cut = await kernel.booleanCut(handle, reaching);
-    if (!cut.ok) throw new Error(`Cut failed: ${cut.error.message}`);
-    if (kernel.getMassProperties) {
-      const before = (await kernel.getMassProperties(handle)).volume;
-      const after = (await kernel.getMassProperties(cut.value)).volume;
-      if (before - after < MIN_REMOVED_VOLUME_MM3) continue;
+      const cut = await kernel.booleanCut(handle, reaching);
+      if (!cut.ok) throw new Error(`Cut failed: ${cut.error.message}`);
+      produced.push(cut.value);
+      if (kernel.getMassProperties) {
+        const before = (await kernel.getMassProperties(handle)).volume;
+        const after = (await kernel.getMassProperties(cut.value)).volume;
+        if (before - after < MIN_REMOVED_VOLUME_MM3) {
+          // The body stays as it was; the unchanged copy is not used.
+          produced.pop();
+          release(kernel, [cut.value]);
+          continue;
+        }
+      }
+      consumed.push(id);
+      out.push({ bodyId: carryBodyId(id), handle: cut.value });
     }
-    context.bodies.delete(id);
-    out.push({ bodyId: carryBodyId(id), handle: cut.value });
+    if (out.length === 0) {
+      throw new Error(
+        opts.explicitTargets
+          ? 'Cut removes nothing: it does not overlap any of the target bodies'
+          : 'Cut removes nothing: it does not overlap any body',
+      );
+    }
+  } catch (error) {
+    release(kernel, produced);
+    throw error;
   }
-  if (out.length === 0) {
-    throw new Error(
-      opts.explicitTargets
-        ? 'Cut removes nothing: it does not overlap any of the target bodies'
-        : 'Cut removes nothing: it does not overlap any body',
-    );
-  }
+  commitConsumed(context, consumed);
   return out;
 }
