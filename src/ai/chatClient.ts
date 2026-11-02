@@ -194,12 +194,47 @@ export interface AvailableModel {
   isDefault: boolean;
 }
 
-export async function listAvailableModels(): Promise<AvailableModel[]> {
-  const res = await fetch('/api/v1/ai/models', {
-    credentials: 'include',
-    headers: { Accept: 'application/json' },
-  });
-  if (!res.ok) return [];
-  const json = (await res.json()) as { models?: AvailableModel[] };
-  return json.models ?? [];
+/**
+ * The models the site lets this caller chat with. An empty list means
+ * no AI: the site has no provider key for the caller, or it can't be
+ * reached. Never throws.
+ */
+export async function listAvailableModels(signal?: AbortSignal): Promise<AvailableModel[]> {
+  try {
+    const res = await fetch('/api/v1/ai/models', {
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
+      ...(signal ? { signal } : {}),
+    });
+    if (!res.ok) return [];
+    const json = (await res.json()) as { models?: unknown };
+    return Array.isArray(json.models) ? json.models.filter(isAvailableModel) : [];
+  } catch {
+    return [];
+  }
+}
+
+function isAvailableModel(v: unknown): v is AvailableModel {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Partial<AvailableModel>;
+  return (
+    typeof o.id === 'string' &&
+    typeof o.displayName === 'string' &&
+    (o.costTier === 'cheap' || o.costTier === 'standard' || o.costTier === 'premium') &&
+    typeof o.supportsTools === 'boolean' &&
+    typeof o.isDefault === 'boolean'
+  );
+}
+
+/**
+ * The model a chat turn runs on: the user's saved pick while the site
+ * still offers it, otherwise the site's default, otherwise the first
+ * listed model. null only when the list is empty.
+ */
+export function pickModelId(
+  models: readonly Pick<AvailableModel, 'id' | 'isDefault'>[],
+  preferredId: string | null,
+): string | null {
+  if (preferredId !== null && models.some((m) => m.id === preferredId)) return preferredId;
+  return models.find((m) => m.isDefault)?.id ?? models[0]?.id ?? null;
 }

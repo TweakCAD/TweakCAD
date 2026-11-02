@@ -448,22 +448,27 @@ export function Shell({
    */
   // (helper lives below the component — see runChatTurn)
 
-  // List of models the SaaS endpoint says are currently enabled. Empty
-  // until the panel is first opened (lazy-loaded). When empty, the
-  // ChatPanel hides the dropdown and the server picks the default.
-  const [availableModels, setAvailableModels] = useState<readonly ChatModelOption[]>([]);
+  // The models the site offers this caller. Fetched whenever the site is
+  // reachable and again when the signed-in user changes (a user's own key
+  // can add models). Empty means no AI: the wand, the panel and the
+  // assistant are not shown at all. Kept with the caller it was fetched
+  // for, so a previous user's list never shows for the next one.
+  const aiCaller = saas?.kind === 'available' ? (saas.signedIn ? saas.user.id : '') : null;
+  const [fetchedModels, setFetchedModels] = useState<{
+    caller: string;
+    models: readonly ChatModelOption[];
+  } | null>(null);
   useEffect(() => {
-    if (!chatPanelOpen) return;
-    if (saas?.kind !== 'available' || !saas.signedIn) return;
-    let cancelled = false;
-    void listAvailableModels().then((models) => {
-      if (cancelled) return;
-      setAvailableModels(models);
+    if (aiCaller === null) return;
+    const ac = new AbortController();
+    void listAvailableModels(ac.signal).then((models) => {
+      if (!ac.signal.aborted) setFetchedModels({ caller: aiCaller, models });
     });
-    return () => {
-      cancelled = true;
-    };
-  }, [chatPanelOpen, saas]);
+    return () => ac.abort();
+  }, [aiCaller]);
+  const availableModels =
+    aiCaller !== null && fetchedModels?.caller === aiCaller ? fetchedModels.models : [];
+  const aiAvailable = availableModels.length > 0;
 
   // Extrude dialog state
   const [extrudeState, setExtrudeState] = useState<{
@@ -3913,7 +3918,7 @@ export function Shell({
           }
         }}
         chatPanelOpen={chatPanelOpen}
-        onToggleChatPanel={() => setChatPanelOpen((v) => !v)}
+        onToggleChatPanel={aiAvailable ? () => setChatPanelOpen((v) => !v) : undefined}
       />
 
       {/* Sidebar + content row. The ribbon lives in the centerColumn so it
@@ -4497,10 +4502,10 @@ export function Shell({
             Components panel so when both are open the chat sits flush
             against the right edge — matches the "secondary panel" feel
             and keeps the Components catalog closer to the viewport where
-            instances are dropped. Gated on SaaS availability so the panel
-            vanishes (and the wand button in MainAppBar hides) when the
-            backend isn't reachable — same rule as AccountChip. */}
-        {chatPanelOpen && isSaasAvailable(saas) && (
+            instances are dropped. Gated on the site offering AI, so the
+            panel vanishes (and the wand in MainAppBar hides) when the
+            site can't be reached or lists no models. */}
+        {chatPanelOpen && aiAvailable && saas?.kind === 'available' && (
           <ChatPanel
             onClose={() => setChatPanelOpen(false)}
             saas={saas}
