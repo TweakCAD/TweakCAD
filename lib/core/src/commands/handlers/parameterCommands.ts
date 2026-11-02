@@ -9,11 +9,12 @@
 
 import type { Result } from '../../result.ts';
 import { ok, err } from '../../result.ts';
-import type { CadProject, ParameterTable, ParameterValue } from '../../document/schema.ts';
+import type { CadPart, CadProject, ParameterTable, ParameterValue } from '../../document/schema.ts';
 import type { PartId } from '../../ids.ts';
 import type { ParameterUnit } from '../../units.ts';
 import { evaluateExpression, extractParameterRefs } from '../../expressions.ts';
 import { resolveAllParameters } from '../../parameters/evaluator.ts';
+import { sketchDimensionParameterRefs } from '../../sketch/derivedFields.ts';
 import type { CadCommand } from '../types.ts';
 import type { CommandHandler, ValidationError } from '../bus.ts';
 
@@ -187,14 +188,17 @@ export const setParameterHandler: CommandHandler = {
 };
 
 /**
- * Parameters whose expression would be left referencing `name` after it
- * is deleted from `scope`, as `"scope label: param"` strings.
+ * What would be left referencing `name` after it is deleted from `scope`,
+ * as `"scope label: param"` / `"scope label: Sketch 1 (sketch dimension)"`
+ * strings.
  *
- * Covers the parameter graph only. A *feature* input referencing the
- * deleted name still fails, but it fails at that feature's build with
- * the feature named in its diagnostic — whereas an unresolvable
- * parameter table fails `resolveAllParameters` and blocks the whole
- * part with nothing pointing at the cause.
+ * Covers the parameter graph and sketch dimensions. A *feature* input
+ * referencing the deleted name still fails, but it fails at that feature's
+ * build with the feature named in its diagnostic — whereas an unresolvable
+ * parameter table fails `resolveAllParameters` and blocks the whole part
+ * with nothing pointing at the cause, and an unresolvable sketch dimension
+ * fails nothing: the sketch keeps its last solved shape (with a warning), so
+ * the parameter would quietly stop driving it.
  */
 function findParameterDependents(
   state: Readonly<CadProject>,
@@ -211,6 +215,15 @@ function findParameterDependents(
       }
     }
   };
+  const scanSketches = (part: Readonly<CadPart>, label: string): void => {
+    for (const feature of part.timeline) {
+      if (feature.type !== 'sketch') continue;
+      const editorModel = (feature.inputs as { editorModel?: { constraints?: readonly unknown[] } }).editorModel;
+      if (sketchDimensionParameterRefs(editorModel).has(name)) {
+        dependents.push(`${label}${feature.name} (sketch dimension)`);
+      }
+    }
+  };
 
   if (scope === 'project') {
     scan(state.parameters, '', true);
@@ -219,6 +232,7 @@ function findParameterDependents(
       // deleting the project row changes nothing it resolves against.
       if (part.parameters.values[name]) continue;
       scan(part.parameters, `${part.name || partId}: `, false);
+      scanSketches(part, `${part.name || partId}: `);
     }
   } else {
     const part = state.parts[scope];
@@ -226,6 +240,7 @@ function findParameterDependents(
     // every reference still resolves, against the project value.
     if (part && !state.parameters.values[name]) {
       scan(part.parameters, '', true);
+      scanSketches(part, '');
     }
   }
   return dependents;

@@ -372,7 +372,11 @@ export async function incrementalRebuild(
         featureId: feature.id,
         status: 'success',
         bodies: [],
+        ...(result.warnings?.length ? { warnings: result.warnings } : {}),
       });
+      for (const w of result.warnings ?? []) {
+        diagnostics.push(`Feature warning: ${feature.name} (${feature.id}) - ${w}`);
+      }
       if (feature.type === 'extrude') {
         diagnostics.push(`Extrude built: ${feature.name} (${feature.id})`);
       }

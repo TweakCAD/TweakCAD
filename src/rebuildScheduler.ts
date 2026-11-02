@@ -338,6 +338,10 @@ function logRebuildResult(part: CadPart, result: WorkerRebuildResult): void {
       if (feature.type === 'extrude') {
         consoleLog('success', `Built ${name}: ${describeExtrude(feature)}`, 'rebuild');
       }
+      // Built, but not as authored — say so, under the feature's name.
+      for (const w of featureResult.warnings ?? []) {
+        consoleLog('warn', `${name} (${feature.type}): ${w}`, 'rebuild');
+      }
     } else if (featureResult.status === 'failed') {
       failedCount += 1;
       // Now logs for ALL feature types, not just extrude — previously

@@ -84,6 +84,12 @@ interface TreeFeature {
   /** Human-readable error if `status === 'failed'`. */
   errorMessage?: string;
   /**
+   * Set when the feature built but not as authored (a sketch dimension its
+   * parameter could not drive). Painted like `blocked`, with the text as
+   * the tooltip.
+   */
+  warningMessage?: string;
+  /**
    * Sketcher remaining degrees of freedom. Only populated for sketch
    * features. 0 = fully defined (Lock badge in the tree row); >0 =
    * under-constrained; `undefined` = not a sketch / solver not ready /
@@ -696,9 +702,10 @@ function FeatureRow({ feature, isSelected, onClick, onContextMenu, onVisibilityT
   const status: FeatureBuildStatus = feature.status ?? 'success';
   const isFailed = status === 'failed';
   const isBlocked = status === 'blocked';
+  const isWarned = status === 'success' && feature.warningMessage !== undefined;
   const baseBorder = isSelected ? '2px solid #1a6fd1'
     : isFailed ? '2px solid #dc2626'
-    : isBlocked ? '2px solid #d97706'
+    : isBlocked || isWarned ? '2px solid #d97706'
     : '2px solid transparent';
   const baseBg = isSelected ? '#e3effb'
     : isFailed ? '#fef2f2'
@@ -708,7 +715,9 @@ function FeatureRow({ feature, isSelected, onClick, onContextMenu, onVisibilityT
     ? `${feature.name} (${feature.type}) - BUILD FAILED: ${feature.errorMessage ?? 'unknown error'}`
     : isBlocked
       ? `${feature.name} (${feature.type}) - blocked by upstream failure`
-      : `${feature.name} (${feature.type}) - Right-click for options`;
+      : isWarned
+        ? `${feature.name} (${feature.type}) - ${feature.warningMessage}`
+        : `${feature.name} (${feature.type}) - Right-click for options`;
 
   return (
     <button

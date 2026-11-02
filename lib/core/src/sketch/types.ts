@@ -350,6 +350,10 @@ export type PerpendicularConstraint = {
  * measured CCW from line A's direction (start→end) to line B's direction
  * (start→end). Residual = (current_angle − value), so the solver drives
  * line B to sit at exactly `value` radians from line A.
+ *
+ * `expression`, when set, is in **degrees** like every other angle a user
+ * writes; the build path converts it to radians before solving
+ * (`resolveSketchDimensions`).
  */
 export type AngleConstraint = {
   id: SketchConstraintId;

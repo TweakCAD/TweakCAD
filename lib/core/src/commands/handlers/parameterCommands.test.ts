@@ -473,3 +473,64 @@ describe('deleteParameterHandler', () => {
     expect(r.ok).toBe(true);
   });
 });
+
+describe('deleteParameterHandler.validate — sketch dimensions', () => {
+  // An unresolvable sketch dimension does not fail its feature: the sketch
+  // keeps its last solved shape. So deleting the parameter it uses would go
+  // through and quietly stop the parameter driving anything.
+  function withDrivenSketch(expression: string): { p: CadProject; part: PartId } {
+    const p = makeProject();
+    const part = firstPartId(p);
+    p.parts[part]!.timeline.push({
+      id: 'f_sketch' as never,
+      type: 'sketch',
+      name: 'Bolt circle',
+      version: 1,
+      enabled: true,
+      visible: true,
+      inputs: {
+        plane: { type: 'defaultPlane', name: 'XY' },
+        editorModel: {
+          points: [],
+          geometries: [],
+          constraints: [{ id: 'c1', type: 'distance', pointA: 'p1', pointB: 'p2', value: 40, expression }],
+        },
+      },
+      dependsOn: [],
+      createdAt: '2026-11-02T00:00:00.000Z',
+      updatedAt: '2026-11-02T00:00:00.000Z',
+    } as never);
+    return { p, part };
+  }
+
+  it('rejects deleting a project parameter a sketch dimension uses', () => {
+    const { p } = withDrivenSketch('pcd / 2');
+    p.parameters.values['pcd'] = valueOf('pcd', '80');
+    const r = deleteParameterHandler.validate({ type: 'DeleteParameter', scope: 'project', name: 'pcd' }, p);
+    expect(r.ok ? '' : r.error.code).toBe('HAS_DEPENDENTS');
+    expect(r.ok ? '' : r.error.message).toContain('Bolt circle (sketch dimension)');
+  });
+
+  it('rejects deleting a part parameter a sketch dimension in that part uses', () => {
+    const { p, part } = withDrivenSketch('pcd');
+    p.parts[part]!.parameters.values['pcd'] = valueOf('pcd', '80');
+    const r = deleteParameterHandler.validate({ type: 'DeleteParameter', scope: part, name: 'pcd' }, p);
+    expect(r.ok ? '' : r.error.code).toBe('HAS_DEPENDENTS');
+  });
+
+  it('allows it when a part row shadows the project row, since the sketch resolves against the part', () => {
+    const { p, part } = withDrivenSketch('pcd');
+    p.parameters.values['pcd'] = valueOf('pcd', '80');
+    p.parts[part]!.parameters.values['pcd'] = valueOf('pcd', '60');
+    const r = deleteParameterHandler.validate({ type: 'DeleteParameter', scope: 'project', name: 'pcd' }, p);
+    expect(r.ok).toBe(true);
+  });
+
+  it('allows deleting a parameter no dimension uses', () => {
+    const { p } = withDrivenSketch('width');
+    p.parameters.values['pcd'] = valueOf('pcd', '80');
+    p.parameters.values['width'] = valueOf('width', '10');
+    const r = deleteParameterHandler.validate({ type: 'DeleteParameter', scope: 'project', name: 'pcd' }, p);
+    expect(r.ok).toBe(true);
+  });
+});
