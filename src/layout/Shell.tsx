@@ -22,6 +22,7 @@ import type { SketchToolId } from '@tweakcad/core/src/sketch/types.ts';
 import { useConsoleStore, consoleLog } from '@tweakcad/core/src/store/consoleStore.ts';
 import { detectSketchRegions } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import { useDisplayMeshes, useTopologyMaps, useRebuilding, useBodyToFeatureMap, useConstructionPlanes, useFeatureResults } from '../hooks/useViewportStore.ts';
+import { withDocumentVisibility } from './planeVisibility.ts';
 import { computeAllBodyDisplayModes } from '@tweakcad/viewport/src/displayMode.ts';
 import type { DisplayContext } from '@tweakcad/core/src/store/displayContextStore.ts';
 import { useActivePartId, useDisplayContextActions } from '../hooks/useDisplayContext.ts';
@@ -240,7 +241,9 @@ export function Shell({
   const { canUndo, canRedo, undoLabel, redoLabel, undo, redo } = useUndoRedo();
   const displayMeshes = useDisplayMeshes();
   const topologyMaps = useTopologyMaps();
-  const constructionPlanes = useConstructionPlanes();
+  const builtPlanes = useConstructionPlanes();
+  // The eye toggle doesn't rebuild, so plane visibility comes from the document.
+  const constructionPlanes = useMemo(() => withDocumentVisibility(builtPlanes, project), [builtPlanes, project]);
   const featureResults = useFeatureResults();
   const rebuilding = useRebuilding();
   const bodyToFeatureMap = useBodyToFeatureMap();
