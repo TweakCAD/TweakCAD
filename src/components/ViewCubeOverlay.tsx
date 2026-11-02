@@ -85,6 +85,7 @@ export function ViewCubeOverlay({ onViewChange, getMainCameraQuaternion, size = 
     hoveredOrigColor: number;
     raycaster: THREE.Raycaster;
     disposed: boolean;
+    needsRender: boolean;
   } | null>(null);
 
   useEffect(() => {
@@ -249,22 +250,29 @@ export function ViewCubeOverlay({ onViewChange, getMainCameraQuaternion, size = 
       hoveredOrigColor: 0,
       raycaster: new THREE.Raycaster(),
       disposed: false,
+      // Set by hover changes; the camera is compared each frame.
+      needsRender: true,
     };
     stateRef.current = state;
 
-    // Animation loop
+    // Animation loop: draws only when the main camera turned or the hover
+    // changed, like the main viewport.
     let frameId = 0;
     const animate = () => {
       if (state.disposed) return;
       frameId = requestAnimationFrame(animate);
 
       const quat = getMainCameraQuaternion();
-      if (quat) {
+      if (quat && (quat.x !== camera.quaternion.x || quat.y !== camera.quaternion.y
+        || quat.z !== camera.quaternion.z || quat.w !== camera.quaternion.w)) {
         const dir = new THREE.Vector3(0, 0, 1).applyQuaternion(quat);
         camera.position.copy(dir.multiplyScalar(5));
         camera.quaternion.copy(quat);
+        state.needsRender = true;
       }
 
+      if (!state.needsRender) return;
+      state.needsRender = false;
       renderer.render(scene, camera);
     };
     animate();
@@ -306,6 +314,7 @@ export function ViewCubeOverlay({ onViewChange, getMainCameraQuaternion, size = 
     state.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), state.camera);
     const hits = state.raycaster.intersectObjects(state.allHitTargets);
 
+    state.needsRender = true;
     // Clear previous hover
     if (state.hoveredMesh) {
       (state.hoveredMesh.material as THREE.MeshBasicMaterial).color.setHex(state.hoveredOrigColor);
@@ -326,6 +335,7 @@ export function ViewCubeOverlay({ onViewChange, getMainCameraQuaternion, size = 
     if (!state || !state.hoveredMesh) return;
     (state.hoveredMesh.material as THREE.MeshBasicMaterial).color.setHex(state.hoveredOrigColor);
     state.hoveredMesh = null;
+    state.needsRender = true;
   }, []);
 
   // ---- Click ----

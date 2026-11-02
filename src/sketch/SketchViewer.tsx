@@ -168,9 +168,11 @@ export function SketchViewer({
     }
 
     scene.add(root);
+    viewportCtrl.requestRender();
 
     return () => {
       scene.remove(root);
+      viewportCtrl.requestRender();
       disposeGroup(root);
       lineMaterial.dispose();
       constructionMaterial.dispose();
@@ -191,7 +193,8 @@ export function SketchViewer({
       regionGroup.remove(regionGroup.children[0]!);
     }
     renderRegions(regionGroup, regionsRef.current, selectedIdsRef.current, plane);
-  }, [selectedCount, pickerMode]);
+    viewportCtrl.requestRender();
+  }, [selectedCount, pickerMode, viewportCtrl]);
 
   // Click handler for region picking
   const handleCanvasClick = useCallback((e: MouseEvent) => {

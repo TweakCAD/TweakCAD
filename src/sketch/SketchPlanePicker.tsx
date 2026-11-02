@@ -199,9 +199,12 @@ export function SketchPlanePicker({ viewportCtrl, constructionPlanes, onPick, on
 
     pickablesRef.current = pickables;
     scene.add(root);
+    // Plane hover highlights change straight in the scene.
+    const releaseContinuousRender = viewportCtrl.holdContinuousRender();
 
     return () => {
       scene.remove(root);
+      releaseContinuousRender();
       planeGeom.dispose();
       edgeGeom.dispose();
       for (const { mesh } of pickables) {

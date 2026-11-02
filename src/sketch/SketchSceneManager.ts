@@ -239,9 +239,14 @@ export class SketchSceneManager {
   private pointGeometry: THREE.CircleGeometry;
 
   private _disposed = false;
+  // Sketch objects change on every edit, hover and solve without going
+  // through the viewport, so the viewport draws every frame while a sketch
+  // is open.
+  private releaseContinuousRender: () => void;
 
   constructor(viewportCtrl: ViewportController, plane: SketchPlaneInput) {
     this.viewportCtrl = viewportCtrl;
+    this.releaseContinuousRender = viewportCtrl.holdContinuousRender();
     this.scene = viewportCtrl.getScene();
     this.camera = viewportCtrl.getCamera();
     this.plane = resolveSketchPlane(plane);
@@ -547,6 +552,7 @@ export class SketchSceneManager {
     this._disposed = true;
 
     this.scene.remove(this.root);
+    this.releaseContinuousRender();
 
     // Dispose geometries
     this.geometryObjects.forEach((obj) => {

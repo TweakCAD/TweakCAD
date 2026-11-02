@@ -15,6 +15,7 @@ import { triangleToFaceId, segmentToEdgeId } from './topologyLookup.ts';
 import { SelectionHighlight } from './selectionHighlight.ts';
 import { fitFraming, homeFraming, lerpFraming, HOME_THETA, HOME_PHI } from './cameraFraming.ts';
 import type { CameraFraming } from './cameraFraming.ts';
+import { FrameGate } from './frameGate.ts';
 
 /**
  * What kind of topology element clicks should resolve to.
@@ -67,6 +68,8 @@ export interface ManipulatorHandlers {
 
 /** Pixels of pointer movement allowed between mousedown and mouseup to still count as a click. */
 const CLICK_DRAG_TOLERANCE = 3;
+/** Window events that request a frame (see `ViewportController.requestRender`). */
+const RENDER_ON_INPUT = ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'wheel', 'keydown', 'keyup'] as const;
 /** Fill colour of the section-view cap (a lighter shade of the body colour). */
 const SECTION_CAP_COLOR = 0xa9c0d8;
 // ViewCube disabled until rendering pipeline is stabilized
@@ -111,6 +114,11 @@ export class ViewportController {
   } | null = null;
   // private viewCube: ViewCube;
   private disposed = false;
+
+  // Frames are drawn on demand (see FrameGate). Every mutator below requests
+  // one, as does the camera and any input in the window.
+  private readonly frames = new FrameGate();
+  private readonly onInput = (): void => this.frames.request();
 
   // Orbit controls state (simple implementation)
   private isDragging = false;
@@ -186,7 +194,26 @@ export class ViewportController {
     this.setupGrid();
     this.updateCameraFromSpherical();
     this.setupControls(canvas);
+    // Hover highlights, gizmo handles and every drag change the scene from
+    // an input handler, so any input anywhere in the window requests a frame.
+    for (const type of RENDER_ON_INPUT) {
+      window.addEventListener(type, this.onInput, { capture: true, passive: true });
+    }
     this.animate();
+  }
+
+  /** Draw a frame on the next animation tick. Call after changing the scene from outside this class. */
+  requestRender(): void {
+    this.frames.request();
+  }
+
+  /**
+   * Render every frame until the returned function is called. For modes that
+   * change the scene on their own schedule (the sketch editor and the plane
+   * picker add and update objects directly). Releasing draws one more frame.
+   */
+  holdContinuousRender(): () => void {
+    return this.frames.hold();
   }
 
   /**
@@ -219,6 +246,7 @@ export class ViewportController {
    * Nothing is dispatched mid-drag — `onCommit` fires once on release.
    */
   attachManipulator(spec: ManipulatorSpec, handlers: ManipulatorHandlers): void {
+    this.requestRender();
     const { target, kind } = spec;
     const axis = spec.axis.clone().normalize();
     const readBase = (): number =>
@@ -254,6 +282,7 @@ export class ViewportController {
 
   /** Hide any active manipulator. */
   detachManipulator(): void {
+    this.requestRender();
     this.transformGizmo.detach();
     this.attachedPlaneOffset = null;
     this.bodyMoveRequest = null;
@@ -316,6 +345,7 @@ export class ViewportController {
     const pos = a.committedOrigin.clone().addScaledVector(a.normal, offset - a.committedOffset);
     a.entry.mesh.position.copy(pos);
     a.entry.outline.position.copy(pos);
+    this.requestRender();
   }
 
   // ---- Section view ----
@@ -335,6 +365,7 @@ export class ViewportController {
   setSectionPlane(
     spec: { normal: [number, number, number]; point?: [number, number, number] } | null,
   ): void {
+    this.requestRender();
     // Tear down any existing section first.
     if (this.sectionState) {
       this.detachManipulator();
@@ -453,6 +484,7 @@ export class ViewportController {
     mode: 'translate' | 'rotate' = 'translate',
     onCommit?: (delta: { position: [number, number, number]; quaternion: [number, number, number, number] }) => void,
   ): void {
+    this.requestRender();
     if (!bodyIds || bodyIds.length === 0 || !onCommit) {
       this.bodyMoveRequest = null;
       this.clearBodyMoveProxy();
@@ -611,6 +643,7 @@ export class ViewportController {
    * @param topoMaps - Topology maps for picking
    */
   setDisplayMeshes(meshes: DisplayMesh[], topoMaps: TopologyMap[]): void {
+    this.requestRender();
     this.meshRegistry.updateAll(meshes, topoMaps);
     // Fresh meshes get fresh materials — re-apply the active section cut.
     if (this.sectionState) {
@@ -630,6 +663,7 @@ export class ViewportController {
    * toggled off) are filtered out by the layer.
    */
   setConstructionPlanes(planes: ConstructionPlaneDisplay[]): void {
+    this.requestRender();
     this.constructionPlaneLayer.update(planes);
   }
 
@@ -638,6 +672,7 @@ export class ViewportController {
    * @param modes - Map of bodyId to display mode
    */
   applyDisplayModes(modes: Map<BodyId, FeatureDisplayMode>): void {
+    this.requestRender();
     this.meshRegistry.applyDisplayModes(modes);
   }
 
@@ -655,6 +690,7 @@ export class ViewportController {
    * Highlight selected bodies (blue emissive tint). Pass null to clear.
    */
   highlightBodies(bodyIds: Set<BodyId> | null): void {
+    this.requestRender();
     this.meshRegistry.highlightBodies(bodyIds);
   }
 
@@ -663,6 +699,7 @@ export class ViewportController {
    * @param sel - The current selection or null
    */
   setSelection(sel: Selection | null): void {
+    this.requestRender();
     this.selectionHighlight.update(sel, this.meshRegistry);
   }
 
@@ -671,6 +708,7 @@ export class ViewportController {
    * @param sel - The hover preselection or null
    */
   setPreselection(sel: Selection | null): void {
+    this.requestRender();
     this.selectionHighlight.updatePreselection(sel, this.meshRegistry);
   }
 
@@ -808,6 +846,7 @@ export class ViewportController {
    * @param h - New height in pixels
    */
   resize(w: number, h: number): void {
+    this.requestRender();
     this.renderer.setSize(w, h);
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.camera.aspect = w / h;
@@ -1090,6 +1129,9 @@ export class ViewportController {
   /** Dispose the viewport and all resources */
   dispose(): void {
     this.disposed = true;
+    for (const type of RENDER_ON_INPUT) {
+      window.removeEventListener(type, this.onInput, { capture: true });
+    }
     this.setSectionPlane(null);
     this.transformGizmo.dispose();
     this.selectionHighlight.dispose();
@@ -1102,13 +1144,15 @@ export class ViewportController {
   private animate = (): void => {
     if (this.disposed) return;
 
-    // Update smooth camera animation if active
+    // Update smooth camera animation if active (each step requests a frame)
     if (this.animating) {
       this.updateAnimation();
     }
 
-    // Render main scene
-    this.renderer.render(this.scene, this.camera);
+    // Render main scene, only when something may have changed
+    if (this.frames.take()) {
+      this.renderer.render(this.scene, this.camera);
+    }
 
     // ViewCube disabled
     // this.viewCube.syncRotation(this.camera);
@@ -1147,6 +1191,7 @@ export class ViewportController {
   setCameraUp(up: { x: number; y: number; z: number }): void {
     this.camera.up.set(up.x, up.y, up.z);
     this.camera.lookAt(this.target);
+    this.requestRender();
   }
 
   /** Convert spherical coordinates to camera position */
@@ -1155,6 +1200,7 @@ export class ViewportController {
     pos.add(this.target);
     this.camera.position.copy(pos);
     this.camera.lookAt(this.target);
+    this.requestRender();
   }
 
   /**
