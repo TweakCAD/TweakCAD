@@ -29,6 +29,8 @@
  *      to land in the right place.
  *   8. Apply `inputs.boolean` against existing host bodies — same
  *      cut/join/newBody semantics as `ExtrudeFeatureInputs.operation`.
+ *      A cut or join keeps the host bodies' ids; only `newBody` publishes
+ *      the step-6 ids.
  */
 
 import type {
@@ -47,6 +49,7 @@ import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
 import type { KernelBody } from '@tweakcad/kernel/src/types.ts';
 import type { BuildContext, BuildResult } from '@tweakcad/core/src/features/contracts.ts';
 import { runSubTimeline } from '../subTimelineRunner.ts';
+import { carryBodyId } from './bodyIdentity.ts';
 
 export async function buildComponent(
   node: FeatureNode,
@@ -145,7 +148,7 @@ export async function buildComponent(
     return wrapBodies(placedBodies, node.id);
   }
   if (mode === 'cut') {
-    return cutFromHosts(placedBodies, context, kernel, node.id);
+    return cutFromHosts(placedBodies, context, kernel);
   }
   return joinWithHosts(placedBodies, context, kernel, node.id);
 }
@@ -308,30 +311,55 @@ function wrapBodies(bodies: KernelBody[], featureIdValue: FeatureId): BuildResul
 }
 
 /**
- * Subtract every component body from every host body, in-place — same
- * pattern as `buildComponentInstance.cutFromHosts`.
+ * Subtract every component body from every host body.
+ *
+ * Each host keeps its id (`bodyIdentity.ts`: a modifier carries the id of
+ * the body it changes). Minting `body_imported_…` ids here retired the host's
+ * id, so every downstream feature holding a ref to the host — a Move, a
+ * fillet's edges — lost its target as soon as a cut instance was inserted
+ * upstream of it.
+ *
+ * All or nothing: hosts leave the build context only once every cut has
+ * succeeded, so a failed cut leaves the part as it was.
  */
 async function cutFromHosts(
   componentBodies: KernelBody[],
   context: BuildContext,
   kernel: CadKernel,
-  featureIdValue: FeatureId,
 ): Promise<BuildResult> {
-  const builtBodies: { bodyId: BodyId; handle: unknown }[] = [];
+  const builtBodies: { bodyId: BodyId; handle: KernelBody }[] = [];
   const hostEntries = Array.from(context.bodies.entries()) as Array<[BodyId, KernelBody]>;
 
-  let idx = 0;
-  for (const [hostId, hostHandle] of hostEntries) {
-    const result = await kernel.booleanCut(hostHandle, componentBodies);
-    if (!result.ok) {
-      throw new Error(`Component cut against host body failed: ${result.error.message}`);
+  try {
+    for (const [hostId, hostHandle] of hostEntries) {
+      const result = await kernel.booleanCut(hostHandle, componentBodies);
+      if (!result.ok) {
+        throw new Error(`Component cut against host body failed: ${result.error.message}`);
+      }
+      builtBodies.push({ bodyId: carryBodyId(hostId), handle: result.value });
     }
-    context.bodies.delete(hostId);
-    builtBodies.push({ bodyId: bodyIdBrand(`body_imported_${featureIdValue}_${idx++}`), handle: result.value });
+  } catch (error) {
+    // Free the cuts already made; the hosts are still in the context.
+    for (const { handle } of builtBodies) {
+      try {
+        kernel.dispose(handle);
+      } catch (e) {
+        console.warn('[buildComponent] Failed to release an unused cut result:', e);
+      }
+    }
+    throw error;
   }
+  for (const [hostId] of hostEntries) context.bodies.delete(hostId);
   return { bodies: builtBodies };
 }
 
+/**
+ * Fuse the component into the host bodies. The result carries the first
+ * host's id (`bodyIdentity.ts`: a merge keeps the primary target's id, the
+ * first body in build order when nothing is picked); the other hosts are
+ * consumed. With no host to join, the component's bodies fuse into a body of
+ * this feature's own.
+ */
 async function joinWithHosts(
   componentBodies: KernelBody[],
   context: BuildContext,
@@ -350,7 +378,11 @@ async function joinWithHosts(
   for (const [hostId] of hostEntries) {
     context.bodies.delete(hostId);
   }
+  const primary = hostEntries[0];
   return {
-    bodies: [{ bodyId: bodyIdBrand(`body_imported_${featureIdValue}_0`), handle: fused.value }],
+    bodies: [{
+      bodyId: primary ? carryBodyId(primary[0]) : bodyIdBrand(`body_imported_${featureIdValue}_0`),
+      handle: fused.value,
+    }],
   };
 }
