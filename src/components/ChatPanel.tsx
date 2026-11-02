@@ -12,12 +12,11 @@
  *   ├── footer: <textarea> [Send]                         │
  *   └─────────────────────────────────────────────────────┘
  *
- * Gating (note: the panel is only rendered by Shell when SaaS is
- * actually available, so the unknown / unavailable branches are
- * defensive fallbacks — the wand button that toggles this panel is
- * hidden from MainAppBar in those states):
- *   - SaaS available + signed-out → Sign-in CTA in the body
- *   - SaaS available + signed-in  → full chat
+ * Gating: Shell renders the panel (and MainAppBar the wand that toggles
+ * it) only when the site is reachable and lists at least one model for
+ * the caller. Inside it:
+ *   - signed-out → Sign-in CTA in the body
+ *   - signed-in  → full chat
  *
  * Persistence: messages are stored in localStorage under
  *   `tweakcad-chat/v1/<projectId>` so the conversation survives
@@ -30,9 +29,10 @@
  * tool loop wiring lands in a later milestone.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Wand2, X, Trash2, Send, ChevronDown, ChevronRight } from 'lucide-react';
 import type { SaasState } from '../storage/index.ts';
+import { pickModelId } from '../ai/chatClient.ts';
 
 /**
  * One transcript entry. Kept JSON-clean so localStorage round-trips
@@ -64,8 +64,8 @@ export interface ChatModelOption {
 interface ChatPanelProps {
   /** Close handler — wires to the wand button toggle in MainAppBar. */
   onClose: () => void;
-  /** SaaS availability — drives the gated views. */
-  saas: SaasState | undefined;
+  /** Signed-in state — drives the gated views. */
+  saas: Extract<SaasState, { kind: 'available' }>;
   /** Open the sign-in modal when the signed-out CTA is clicked. */
   onRequestSignIn?: (() => void) | undefined;
   /**
@@ -86,11 +86,13 @@ interface ChatPanelProps {
     opts: { modelId: string | null; signal: AbortSignal },
   ) => AsyncIterable<ChatTurnEvent>;
   /**
-   * Available models for the dropdown. Empty list = no dropdown shown
-   * (the server picks its default). The panel persists the user's
-   * choice in localStorage keyed by projectKey.
+   * The models the site offers this caller (non-empty; Shell doesn't
+   * render the panel otherwise). The dropdown shows when there is more
+   * than one. The user's choice persists in localStorage keyed by
+   * projectKey; a saved pick the site no longer lists falls back to
+   * the site's default.
    */
-  availableModels?: readonly ChatModelOption[] | undefined;
+  availableModels: readonly ChatModelOption[];
 }
 
 // ---- Persistence ----
@@ -225,11 +227,8 @@ export function ChatPanel({
     };
   }, []);
 
-  const canChat = useMemo(() => {
-    if (!saas) return false;
-    if (saas.kind !== 'available') return false;
-    return saas.signedIn === true;
-  }, [saas]);
+  const canChat = saas.signedIn;
+  const modelId = pickModelId(availableModels, selectedModelId);
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
@@ -264,7 +263,7 @@ export function ChatPanel({
     let receivedAnyText = false;
     try {
       for await (const event of onSendMessage(text, historySnapshot, {
-        modelId: selectedModelId,
+        modelId,
         signal: ac.signal,
       })) {
         if (event.type === 'text_delta') {
@@ -324,7 +323,7 @@ export function ChatPanel({
     // Touch unused vars so eslint doesn't yell — `accumulated` is the
     // running total in case future code wants it for token counting.
     void accumulated;
-  }, [canChat, input, messages, onSendMessage, selectedModelId, sending]);
+  }, [canChat, input, messages, onSendMessage, modelId, sending]);
 
   const handleClear = useCallback(() => {
     setMessages([]);
@@ -379,15 +378,9 @@ export function ChatPanel({
         </div>
       </div>
 
-      {/* Body switches on SaaS gating; the chat transcript is mounted
-          only when the user is signed-in so we don't render an input
-          they can't use. The unknown / unavailable branches normally
-          can't be reached because the wand toggle that opens this
-          panel is hidden in those states — but render a benign
-          placeholder anyway if something does get us here. */}
-      {!saas || saas.kind !== 'available' ? (
-        <div style={styles.statePlaceholder}>AI assistant unavailable.</div>
-      ) : !saas.signedIn ? (
+      {/* The chat transcript is mounted only when the user is signed in
+          so we don't render an input they can't use. */}
+      {!saas.signedIn ? (
         <div style={styles.statePlaceholder}>
           <p style={styles.statePlaceholderTitle}>Sign in to use the AI assistant</p>
           <p style={styles.statePlaceholderBody}>
@@ -410,10 +403,10 @@ export function ChatPanel({
         </div>
       ) : (
         <>
-          {availableModels && availableModels.length > 1 && (
+          {availableModels.length > 1 && (
             <ModelPicker
               models={availableModels}
-              selectedId={selectedModelId}
+              selectedId={modelId}
               onChange={handleModelChange}
               disabled={sending}
             />
@@ -481,13 +474,11 @@ function ModelPicker({
   disabled,
 }: {
   models: readonly ChatModelOption[];
-  /** null = use the server's default. */
   selectedId: string | null;
   onChange: (next: string | null) => void;
   disabled: boolean;
 }) {
-  // Default to the API-flagged default if the user hasn't picked one.
-  const effectiveId = selectedId ?? models.find((m) => m.isDefault)?.id ?? models[0]?.id ?? '';
+  const effectiveId = selectedId ?? '';
 
   return (
     <div style={styles.modelRow}>

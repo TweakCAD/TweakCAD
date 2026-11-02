@@ -194,9 +194,9 @@ interface AppBarProps {
   /** True when the right-side chat panel is currently open. */
   chatPanelOpen?: boolean | undefined;
   /**
-   * Toggle the chat panel. Caller decides whether the panel is
-   * actually usable (signed-in / SaaS-available); the toolbar just
-   * dispatches the toggle and updates the active state.
+   * Toggle the chat panel. Absent when the site offers no AI (it can't
+   * be reached, or lists no models for the caller); the wand is then
+   * not shown.
    */
   onToggleChatPanel?: (() => void) | undefined;
   /** Opens revision history. Absent when the project has no cloud history. */
@@ -512,14 +512,13 @@ export function MainAppBar({
       <ProjectNameField name={projectName} onRename={onRenameProject} />
 
       <div style={styles.separator} />
-      {/* Wand only shows when SaaS is actually reachable — local-only
-          deployments don't get the in-app chat panel (they have the MCP
-          bridge for that). Same visibility rule as AccountChip below. */}
-      {isSaasAvailable(saas) && (
+      {/* Wand only shows when the site offers AI — local-only use has
+          no in-app chat panel (the MCP bridge covers that). */}
+      {onToggleChatPanel && (
         <IconBtn
           icon={<Wand2 size={16} />}
           label={chatPanelOpen ? 'Close AI assistant' : 'AI assistant'}
-          onClick={() => onToggleChatPanel?.()}
+          onClick={onToggleChatPanel}
           active={chatPanelOpen}
         />
       )}
