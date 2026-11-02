@@ -149,11 +149,16 @@ export function ParametersDialog({ open, onClose }: DialogProps) {
         : `Apply ${entries.length} parameter changes`,
     );
     const failures: string[] = [];
-    for (const [name, value] of entries) {
-      const result = commandBus.dispatch({ type: 'SetParameter', scope, name, value });
-      if (!result.ok) failures.push(`${name}: ${result.error.message}`);
+    try {
+      for (const [name, value] of entries) {
+        const result = commandBus.dispatch({ type: 'SetParameter', scope, name, value });
+        if (!result.ok) failures.push(`${name}: ${result.error.message}`);
+      }
+    } finally {
+      // A handler that throws (rather than returning an error) must not
+      // leave the transaction open: undo stays refused until it closes.
+      commandBus.endTransaction();
     }
-    commandBus.endTransaction();
     if (failures.length > 0) {
       setApplyError(`Some changes were rejected:\n${failures.join('\n')}`);
       // Drop the successfully-applied entries; keep the failed ones so the

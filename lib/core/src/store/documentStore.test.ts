@@ -25,7 +25,7 @@
  */
 
 import { sketchBuildGeometry } from '../sketch/derivedGeometry.ts';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { DocumentStore } from './documentStore.ts';
 import { createPart, newProjectWithPart } from '../document/factory.ts';
 import { featureId, entityId, referenceId } from '../ids.ts';
@@ -745,5 +745,52 @@ describe('DocumentStore — stack boundaries', () => {
     expect(store.canUndo()).toBe(false);
     expect(store.canRedo()).toBe(false);
     expect(store.getState().metadata.name).toBe('Loaded');
+  });
+});
+
+describe('DocumentStore — undo while a transaction is open', () => {
+  it('ignores Ctrl+Z during an open transaction, so the transaction later undoes cleanly', () => {
+    // A long-running transaction (an AI turn) adds a feature; the user
+    // presses Ctrl+Z before it closes. Undoing "Add Sketch 2" underneath it
+    // used to shift the timeline, and the transaction's own undo then left
+    // its feature in place.
+    const { store, partId } = newStore();
+    store.mutate('Add Sketch 2', draft => {
+      draft.parts[partId]!.timeline.push(sketchFeature('f_s2', 'Sketch 2'));
+    });
+    const beforeTurn = snapshot(store.getState());
+
+    store.beginTransaction('AI turn');
+    store.mutate('Step', draft => {
+      draft.parts[partId]!.timeline.push(sketchFeature('f_ai', 'AI sketch'));
+    });
+    store.undo();
+    expect(timelineNames(store, partId)).toEqual(['Sketch 1', 'Extrude 1', 'Sketch 2', 'AI sketch']);
+    store.endTransaction();
+
+    store.undo();
+    expect(snapshot(store.getState())).toEqual(beforeTurn);
+    store.undo();
+    expect(timelineNames(store, partId)).toEqual(['Sketch 1', 'Extrude 1']);
+  });
+
+  it('tells history subscribers when the outermost transaction opens and closes, without waking state subscribers', () => {
+    const { store } = newStore();
+    const history = vi.fn();
+    const state = vi.fn();
+    store.subscribeHistory(history);
+    store.subscribe(state);
+
+    store.beginTransaction('outer');
+    expect(history).toHaveBeenCalledTimes(1);
+    store.beginTransaction('inner');
+    store.endTransaction();
+    expect(history).toHaveBeenCalledTimes(1);
+    store.endTransaction();
+    expect(history).toHaveBeenCalledTimes(2);
+
+    store.clearHistory();
+    expect(history).toHaveBeenCalledTimes(3);
+    expect(state).not.toHaveBeenCalled();
   });
 });

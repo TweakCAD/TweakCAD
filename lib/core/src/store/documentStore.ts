@@ -17,6 +17,7 @@ export class DocumentStore {
   private undoManager = new UndoManager();
   private listeners = new Set<(s: CadProject) => void>();
   private dirtyListeners = new Set<(fromIndex: number, partId: PartId) => void>();
+  private historyListeners = new Set<() => void>();
   private revision = 0;
 
   /**
@@ -144,21 +145,45 @@ export class DocumentStore {
   }
 
   /**
+   * Subscribe to undo/redo availability changes that are not document
+   * changes: a transaction opening or closing, or history being cleared.
+   * Kept apart from {@link subscribe} so state subscribers (autosave) are
+   * not woken when the document did not change.
+   * @param fn - Callback, called with no arguments
+   * @returns Unsubscribe function
+   */
+  subscribeHistory(fn: () => void): () => void {
+    this.historyListeners.add(fn);
+    return () => this.historyListeners.delete(fn);
+  }
+
+  /**
    * Begin a transaction - groups multiple mutations into one undo step.
+   * Undo and redo are refused until the outermost transaction ends.
    * @param label - Label for the transaction group
    */
   beginTransaction(label: string): void {
+    const wasOpen = this.undoManager.isTransactionOpen();
     this.undoManager.beginTransaction(label);
+    if (!wasOpen) this.notifyHistory();
   }
 
   /** End the current transaction */
   endTransaction(): void {
+    const wasOpen = this.undoManager.isTransactionOpen();
     this.undoManager.endTransaction();
+    if (wasOpen && !this.undoManager.isTransactionOpen()) this.notifyHistory();
+  }
+
+  /** @returns Whether a transaction is open */
+  isTransactionOpen(): boolean {
+    return this.undoManager.isTransactionOpen();
   }
 
   /** Clear all undo/redo history */
   clearHistory(): void {
     this.undoManager.clear();
+    this.notifyHistory();
   }
 
   /**
@@ -249,5 +274,10 @@ export class DocumentStore {
   /** Notify all subscribers of state change */
   private notify(): void {
     this.listeners.forEach(fn => fn(this.state));
+  }
+
+  /** Notify history subscribers that undo/redo availability may have changed */
+  private notifyHistory(): void {
+    this.historyListeners.forEach(fn => fn());
   }
 }
