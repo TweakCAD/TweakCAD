@@ -3,23 +3,25 @@
  *
  * When the user clicks Sketch in the toolbar, this component is mounted on top
  * of the viewport. It:
- *  - Adds three translucent square meshes (XY, XZ, YZ) at the world origin
- *  - Highlights the plane under the cursor
- *  - Picks the plane on click and calls onPick(name)
+ *  - Adds three translucent square meshes (XY, XZ, YZ) at the world origin,
+ *    plus one per construction plane
+ *  - Treats every flat face of a body as a pickable plane too (raycast via
+ *    `ViewportController.faceAt`); the nearest hit under the cursor wins
+ *  - Highlights the plane or face under the cursor
+ *  - Picks it on click and calls onPick
  *  - Cancels (Esc / click on background) -> onCancel()
  *
  * It does NOT modify the viewport scene tree beyond adding/removing its own
  * group; nothing is persisted in the document until the user actually picks.
- *
- * Future: also list flat faces of existing bodies as pickable planes
- * (sketch on any planar face). For v0.1 we ship with default planes.
  */
 
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import type { ViewportController } from '@tweakcad/viewport/src/ViewportController.ts';
-import type { ConstructionPlaneDisplay } from '@tweakcad/core/src/document/schema.ts';
-import type { FeatureId } from '@tweakcad/core/src/ids.ts';
+import type { ConstructionPlaneDisplay, Selection } from '@tweakcad/core/src/document/schema.ts';
+import type { BodyId, FaceId, FeatureId, PartId, StableFaceId } from '@tweakcad/core/src/ids.ts';
+import { sketchFrameOnPlane } from '@tweakcad/core/src/sketch/facePlane.ts';
+import type { FaceSketchFrame } from '@tweakcad/core/src/sketch/facePlane.ts';
 
 // ---- Types ----
 
@@ -29,12 +31,24 @@ export type SketchPlaneName = 'XY' | 'XZ' | 'YZ';
  * A pick result discriminated by kind:
  *   - `default`     — one of the three built-in planes (XY/XZ/YZ).
  *   - `construction`— a user-created construction plane.
+ *   - `face`        — a flat face of a body. `frame` is the sketch frame
+ *                     the worker will resolve for it (`sketchFrameOnPlane`),
+ *                     so the editor can open on it before the first rebuild.
  * The caller (Shell) converts each into the appropriate `PlaneRef`
  * variant before dispatching `CreateSketch`.
  */
 export type SketchPlanePick =
   | { kind: 'default'; name: SketchPlaneName }
-  | { kind: 'construction'; featureId: FeatureId; name: string };
+  | { kind: 'construction'; featureId: FeatureId; name: string }
+  | { kind: 'face'; bodyId: BodyId; stableFaceId: StableFaceId; frame: FaceSketchFrame };
+
+/** The body face under the cursor, as the picker tracks it. */
+type FaceHover = {
+  bodyId: BodyId;
+  faceId: FaceId;
+  /** Null when the face is curved or has no stable id, so it can't be sketched on. */
+  pick: Extract<SketchPlanePick, { kind: 'face' }> | null;
+};
 
 interface SketchPlanePickerProps {
   viewportCtrl: ViewportController | null;
@@ -44,6 +58,11 @@ interface SketchPlanePickerProps {
    * three default planes at the origin. Empty by default.
    */
   constructionPlanes?: ConstructionPlaneDisplay[] | undefined;
+  /**
+   * Also offer the flat faces of bodies. On for sketch entry; off where the
+   * caller only takes planes (the Offset Plane dialog's base plane).
+   */
+  pickFaces?: boolean | undefined;
   onPick: (pick: SketchPlanePick) => void;
   onCancel: () => void;
 }
@@ -106,10 +125,11 @@ type Pickable = {
 
 // ---- Component ----
 
-export function SketchPlanePicker({ viewportCtrl, constructionPlanes, onPick, onCancel }: SketchPlanePickerProps) {
+export function SketchPlanePicker({ viewportCtrl, constructionPlanes, pickFaces = false, onPick, onCancel }: SketchPlanePickerProps) {
   const rootRef = useRef<THREE.Group | null>(null);
   const pickablesRef = useRef<Pickable[]>([]);
   const [hovered, setHovered] = useState<string | null>(null);
+  const [hoveredFace, setHoveredFace] = useState<FaceHover | null>(null);
   // While the user is orbiting/panning with the middle or right mouse
   // button, we forward every subsequent move + up to the canvas. Without
   // this ref the canvas only saw the initial mousedown and never received
@@ -225,6 +245,22 @@ export function SketchPlanePicker({ viewportCtrl, constructionPlanes, onPick, on
     applyHoverOpacity(pickablesRef.current, hovered);
   }, [hovered]);
 
+  // Highlight the hovered face with the viewport's preselection overlay.
+  // The overlay ignores partId; the face is named by body + face id.
+  const hoveredBodyId = hoveredFace?.bodyId ?? null;
+  const hoveredFaceId = hoveredFace?.faceId ?? null;
+  useEffect(() => {
+    if (!viewportCtrl || !hoveredBodyId || !hoveredFaceId) return;
+    const sel: Selection = {
+      type: 'face',
+      partId: '' as PartId,
+      bodyId: hoveredBodyId,
+      faceId: hoveredFaceId,
+    };
+    viewportCtrl.setPreselection(sel);
+    return () => viewportCtrl.setPreselection(null);
+  }, [viewportCtrl, hoveredBodyId, hoveredFaceId]);
+
   // Picker overlay click handling: raycast to find which plane was hit.
   // If a middle/right drag is in progress, forward the move to the canvas
   // instead so the orbit controls receive the full mousemove stream.
@@ -234,8 +270,9 @@ export function SketchPlanePicker({ viewportCtrl, constructionPlanes, onPick, on
       return;
     }
     if (!viewportCtrl) return;
-    const target = pickPlane(e.clientX, e.clientY, viewportCtrl, pickablesRef.current);
-    setHovered(target?.hoverKey ?? null);
+    const target = pickTarget(e.clientX, e.clientY, viewportCtrl, pickablesRef.current, pickFaces);
+    setHovered(target?.kind === 'plane' ? target.p.hoverKey : null);
+    setHoveredFace(target?.kind === 'face' ? target.face : null);
   };
 
   const handleClick = (e: React.MouseEvent) => {
@@ -243,9 +280,12 @@ export function SketchPlanePicker({ viewportCtrl, constructionPlanes, onPick, on
     // forwarded through the pointerdown/up path below.
     if (e.button !== 0) return;
     if (!viewportCtrl) return;
-    const target = pickPlane(e.clientX, e.clientY, viewportCtrl, pickablesRef.current);
-    if (target) {
-      onPick(target.pick);
+    const target = pickTarget(e.clientX, e.clientY, viewportCtrl, pickablesRef.current, pickFaces);
+    if (target?.kind === 'plane') {
+      onPick(target.p.pick);
+    } else if (target?.kind === 'face') {
+      // A curved face is a miss, not a cancel: the user meant to pick it.
+      if (target.face.pick) onPick(target.face.pick);
     } else {
       onCancel();
     }
@@ -293,7 +333,7 @@ export function SketchPlanePicker({ viewportCtrl, constructionPlanes, onPick, on
           position: 'absolute',
           top: 0, left: 0, right: 0, bottom: 0,
           pointerEvents: 'auto',
-          cursor: hovered ? 'pointer' : 'default',
+          cursor: hovered || hoveredFace?.pick ? 'pointer' : hoveredFace ? 'not-allowed' : 'default',
           zIndex: 20,
         }}
         onPointerMove={handlePointerMove}
@@ -312,7 +352,9 @@ export function SketchPlanePicker({ viewportCtrl, constructionPlanes, onPick, on
           {(constructionPlanes?.length ?? 0) > 0
             ? <>, or one of the <b style={{ color: '#3b82f6' }}>{constructionPlanes!.length} construction plane{constructionPlanes!.length === 1 ? '' : 's'}</b></>
             : null}
-          {hovered ? `; ${hovered.startsWith('cp:') ? 'construction plane' : hovered} highlighted` : ''}.
+          {pickFaces ? ', or a flat face of a body' : ''}
+          {hovered ? `; ${hovered.startsWith('cp:') ? 'construction plane' : hovered} highlighted` : ''}
+          {hoveredFace ? (hoveredFace.pick ? '; face highlighted' : '; this face is not flat') : ''}.
           <br />
           <span style={{ color: '#999' }}>Esc to cancel.</span>
         </div>
@@ -338,12 +380,39 @@ function applyHoverOpacity(pickables: readonly Pickable[], hovered: string | nul
 
 // ---- Hit testing ----
 
+/**
+ * Nearest thing under the cursor: one of the picker's planes or a body
+ * face. A face in front of a plane hides it, as on screen.
+ */
+function pickTarget(
+  clientX: number,
+  clientY: number,
+  viewportCtrl: ViewportController,
+  pickables: Pickable[],
+  pickFaces: boolean,
+): { kind: 'plane'; p: Pickable } | { kind: 'face'; face: FaceHover } | null {
+  const plane = pickPlane(clientX, clientY, viewportCtrl, pickables);
+  const hit = pickFaces ? viewportCtrl.faceAt(clientX, clientY) : null;
+  if (hit && (!plane || hit.distance < plane.dist)) {
+    const pick = hit.plane && hit.stableFaceId
+      ? {
+          kind: 'face' as const,
+          bodyId: hit.bodyId,
+          stableFaceId: hit.stableFaceId,
+          frame: sketchFrameOnPlane(hit.plane.normal, hit.plane.point),
+        }
+      : null;
+    return { kind: 'face', face: { bodyId: hit.bodyId, faceId: hit.faceId, pick } };
+  }
+  return plane ? { kind: 'plane', p: plane.p } : null;
+}
+
 function pickPlane(
   clientX: number,
   clientY: number,
   viewportCtrl: ViewportController,
   pickables: Pickable[],
-): Pickable | null {
+): { p: Pickable; dist: number } | null {
   const canvas = viewportCtrl.getCanvas();
   const rect = canvas.getBoundingClientRect();
   const ndc = new THREE.Vector2(
@@ -365,7 +434,7 @@ function pickPlane(
       }
     }
   }
-  return best?.p ?? null;
+  return best;
 }
 
 // Forward a pointer event to the viewport canvas so orbit/pan still works.

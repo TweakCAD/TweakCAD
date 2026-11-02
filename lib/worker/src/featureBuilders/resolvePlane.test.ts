@@ -7,7 +7,14 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { resolvePlaneRef, offsetPlaneAlongNormal, resolveFacePlaneRef } from './resolvePlane.ts';
+import {
+  resolvePlaneRef,
+  offsetPlaneAlongNormal,
+  resolveFacePlaneRef,
+  resolvePlaneRefAsync,
+  resolveSketchPlaneRef,
+} from './resolvePlane.ts';
+import type { PlaneRef } from '@tweakcad/core/src/document/schema.ts';
 import { emptyBuildContext } from '@tweakcad/core/src/features/contracts.ts';
 import type { BodyId, FeatureId } from '@tweakcad/core/src/ids.ts';
 import type { ResolvedSketchPlaneData } from './buildSketch.ts';
@@ -91,7 +98,7 @@ describe('resolvePlaneRef — unsupported variants', () => {
     ).toThrow(/PlaneRef\.featureOutput is not yet supported/);
   });
 
-  it('directs stableTopology callers to use resolveFacePlaneRef instead', () => {
+  it('directs stableTopology callers to use resolvePlaneRefAsync instead', () => {
     expect(() =>
       resolvePlaneRef(
         {
@@ -102,7 +109,7 @@ describe('resolvePlaneRef — unsupported variants', () => {
         emptyBuildContext({}),
         {},
       ),
-    ).toThrow(/cannot be resolved synchronously; use resolveFacePlaneRef/);
+    ).toThrow(/cannot be resolved synchronously; use resolvePlaneRefAsync/);
   });
 });
 
@@ -240,5 +247,74 @@ describe('offsetPlaneAlongNormal', () => {
     const moved = offsetPlaneAlongNormal(yz, -3);
     expect(moved.name).toBe('YZ');
     expect(moved.origin).toEqual([-3, 0, 0]);
+  });
+});
+
+describe('resolvePlaneRefAsync / resolveSketchPlaneRef — body faces', () => {
+  const top: PlaneRef = {
+    type: 'stableTopology',
+    bodyRef: { partId: 'p1' as never, bodyId: 'b1' as never },
+    stableFaceId: 'sf_top' as never,
+  };
+
+  /** Kernel whose one face is the plane y = 20 (centroid off the origin). */
+  function faceKernel(planar: boolean, found = true): CadKernel {
+    return {
+      resolveFaceRef: vi.fn(async () => (found ? ({ handle: 'f', bodyHandle: 'b' } as unknown as KernelFace) : null)),
+      getFacePlane: vi.fn(async () => ({
+        origin: [7, 20, -3] as [number, number, number],
+        uAxis: [0, 0, 1] as [number, number, number],
+        vAxis: [1, 0, 0] as [number, number, number],
+        normal: [0, 1, 0] as [number, number, number],
+        planar,
+      })),
+    } as unknown as CadKernel;
+  }
+
+  function ctxWithBody() {
+    const ctx = emptyBuildContext({});
+    ctx.bodies.set('b1' as unknown as BodyId, {} as KernelBody);
+    return ctx;
+  }
+
+  it('passes default and construction planes through to the sync resolver', async () => {
+    const plane = await resolvePlaneRefAsync({ type: 'defaultPlane', name: 'XZ' }, emptyBuildContext({}), {}, faceKernel(true), 'Test');
+    expect(plane.normal).toEqual([0, 1, 0]);
+  });
+
+  it("resolves a face to its own plane, labelled with the nearest default plane", async () => {
+    const plane = await resolvePlaneRefAsync(top, ctxWithBody(), {}, faceKernel(true), 'Extrude end face');
+    expect(plane.origin).toEqual([7, 20, -3]);
+    expect(plane.normal).toEqual([0, 1, 0]);
+    expect(plane.name).toBe('XZ');
+  });
+
+  it('rejects a curved face, naming the role', async () => {
+    await expect(resolvePlaneRefAsync(top, ctxWithBody(), {}, faceKernel(false), 'Extrude start face'))
+      .rejects.toThrow(/Extrude start face sf_top is not planar/);
+  });
+
+  it('says which reference broke when the face is gone', async () => {
+    await expect(resolvePlaneRefAsync(top, ctxWithBody(), {}, faceKernel(true, false), 'Sketch face'))
+      .rejects.toThrow(/Sketch face sf_top no longer exists on body b1/);
+  });
+
+  it('says when the body is not built at this point in the timeline', async () => {
+    await expect(resolvePlaneRefAsync(top, emptyBuildContext({}), {}, faceKernel(true), 'Sketch face'))
+      .rejects.toThrow(/body b1 does not exist at this point in the timeline/);
+  });
+
+  it("gives a face sketch the shared face frame, not the kernel's arbitrary axes", async () => {
+    const plane = await resolveSketchPlaneRef(top, ctxWithBody(), {}, faceKernel(true));
+    // World origin projected onto y = 20, with the XZ axes.
+    expect(plane.origin).toEqual([0, 20, 0]);
+    expect(plane.uAxis).toEqual([1, 0, 0]);
+    expect(plane.vAxis).toEqual([0, 0, -1]);
+    expect(plane.normal).toEqual([0, 1, 0]);
+  });
+
+  it('keeps default-plane sketches on the canonical basis', async () => {
+    const plane = await resolveSketchPlaneRef({ type: 'defaultPlane', name: 'YZ' }, emptyBuildContext({}), {}, faceKernel(true));
+    expect(plane.uAxis).toEqual([0, 0, -1]);
   });
 });

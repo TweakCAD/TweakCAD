@@ -258,8 +258,28 @@ function diffNewFeatureId(
 // ---- Tool executors --------------------------------------------------------
 
 /**
- * sketch_create — `CreateSketch` with a plane shorthand.
- * Returns `{ sketchId }`.
+ * A `{ bodyId, stableFaceId }` tool argument → a face `PlaneRef` in
+ * `partId`. The worker re-resolves the face on every rebuild and fails the
+ * feature if it is gone or not planar.
+ */
+function parseFaceArg(
+  v: unknown,
+  partId: PartId,
+  name: string,
+): Result<PlaneRef, ToolExecutionError> {
+  if (!isRecord(v) || typeof v['bodyId'] !== 'string' || typeof v['stableFaceId'] !== 'string') {
+    return err(invalidInput(`\`${name}\` must be { bodyId: string, stableFaceId: string } (ids from list_bodies / list_faces)`));
+  }
+  return ok({
+    type: 'stableTopology',
+    bodyRef: { partId, bodyId: v['bodyId'] as BodyId },
+    stableFaceId: stableFaceId(v['stableFaceId']),
+  });
+}
+
+/**
+ * sketch_create — `CreateSketch` on a default plane (`plane` shorthand) or
+ * on a planar body face (`face`). Returns `{ sketchId }`.
  */
 export async function executeSketchCreate(
   args: Record<string, unknown>,
@@ -267,8 +287,12 @@ export async function executeSketchCreate(
 ): Promise<Result<{ sketchId: FeatureId }, ToolExecutionError>> {
   const partId = args['partId'];
   const plane = args['plane'];
+  const face = args['face'];
   if (typeof partId !== 'string') return err(invalidInput('`partId` must be a string'));
-  if (plane !== 'XY' && plane !== 'XZ' && plane !== 'YZ') {
+  if ((plane === undefined) === (face === undefined)) {
+    return err(invalidInput('Pass exactly one of `plane` or `face`'));
+  }
+  if (plane !== undefined && plane !== 'XY' && plane !== 'XZ' && plane !== 'YZ') {
     return err(invalidInput("`plane` must be one of 'XY', 'XZ', 'YZ'"));
   }
 
@@ -277,10 +301,19 @@ export async function executeSketchCreate(
     return err({ code: 'INVALID_INPUT', message: `Part not found: ${partId}` });
   }
 
+  let planeRef: PlaneRef;
+  if (face !== undefined) {
+    const parsed = parseFaceArg(face, partId as PartId, 'face');
+    if (!parsed.ok) return parsed;
+    planeRef = parsed.value;
+  } else {
+    planeRef = { type: 'defaultPlane', name: plane as 'XY' | 'XZ' | 'YZ' };
+  }
+
   const cmd: CadCommand = {
     type: 'CreateSketch',
     partId: partId as PartId,
-    plane: { type: 'defaultPlane', name: plane },
+    plane: planeRef,
   };
   try {
     const after = asProject(await host.dispatchCommand(cmd));
@@ -713,7 +746,9 @@ export async function executeSketchDrawPoint(
  *   - **Shape translation.** The tool-facing shape is flat
  *     (`distance: 5, direction: 'normal'`); the CadCommand shape is
  *     nested (`extent: { type: 'distance', value: '5' }`,
- *     `direction: { type: 'normal' }`).
+ *     `direction: { type: 'normal' }`). `startFace` / `toFace`
+ *     (`{ bodyId, stableFaceId }`) become `startFrom` and a `toPlane`
+ *     extent on that face.
  *
  * Returns `{ featureId }` — the new extrude feature in the part timeline.
  */
@@ -723,9 +758,17 @@ export async function executeFeatureExtrude(
 ): Promise<Result<{ featureId: FeatureId }, ToolExecutionError>> {
   const sketchId = args['sketchId'];
   const distance = args['distance'];
+  const toFaceArg = args['toFace'];
+  const startFaceArg = args['startFace'];
+  const startOffsetArg = args['startOffset'];
   if (typeof sketchId !== 'string') return err(invalidInput('`sketchId` must be a string'));
-  if (typeof distance !== 'number' || !Number.isFinite(distance) || distance === 0) {
+  if (toFaceArg !== undefined) {
+    if (distance !== undefined) return err(invalidInput('Pass `distance` or `toFace`, not both'));
+  } else if (typeof distance !== 'number' || !Number.isFinite(distance) || distance === 0) {
     return err(invalidInput('`distance` must be a non-zero finite number (mm)'));
+  }
+  if (startOffsetArg !== undefined && (typeof startOffsetArg !== 'number' || !Number.isFinite(startOffsetArg))) {
+    return err(invalidInput('`startOffset` must be a finite number (mm)'));
   }
 
   const opRaw = args['operation'];
@@ -739,6 +782,9 @@ export async function executeFeatureExtrude(
   if (direction !== 'normal' && direction !== 'reversed' && direction !== 'symmetric') {
     return err(invalidInput("`direction` must be 'normal', 'reversed', or 'symmetric'"));
   }
+  if (direction === 'symmetric' && toFaceArg !== undefined) {
+    return err(invalidInput("`toFace` can't be combined with direction 'symmetric'"));
+  }
 
   const before = asProject(host.getDocument());
   const partId = resolveSketchPart(before, sketchId);
@@ -747,6 +793,18 @@ export async function executeFeatureExtrude(
   }
   const targets = parseTargetBodies(args, partId);
   if (!targets.ok) return targets;
+  let toFace: PlaneRef | undefined;
+  if (toFaceArg !== undefined) {
+    const parsed = parseFaceArg(toFaceArg, partId, 'toFace');
+    if (!parsed.ok) return parsed;
+    toFace = parsed.value;
+  }
+  let startFrom: PlaneRef | undefined;
+  if (startFaceArg !== undefined) {
+    const parsed = parseFaceArg(startFaceArg, partId, 'startFace');
+    if (!parsed.ok) return parsed;
+    startFrom = parsed.value;
+  }
 
   // Build profiles: either from the caller's explicit list, or auto-fill
   // from the sketch's detected regions.
@@ -793,8 +851,8 @@ export async function executeFeatureExtrude(
   }
 
   // Build the ExtrudeFeatureInputs. 'symmetric' direction maps to a
-  // symmetric extent; otherwise we use a distance extent with the
-  // matching direction.
+  // symmetric extent; `toFace` to a toPlane extent on that face;
+  // otherwise we use a distance extent with the matching direction.
   const distanceStr = String(distance);
   const inputs: ExtrudeFeatureInputs =
     direction === 'symmetric'
@@ -808,8 +866,12 @@ export async function executeFeatureExtrude(
           profiles,
           operation: operation as 'newBody' | 'join' | 'cut',
           direction: { type: direction as 'normal' | 'reversed' },
-          extent: { type: 'distance', value: distanceStr },
+          extent: toFace
+            ? { type: 'toPlane', plane: toFace }
+            : { type: 'distance', value: distanceStr },
         };
+  if (startFrom) inputs.startFrom = startFrom;
+  if (startOffsetArg !== undefined) inputs.startOffset = String(startOffsetArg);
   if (targets.value) inputs.targetBodies = targets.value;
 
   const cmd: CadCommand = {

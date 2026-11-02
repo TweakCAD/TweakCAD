@@ -1512,6 +1512,7 @@ export class OcctKernel implements CadKernel {
     uAxis: Vec3;
     vAxis: Vec3;
     normal: Vec3;
+    planar: boolean;
   }> {
     const k = this.getKernel();
     const fh = this.getFaceShape(face);
@@ -1542,6 +1543,7 @@ export class OcctKernel implements CadKernel {
       uAxis: uDir,
       vAxis: vDir,
       normal,
+      planar: k.surfaceType(fh) === 'plane',
     };
   }
 

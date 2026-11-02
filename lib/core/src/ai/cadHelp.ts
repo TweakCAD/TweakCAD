@@ -181,6 +181,23 @@ If the kernel chokes with \`makeArcEdge: WebAssembly.Exception\`,
 your rectangle is exactly tangent to the circles. Nudge the
 rectangle by 1e-3 mm to break exact tangency.
 
+### Pattern E: holes in a box's top face that follow its height
+
+Anchor to the face, not to a typed offset, so re-dimensioning the box
+keeps the holes on the top:
+
+\`\`\`
+1. list_bodies(partId) → bodyId; list_faces(bodyId) → top face's stableFaceId
+2. sketch_create(partId, face={ bodyId, stableFaceId }) → { sketchId }
+   // an upward face uses the XZ mapping: x = +X, y = -Z, at the face height
+3. sketch_draw_circle(sketchId, [18, 12], 1.6)  // × each insert hole
+4. feature_extrude(sketchId, 6, operation='cut', direction='reversed')
+\`\`\`
+
+\`feature_extrude\` also takes \`startFace\` (start on a face instead of
+the sketch plane) and \`toFace\` (go up to a face instead of a distance);
+both follow their face on rebuild.
+
 ### Pattern C: extrude failed — what now?
 
 \`\`\`

@@ -6,17 +6,25 @@
  * and operation type (New Body / Join / Cut).
  *
  * Handles:
+ *   - Start: the profile plane, or a picked face
+ *   - Extent: distance / symmetric / through all / to a plane or a picked
+ *     face
  *   - Distance input with live validation
- *   - Direction: Normal / Reversed / Symmetric
+ *   - Direction: Normal / Reversed
  *   - Operation: New Body / Join / Cut
  *   - OK / Cancel buttons
  *   - Keyboard: Enter to confirm, Escape to cancel
+ *
+ * Face picks happen in the viewport: the dialog arms a slot (start or end)
+ * through `onArmFaceSlot`, and the parent feeds the picked face back in as
+ * `startFace` / `endFace`.
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { ExtrudeIcon } from '../icons/cadIcons.tsx';
-import { ArrowUp, ArrowDown } from 'lucide-react';
+import { ArrowUp, ArrowDown, X } from 'lucide-react';
 import { PanelHeader } from './PanelHeader.tsx';
+import type { PlaneRef } from '@tweakcad/core/src/document/schema.ts';
 
 // ---- Types ----
 
@@ -28,6 +36,29 @@ export type ExtrudeDirection = 'normal' | 'reversed';
 export type ExtrudeOperation = 'newBody' | 'join' | 'cut';
 export type ExtrudeExtentType = 'distance' | 'symmetric' | 'throughAll' | 'toPlane';
 export type ExtrudeDefaultPlane = 'XY' | 'XZ' | 'YZ';
+/** Where the extrude starts: the sketch plane, or a picked face. */
+export type ExtrudeStartType = 'profile' | 'face';
+/**
+ * Target of a `toPlane` extent: a default plane, a construction plane
+ * (`cp:<featureId>`), or the picked end face.
+ */
+export type ExtrudeTargetPlane = ExtrudeDefaultPlane | `cp:${string}` | 'face';
+/** Which face slot a viewport face pick fills. */
+export type ExtrudeFaceSlot = 'start' | 'end';
+
+/** A face picked in the viewport, shown in a face slot. */
+export interface ExtrudePickedFace {
+  /** Display label, e.g. "Face 4a2b3c". */
+  label: string;
+  /** Stable face reference written into the feature. */
+  planeRef: PlaneRef;
+}
+
+/** A construction plane offered as a `toPlane` target. */
+export interface ExtrudeConstructionPlaneOption {
+  featureId: string;
+  name: string;
+}
 
 /** A body the user can pick as the target for join / cut. */
 export interface ExtrudeAvailableBody {
@@ -40,10 +71,12 @@ export interface ExtrudeAvailableBody {
 export interface ExtrudeDialogResult {
   distance: number;
   startOffset: number;
+  /** `face` starts the extrude on `startFace` instead of the sketch plane. */
+  startType: ExtrudeStartType;
   direction: ExtrudeDirection;
   extentType: ExtrudeExtentType;
-  /** Target plane for `extentType: 'toPlane'`. Undefined for other modes. */
-  targetPlane?: ExtrudeDefaultPlane;
+  /** Target plane for `extentType: 'toPlane'`. Undefined for other modes; 'face' means `endFace`. */
+  targetPlane?: ExtrudeTargetPlane;
   operation: ExtrudeOperation;
   /** Picked target body for join / cut. Undefined means no pick. */
   targetBodyId?: string;
@@ -53,9 +86,10 @@ export interface ExtrudeDialogResult {
 export interface ExtrudeDialogInitialValues {
   distance?: number;
   startOffset?: number;
+  startType?: ExtrudeStartType;
   direction?: ExtrudeDirection;
   extentType?: ExtrudeExtentType;
-  targetPlane?: ExtrudeDefaultPlane;
+  targetPlane?: ExtrudeTargetPlane;
   operation?: ExtrudeOperation;
   targetBodyId?: string;
 }
@@ -69,6 +103,18 @@ interface ExtrudeDialogProps {
   initialValues?: ExtrudeDialogInitialValues | undefined;
   /** Bodies currently in the part — populates the target-body picker. */
   availableBodies?: ExtrudeAvailableBody[] | undefined;
+  /** Construction planes offered as `toPlane` targets, after XY / XZ / YZ. */
+  constructionPlanes?: ExtrudeConstructionPlaneOption[] | undefined;
+  /** Face the extrude starts from, once picked. */
+  startFace?: ExtrudePickedFace | null | undefined;
+  /** Face the extrude goes up to, once picked. */
+  endFace?: ExtrudePickedFace | null | undefined;
+  /** The slot the next viewport face pick fills; null when not picking. */
+  armedFaceSlot?: ExtrudeFaceSlot | null | undefined;
+  /** Arm a slot for a viewport face pick, or disarm with null. */
+  onArmFaceSlot?: ((slot: ExtrudeFaceSlot | null) => void) | undefined;
+  /** Empty a face slot. */
+  onClearFace?: ((slot: ExtrudeFaceSlot) => void) | undefined;
   /** Called when user confirms the extrude */
   onConfirm: (result: ExtrudeDialogResult) => void;
   /** Called when user cancels */
@@ -77,12 +123,17 @@ interface ExtrudeDialogProps {
 
 // ---- Component ----
 
-export function ExtrudeDialog({ sketchName, profileCount = 1, initialValues, availableBodies, onConfirm, onCancel }: ExtrudeDialogProps) {
+export function ExtrudeDialog({
+  sketchName, profileCount = 1, initialValues, availableBodies, constructionPlanes,
+  startFace = null, endFace = null, armedFaceSlot = null, onArmFaceSlot, onClearFace,
+  onConfirm, onCancel,
+}: ExtrudeDialogProps) {
   const [distance, setDistance] = useState(String(initialValues?.distance ?? 10));
   const [startOffset, setStartOffset] = useState(String(initialValues?.startOffset ?? 0));
+  const [startType, setStartType] = useState<ExtrudeStartType>(initialValues?.startType ?? 'profile');
   const [direction, setDirection] = useState<ExtrudeDirection>(initialValues?.direction ?? 'normal');
   const [extentType, setExtentType] = useState<ExtrudeExtentType>(initialValues?.extentType ?? 'distance');
-  const [targetPlane, setTargetPlane] = useState<ExtrudeDefaultPlane>(initialValues?.targetPlane ?? 'XY');
+  const [targetPlane, setTargetPlane] = useState<ExtrudeTargetPlane>(initialValues?.targetPlane ?? 'face');
   const [operation, setOperation] = useState<ExtrudeOperation>(initialValues?.operation ?? 'newBody');
   const [targetBodyId, setTargetBodyId] = useState<string>(initialValues?.targetBodyId ?? '');
   const [error, setError] = useState<string | null>(null);
@@ -129,12 +180,21 @@ export function ExtrudeDialog({ sketchName, profileCount = 1, initialValues, ava
       }
       num = parsed;
     }
+    if (startType === 'face' && !startFace) {
+      setError('Pick the face to start from');
+      return;
+    }
+    if (extentType === 'toPlane' && targetPlane === 'face' && !endFace) {
+      setError('Pick the face to extrude to');
+      return;
+    }
     const parsedStartOffset = Number(startOffset);
     // Build with optional fields conditionally — exactOptionalPropertyTypes
     // bans passing `undefined` for `?:` props.
     const payload: ExtrudeDialogResult = {
       distance: num,
       startOffset: Number.isFinite(parsedStartOffset) ? parsedStartOffset : 0,
+      startType,
       direction,
       extentType,
       operation,
@@ -142,7 +202,29 @@ export function ExtrudeDialog({ sketchName, profileCount = 1, initialValues, ava
     if (extentType === 'toPlane') payload.targetPlane = targetPlane;
     if (showTargetBodyPicker && targetBodyId) payload.targetBodyId = targetBodyId;
     onConfirm(payload);
-  }, [distance, startOffset, direction, extentType, targetPlane, operation, targetBodyId, distanceRelevant, showTargetBodyPicker, onConfirm, validate]);
+  }, [distance, startOffset, startType, startFace, endFace, direction, extentType, targetPlane, operation, targetBodyId, distanceRelevant, showTargetBodyPicker, onConfirm, validate]);
+
+  // Choosing a face option arms its slot so the next viewport click fills it.
+  const chooseStartType = useCallback((next: ExtrudeStartType) => {
+    setStartType(next);
+    setError(null);
+    if (next === 'face' && !startFace) onArmFaceSlot?.('start');
+    if (next === 'profile' && armedFaceSlot === 'start') onArmFaceSlot?.(null);
+  }, [startFace, armedFaceSlot, onArmFaceSlot]);
+
+  const chooseTargetPlane = useCallback((next: ExtrudeTargetPlane) => {
+    setTargetPlane(next);
+    setError(null);
+    if (next === 'face' && !endFace) onArmFaceSlot?.('end');
+    if (next !== 'face' && armedFaceSlot === 'end') onArmFaceSlot?.(null);
+  }, [endFace, armedFaceSlot, onArmFaceSlot]);
+
+  const chooseExtentType = useCallback((next: ExtrudeExtentType) => {
+    setExtentType(next);
+    setError(null);
+    if (next === 'toPlane' && targetPlane === 'face' && !endFace) onArmFaceSlot?.('end');
+    if (next !== 'toPlane' && armedFaceSlot === 'end') onArmFaceSlot?.(null);
+  }, [targetPlane, endFace, armedFaceSlot, onArmFaceSlot]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -177,10 +259,10 @@ export function ExtrudeDialog({ sketchName, profileCount = 1, initialValues, ava
         <div style={styles.row}>
           <span style={styles.label}>Extent</span>
           <div style={styles.toggleGroup}>
-            <ToggleButton active={extentType === 'distance'}    onClick={() => setExtentType('distance')}    label="Dist" />
-            <ToggleButton active={extentType === 'symmetric'}   onClick={() => setExtentType('symmetric')}   label="Sym" />
-            <ToggleButton active={extentType === 'throughAll'}  onClick={() => setExtentType('throughAll')}  label="Thru" />
-            <ToggleButton active={extentType === 'toPlane'}     onClick={() => setExtentType('toPlane')}     label="Plane" />
+            <ToggleButton active={extentType === 'distance'}    onClick={() => chooseExtentType('distance')}    label="Dist" />
+            <ToggleButton active={extentType === 'symmetric'}   onClick={() => chooseExtentType('symmetric')}   label="Sym" />
+            <ToggleButton active={extentType === 'throughAll'}  onClick={() => chooseExtentType('throughAll')}  label="Thru" />
+            <ToggleButton active={extentType === 'toPlane'}     onClick={() => chooseExtentType('toPlane')}     label="To" />
           </div>
         </div>
 
@@ -206,25 +288,59 @@ export function ExtrudeDialog({ sketchName, profileCount = 1, initialValues, ava
           </div>
         )}
 
-        {/* Target plane — only for toPlane extent */}
+        {/* Target plane: a default or construction plane, or a picked face */}
         {extentType === 'toPlane' && (
           <div style={styles.row}>
-            <span style={styles.label}>To plane</span>
+            <span style={styles.label}>To</span>
             <select
               value={targetPlane}
-              onChange={e => setTargetPlane(e.target.value as ExtrudeDefaultPlane)}
+              onChange={e => chooseTargetPlane(e.target.value as ExtrudeTargetPlane)}
               style={styles.select}
+              aria-label="Extrude up to"
             >
-              <option value="XY">XY</option>
-              <option value="XZ">XZ</option>
-              <option value="YZ">YZ</option>
+              <option value="face">Face</option>
+              <option value="XY">XY plane</option>
+              <option value="XZ">XZ plane</option>
+              <option value="YZ">YZ plane</option>
+              {(constructionPlanes ?? []).map(cp => (
+                <option key={cp.featureId} value={`cp:${cp.featureId}`}>{cp.name}</option>
+              ))}
             </select>
           </div>
+        )}
+        {extentType === 'toPlane' && targetPlane === 'face' && (
+          <FaceSlot
+            face={endFace}
+            armed={armedFaceSlot === 'end'}
+            emptyHint="Click the face to extrude to"
+            onArm={() => onArmFaceSlot?.('end')}
+            onClear={() => { onClearFace?.('end'); onArmFaceSlot?.('end'); }}
+            clearTitle="Remove end face"
+          />
+        )}
+
+        {/* Start: the profile plane, or a picked face */}
+        <div style={styles.row}>
+          <span style={styles.label}>Start</span>
+          <div style={styles.toggleGroup}>
+            <ToggleButton active={startType === 'profile'} onClick={() => chooseStartType('profile')} label="Profile" />
+            <ToggleButton active={startType === 'face'}    onClick={() => chooseStartType('face')}    label="Face" />
+          </div>
+        </div>
+        {startType === 'face' && (
+          <FaceSlot
+            face={startFace}
+            armed={armedFaceSlot === 'start'}
+            emptyHint="Click the face to start from"
+            onArm={() => onArmFaceSlot?.('start')}
+            onClear={() => { onClearFace?.('start'); onArmFaceSlot?.('start'); }}
+            clearTitle="Remove start face"
+          />
         )}
 
         {error && <div style={styles.error}>{error}</div>}
 
-        {/* Start offset input */}
+        {/* Start offset input — measured from the start plane or face */}
         <div style={styles.row}>
           <span style={styles.label}>Offset</span>
           <div style={styles.inputGroup}>
@@ -323,6 +439,47 @@ export function ExtrudeDialog({ sketchName, profileCount = 1, initialValues, ava
 }
 
 // ---- Sub-components ----
+
+/**
+ * One face slot: the picked face with a remove button, or a hint while
+ * empty. Clicking the row arms it, so the next viewport face click fills it.
+ */
+function FaceSlot({ face, armed, emptyHint, onArm, onClear, clearTitle }: {
+  face: ExtrudePickedFace | null;
+  armed: boolean;
+  emptyHint: string;
+  onArm: () => void;
+  onClear: () => void;
+  clearTitle: string;
+}) {
+  return (
+    <div style={styles.faceSlotWrap}>
+      <div
+        role="button"
+        tabIndex={0}
+        style={{ ...styles.faceSlot, borderColor: armed ? '#a8cef0' : '#eee', background: armed ? '#f0f7fe' : '#fafafa' }}
+        onClick={onArm}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onArm(); } }}
+      >
+        {face ? (
+          <>
+            <span style={styles.faceLabel}>{face.label}</span>
+            <button
+              type="button"
+              style={styles.faceRemove}
+              onClick={e => { e.stopPropagation(); onClear(); }}
+              title={clearTitle}
+            >
+              <X size={11} />
+            </button>
+          </>
+        ) : (
+          <span style={styles.faceHint}>{emptyHint}</span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 interface ToggleButtonProps {
   active: boolean;
@@ -492,6 +649,45 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     color: '#dc2626',
     padding: '0 12px 4px',
+  },
+  faceSlotWrap: {
+    padding: '0 12px 6px',
+  },
+  faceSlot: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 26,
+    padding: '2px 6px',
+    border: '1px solid #eee',
+    borderRadius: 4,
+    cursor: 'pointer',
+  },
+  faceLabel: {
+    flex: 1,
+    fontSize: 12,
+    color: '#333',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  faceHint: {
+    fontSize: 11,
+    color: '#aaa',
+    fontStyle: 'italic',
+  },
+  faceRemove: {
+    width: 18,
+    height: 18,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    border: 'none',
+    background: 'transparent',
+    color: '#888',
+    cursor: 'pointer',
+    borderRadius: 3,
+    padding: 0,
   },
   toggleGroup: {
     display: 'flex',

@@ -10,6 +10,7 @@ import type {
   TopologyMap,
   FeatureBuildResult,
   ConstructionPlaneDisplay,
+  SketchPlaneDisplay,
 } from '@tweakcad/core/src/document/schema.ts';
 import type { PartId, BodyId } from '@tweakcad/core/src/ids.ts';
 import type { KernelBody } from '@tweakcad/kernel/src/types.ts';
@@ -29,6 +30,8 @@ export type RebuildResult = {
    * empty); the viewport replaces its CP layer on every rebuild.
    */
   constructionPlanes: ConstructionPlaneDisplay[];
+  /** World frames of the sketches placed on body faces, as resolved this rebuild. */
+  sketchPlanes: SketchPlaneDisplay[];
   /** Mapping from bodyId to the featureId that created it */
   bodyToFeatureMap: Record<string, string>;
   diagnostics: string[];

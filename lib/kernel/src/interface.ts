@@ -229,8 +229,8 @@ export interface CadKernel {
   /**
    * Extract a planar reference frame from a face. Used by features that
    * anchor to a face — Construction Plane (offset-from-face mode),
-   * Hole (face + center in 2D coords), and any future Sketch-on-face
-   * flow.
+   * Hole (face + center in 2D coords), sketches on a face and extrude
+   * start / extent faces.
    *
    * Returns the face's surface centroid as `origin`, the outward surface
    * normal at the UV midpoint as `normal`, and a right-handed u/v basis
@@ -240,13 +240,16 @@ export interface CadKernel {
    *
    * For non-planar faces (cylinder, sphere, cone) this returns the
    * tangent plane at the surface centroid — useful for "tangent to face"
-   * placement but the caller should validate planarity if it matters.
+   * placement. `planar` is true only when the face's underlying surface
+   * is a plane; callers that need a real plane (sketch on face, extrude
+   * from / to a face) reject the face otherwise.
    */
   getFacePlane(face: KernelFace): Promise<{
     origin: Vec3;
     uAxis: Vec3;
     vAxis: Vec3;
     normal: Vec3;
+    planar: boolean;
   }>;
 
   /** Get the bounding box of a body */

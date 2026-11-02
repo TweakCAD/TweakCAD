@@ -361,10 +361,29 @@ export type ExtrudeFeatureInputs = {
   operation: 'newBody' | 'join' | 'cut';
   direction: DirectionSpec;
   extent: ExtentSpec;
+  /**
+   * Shift of the profile along the extrude direction before extruding.
+   * With `startFrom` set it is measured from that plane instead of from
+   * the sketch plane.
+   */
   startOffset?: Expression;
+  /**
+   * Start the extrude from this plane instead of the sketch plane: a body
+   * face (`stableTopology`, must be planar) or a construction / default
+   * plane. The profile is moved along the sketch
+   * normal onto it, and the face is re-resolved on every rebuild, so the
+   * extrude follows it when upstream dimensions change. Absent = start at
+   * the sketch plane.
+   */
+  startFrom?: PlaneRef;
   targetBodies?: BodyRef[];
 };
 
+/**
+ * How far an extrude goes. `toPlane` extrudes up to a plane: a default or
+ * construction plane, or a planar body face (`stableTopology`),
+ * re-resolved on every rebuild.
+ */
 export type ExtentSpec =
   | { type: 'distance'; value: Expression }
   | { type: 'throughAll' }
@@ -1090,6 +1109,13 @@ export type ComponentFeatureInputs = {
 
 // --- References ---
 
+/**
+ * A plane a feature anchors to. `stableTopology` names a planar body face:
+ * a sketch on it uses the frame from `sketchFrameOnPlane`
+ * (`sketch/facePlane.ts`), and extrude start / extent planes use its plane.
+ * The face is resolved asynchronously through the kernel on every rebuild
+ * (`resolvePlaneRefAsync` in the worker), so the anchor follows the face.
+ */
 export type PlaneRef =
   | { type: 'defaultPlane'; name: 'XY' | 'YZ' | 'XZ' }
   | { type: 'constructionPlane'; planeId: string }
@@ -1195,6 +1221,20 @@ export type ConstructionPlaneDisplay = {
   name: string;
   /** Whether to render it. Mirrors `FeatureNode.visible`. */
   visible: boolean;
+  origin: Vec3;
+  uAxis: Vec3;
+  vAxis: Vec3;
+  normal: Vec3;
+};
+
+/**
+ * Worker→main-thread world frame of a sketch placed on a body face
+ * (`PlaneRef.stableTopology`). Published on every rebuild so the editor
+ * draws and edits the sketch where the worker resolved it — the face moves
+ * when upstream dimensions change, and only the worker can resolve it.
+ */
+export type SketchPlaneDisplay = {
+  featureId: FeatureId;
   origin: Vec3;
   uAxis: Vec3;
   vAxis: Vec3;

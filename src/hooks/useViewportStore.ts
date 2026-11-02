@@ -4,7 +4,7 @@
  */
 
 import { useCallback, useSyncExternalStore } from 'react';
-import type { DisplayMesh, TopologyMap, ConstructionPlaneDisplay, FeatureBuildResult } from '@tweakcad/core/src/document/schema.ts';
+import type { DisplayMesh, TopologyMap, ConstructionPlaneDisplay, FeatureBuildResult, SketchPlaneDisplay } from '@tweakcad/core/src/document/schema.ts';
 import type { BodyId, FeatureId } from '@tweakcad/core/src/ids.ts';
 import { getAppState } from '../appInit.ts';
 
@@ -69,6 +69,22 @@ export function useConstructionPlanes(): ConstructionPlaneDisplay[] {
       [viewportStore],
     ),
     useCallback(() => viewportStore.getState().constructionPlanes, [viewportStore]),
+  );
+}
+
+/**
+ * Subscribe to the frames of sketches placed on body faces, as the last
+ * rebuild resolved them.
+ */
+export function useSketchPlanes(): SketchPlaneDisplay[] {
+  const { viewportStore } = getAppState();
+
+  return useSyncExternalStore(
+    useCallback(
+      (callback: () => void) => viewportStore.subscribe(callback),
+      [viewportStore],
+    ),
+    useCallback(() => viewportStore.getState().sketchPlanes, [viewportStore]),
   );
 }
 

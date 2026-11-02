@@ -8,7 +8,7 @@
  * - Consumed/created body tracking per feature
  */
 
-import type { CadPart, CadProject, DisplayMesh, TopologyMap, FeatureBuildResult, FeatureNode, OperationEffect, ConstructionPlaneDisplay } from '@tweakcad/core/src/document/schema.ts';
+import type { CadPart, CadProject, DisplayMesh, TopologyMap, FeatureBuildResult, FeatureNode, OperationEffect, ConstructionPlaneDisplay, SketchPlaneDisplay } from '@tweakcad/core/src/document/schema.ts';
 import type { FeatureId, BodyId } from '@tweakcad/core/src/ids.ts';
 import { resolveAllParameters } from '@tweakcad/core/src/parameters/evaluator.ts';
 import { applyActiveConfiguration } from '@tweakcad/core/src/commands/handlers/configurationCommands.ts';
@@ -143,6 +143,7 @@ export async function incrementalRebuild(
       topologyMaps: [],
       bodies: [],
       constructionPlanes: [],
+      sketchPlanes: [],
       bodyToFeatureMap: {},
       diagnostics: [`Parameter resolution failed: ${paramResult.error}`],
     };
@@ -483,6 +484,27 @@ export async function incrementalRebuild(
     });
   }
 
+  // Frames of sketches on body faces, as resolved on this rebuild — the
+  // editor can't resolve a face itself, and the face moves with upstream
+  // dimensions.
+  const sketchPlanes: SketchPlaneDisplay[] = [];
+  for (const feature of part.timeline) {
+    if (feature.type !== 'sketch') continue;
+    const ref = (feature.inputs as { plane?: { type?: string } }).plane;
+    if (ref?.type !== 'stableTopology') continue;
+    const planeData = context.featureOutputs.get(feature.id)?.data?.['plane'] as
+      | { origin: [number, number, number]; uAxis: [number, number, number]; vAxis: [number, number, number]; normal: [number, number, number] }
+      | undefined;
+    if (!planeData) continue;
+    sketchPlanes.push({
+      featureId: feature.id,
+      origin: planeData.origin,
+      uAxis: planeData.uAxis,
+      vAxis: planeData.vAxis,
+      normal: planeData.normal,
+    });
+  }
+
   const hasFailures = featureResults.some(r => r.status === 'failed');
 
   // Hand these to the next rebuild on this kernel to free — see
@@ -498,6 +520,7 @@ export async function incrementalRebuild(
     topologyMaps,
     bodies: bodyEntries,
     constructionPlanes,
+    sketchPlanes,
     bodyToFeatureMap,
     diagnostics,
   };

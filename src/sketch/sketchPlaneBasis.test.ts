@@ -9,7 +9,9 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { parseSvg } from '@tweakcad/core/src/sketch/io/svgImport.ts';
 import { DEFAULT_PLANES } from '@tweakcad/worker/src/featureBuilders/resolvePlane.ts';
-import { planeConfigFromName, type SketchPlaneConfig } from './SketchSceneManager.ts';
+import { sketchFrameOnPlane } from '@tweakcad/core/src/sketch/facePlane.ts';
+import type { Vec3 } from '@tweakcad/core/src/math.ts';
+import { planeConfigFromBasis, planeConfigFromName, type SketchPlaneConfig } from './SketchSceneManager.ts';
 
 const PLANES = ['XY', 'XZ', 'YZ'] as const;
 
@@ -88,5 +90,33 @@ describe('default sketch plane bases', () => {
     const svgArea = area(outline.map((p, i) => [p, outline[(i + 1) % outline.length]!]));
     const screenArea = area(lines.map(l => [toScreen(plane, camera, l.start), toScreen(plane, camera, l.end)]));
     expect(Math.sign(screenArea)).toBe(-Math.sign(svgArea));
+  });
+});
+
+describe('face sketch frames', () => {
+  const s = Math.SQRT1_2;
+  const NORMALS: Array<[string, Vec3]> = [
+    ['top (+Y)', [0, 1, 0]], ['bottom (-Y)', [0, -1, 0]],
+    ['front (+Z)', [0, 0, 1]], ['back (-Z)', [0, 0, -1]],
+    ['right (+X)', [1, 0, 0]], ['left (-X)', [-1, 0, 0]],
+    ['45° slope', [s, s, 0]], ['oblique', [0.3, -0.4, 0.866]],
+  ];
+
+  it.each(NORMALS)('%s: a sketch reads unmirrored from the sketch camera', (_label, normal) => {
+    const plane = planeConfigFromBasis(sketchFrameOnPlane(normal, [3, 4, 5]));
+    const camera = sketchCamera(plane);
+    // A counter-clockwise triangle in sketch coordinates stays
+    // counter-clockwise on screen.
+    const [a, b, c] = ([[0, 0], [10, 0], [0, 10]] as [number, number][]).map(p => toScreen(plane, camera, p));
+    const signed = (b![0] - a![0]) * (c![1] - a![1]) - (c![0] - a![0]) * (b![1] - a![1]);
+    expect(signed).toBeGreaterThan(0);
+  });
+
+  it.each(NORMALS.filter(([, n]) => Math.abs(n[1]) < 0.9))('%s: sketch +y reads up on screen', (_label, normal) => {
+    const plane = planeConfigFromBasis(sketchFrameOnPlane(normal, [0, 0, 0]));
+    const camera = sketchCamera(plane);
+    const [, oy] = toScreen(plane, camera, [0, 0]);
+    const [, uy] = toScreen(plane, camera, [0, 10]);
+    expect(uy - oy).toBeGreaterThan(0);
   });
 });

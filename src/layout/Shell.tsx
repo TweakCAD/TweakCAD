@@ -6,7 +6,7 @@ import { ViewportController } from '@tweakcad/viewport/src/ViewportController.ts
 import { useDocumentState, useUndoRedo, useCommandBus } from '../hooks/useDocumentStore.ts';
 import { getAppState } from '../appInit.ts';
 import type { PartId, FeatureId, BodyId } from '@tweakcad/core/src/ids.ts';
-import type { ProfileRef, SketchFeatureInputs, SketchEntity, ExtrudeFeatureInputs, PlaneRef, ConstructionPlaneDisplay, PrimitiveFeatureInputs, PrimitiveKind, MoveFeatureInputs, EdgeRef, FaceRef, SketchEditorSnapshot, LoftFeatureInputs, HoleFeatureInputs } from '@tweakcad/core/src/document/schema.ts';
+import type { ProfileRef, SketchFeatureInputs, SketchEntity, ExtrudeFeatureInputs, PlaneRef, ConstructionPlaneDisplay, SketchPlaneDisplay, PrimitiveFeatureInputs, PrimitiveKind, MoveFeatureInputs, EdgeRef, FaceRef, SketchEditorSnapshot, LoftFeatureInputs, HoleFeatureInputs } from '@tweakcad/core/src/document/schema.ts';
 import { regionToProfileRef } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import { sketchToDxf } from '@tweakcad/core/src/sketch/io/dxf.ts';
 import { dxfToEditorState } from '@tweakcad/core/src/sketch/io/dxfImport.ts';
@@ -21,7 +21,7 @@ import type { SavedCameraState } from '@tweakcad/core/src/store/sketchStore.ts';
 import type { SketchToolId } from '@tweakcad/core/src/sketch/types.ts';
 import { useConsoleStore, consoleLog } from '@tweakcad/core/src/store/consoleStore.ts';
 import { detectSketchRegions } from '@tweakcad/core/src/sketch/profileRegions.ts';
-import { useDisplayMeshes, useTopologyMaps, useRebuilding, useBodyToFeatureMap, useConstructionPlanes, useFeatureResults } from '../hooks/useViewportStore.ts';
+import { useDisplayMeshes, useTopologyMaps, useRebuilding, useBodyToFeatureMap, useConstructionPlanes, useFeatureResults, useSketchPlanes } from '../hooks/useViewportStore.ts';
 import { withDocumentVisibility } from './planeVisibility.ts';
 import { computeAllBodyDisplayModes } from '@tweakcad/viewport/src/displayMode.ts';
 import type { DisplayContext } from '@tweakcad/core/src/store/displayContextStore.ts';
@@ -49,7 +49,7 @@ import type { SketchPlanePick } from '../sketch/SketchPlanePicker.tsx';
 import { applySketchConstraint } from '../sketch/sketchConstraints.ts';
 import type { SketchConstraintKind } from '../components/MainToolbar.tsx';
 import { ExtrudeDialog } from '../components/ExtrudeDialog.tsx';
-import type { ExtrudeDialogResult, ExtrudeDialogInitialValues } from '../components/ExtrudeDialog.tsx';
+import type { ExtrudeDialogResult, ExtrudeDialogInitialValues, ExtrudeFaceSlot, ExtrudePickedFace, ExtrudeTargetPlane } from '../components/ExtrudeDialog.tsx';
 import { RevolveDialog } from '../components/RevolveDialog.tsx';
 import type { RevolveDialogResult } from '../components/RevolveDialog.tsx';
 import { LoftDialog } from '../components/LoftDialog.tsx';
@@ -139,17 +139,27 @@ import type { SaasState } from '../storage/index.ts';
  *   only knows the three default planes — passing a CP ref there
  *   crashes the editor).
  *
- * Falls back to 'XZ' when a construction plane hasn't been built yet (its
- * display isn't in the list) so the editor degrades instead of throwing.
+ * - A **body face** maps to the sketch's frame as the last rebuild resolved
+ *   it (`sketchPlanes`, keyed by the sketch's own id) — only the worker can
+ *   resolve the face, and it moves with upstream dimensions.
+ *
+ * Falls back to 'XZ' when a construction plane or face hasn't been built yet
+ * (or no longer resolves) so the editor degrades instead of throwing.
  */
 function resolveSketchPlaneInput(
   plane: PlaneRef | undefined,
   constructionPlanes: ConstructionPlaneDisplay[],
+  sketchPlanes: SketchPlaneDisplay[],
+  sketchId: string,
 ): SketchPlaneInput {
   if (plane?.type === 'defaultPlane') return plane.name;
   if (plane?.type === 'constructionPlane') {
     const cp = constructionPlanes.find(p => String(p.featureId) === plane.planeId);
     if (cp) return planeConfigFromBasis(cp);
+  }
+  if (plane?.type === 'stableTopology') {
+    const frame = sketchPlanes.find(p => String(p.featureId) === sketchId);
+    if (frame) return planeConfigFromBasis(frame);
   }
   return 'XZ';
 }
@@ -247,6 +257,7 @@ export function Shell({
   const featureResults = useFeatureResults();
   const rebuilding = useRebuilding();
   const bodyToFeatureMap = useBodyToFeatureMap();
+  const sketchPlanes = useSketchPlanes();
 
   /**
    * The part every creation command targets. Resolved against the live
@@ -464,6 +475,12 @@ export function Shell({
     editingFeatureId: FeatureId | null;
     /** Pre-populate dialog when editing an existing feature */
     initialValues?: ExtrudeDialogInitialValues;
+    /** Face the extrude starts from (Start: Face). */
+    startFace?: ExtrudePickedFace | null;
+    /** Face the extrude goes up to (Extent: To → Face). */
+    endFace?: ExtrudePickedFace | null;
+    /** Face slot the next viewport face click fills; null while picking profiles. */
+    faceSlot?: ExtrudeFaceSlot | null;
   }>({ visible: false, sketchId: null, sketchName: '', profiles: [], editingFeatureId: null });
 
   // Revolve dialog state. Profiles is constrained to 0 or 1 entries — revolve
@@ -1090,19 +1107,28 @@ export function Shell({
     setSketchPickingPlane(false);
 
     // A sketch on a default plane anchors on nothing, so it lands in
-    // the active part; on a construction plane it joins that plane's part.
+    // the active part; on a construction plane or a body face it joins the
+    // part that plane or body belongs to.
     const partId = pick.kind === 'construction'
       ? partForFeature(pick.featureId)
-      : activePartId;
+      : pick.kind === 'face'
+        ? partForBody(pick.bodyId)
+        : activePartId;
     if (!partId) return;
 
     // Map the picker's discriminated pick into the corresponding PlaneRef
-    // variant the document schema accepts. The downstream sketch builder's
-    // `resolvePlaneRef` handles both shapes uniformly.
+    // variant the document schema accepts. A face is stored by its stable
+    // id, so every rebuild re-resolves it and the sketch follows the face.
     const planeRef: PlaneRef =
       pick.kind === 'default'
         ? { type: 'defaultPlane', name: pick.name }
-        : { type: 'constructionPlane', planeId: pick.featureId };
+        : pick.kind === 'construction'
+          ? { type: 'constructionPlane', planeId: pick.featureId }
+          : {
+              type: 'stableTopology',
+              bodyRef: { partId, bodyId: pick.bodyId },
+              stableFaceId: pick.stableFaceId,
+            };
 
     // A pending DXF import dispatches `CreateSketchFromImport` (seeds the
     // parsed geometry as one undo entry); otherwise a fresh `CreateSketch`.
@@ -1139,11 +1165,15 @@ export function Shell({
     // Resolve the picked plane to a renderer plane input. For a default
     // plane that's just the name; for a construction plane it's the real
     // world basis (origin + axes + normal) from the live display list, so
-    // the sketch draws at the datum plane's actual offset location. The
+    // the sketch draws at the datum plane's actual offset location. A face
+    // hasn't been built as a sketch yet, so its frame comes from the pick —
+    // the same `sketchFrameOnPlane` the worker applies to the face. The
     // camera view name is derived from that basis. (A construction plane's
     // `basePlane` PlaneRef object must not be cast to a name string and fed
     // to the editor — that throws.)
-    const planeInput = resolveSketchPlaneInput(planeRef, constructionPlanes);
+    const planeInput = pick.kind === 'face'
+      ? planeConfigFromBasis(pick.frame)
+      : resolveSketchPlaneInput(planeRef, constructionPlanes, sketchPlanes, sketchFId);
     const editorPlaneName = viewNameForPlaneInput(planeInput);
     setSketchPlaneName(editorPlaneName);
     setSketchPlaneConfig(typeof planeInput === 'string' ? null : planeInput);
@@ -1164,9 +1194,13 @@ export function Shell({
       savedCamera,
     );
     setSketchTool(null);
-    const label = pick.kind === 'default' ? pick.name : `${pick.name} (${editorPlaneName})`;
+    const label = pick.kind === 'default'
+      ? pick.name
+      : pick.kind === 'face'
+        ? `face ${String(pick.stableFaceId).slice(-6)}`
+        : `${pick.name} (${editorPlaneName})`;
     consoleLog('info', `Created sketch on ${label}: ${newSketch.name}`, 'sketch');
-  }, [partForFeature, activePartId, commandBus, constructionPlanes, sketchActions]);
+  }, [partForFeature, partForBody, activePartId, commandBus, constructionPlanes, sketchPlanes, sketchActions]);
 
   // There is no exit-time sketch sync. Every sketch mutation goes
   // through the bus, and every handler rebuilds `inputs.buildGeometry` via
@@ -1233,7 +1267,10 @@ export function Shell({
     // handed to enterSketch so it round-trips correctly. (For a construction
     // plane, `planeConfig` is non-null and flows to the editor so geometry
     // draws at the datum plane's actual location.)
-    const planeInput = resolveSketchPlaneInput(inputs.plane, constructionPlanes);
+    const planeInput = resolveSketchPlaneInput(inputs.plane, constructionPlanes, sketchPlanes, sketchFeatureId);
+    if (inputs.plane?.type === 'stableTopology' && typeof planeInput === 'string') {
+      consoleLog('warn', `${sketchFeature.name}: its face did not resolve on the last rebuild, so it opens on XZ`, 'sketch');
+    }
     const viewName = viewNameForPlaneInput(planeInput);
     const planeConfig = typeof planeInput === 'string' ? null : planeInput;
     const planeRefForEnter: PlaneRef = inputs.plane ?? { type: 'defaultPlane', name: viewName };
@@ -1289,7 +1326,7 @@ export function Shell({
     // No tool selected by default - user picks from toolbar
     setSketchTool(null);
     consoleLog('info', `Editing sketch: ${sketchFeature.name} (${loadedCount} entities loaded)`, 'sketch');
-  }, [project.parts, sketchActions, constructionPlanes]);
+  }, [project.parts, sketchActions, constructionPlanes, sketchPlanes]);
 
   // ---- Extrude handlers ----
 
@@ -1400,20 +1437,30 @@ export function Shell({
       ? { type: 'reversed' as const }
       : { type: 'normal' as const };
 
-    // Map extent enum back to the schema union.
-    const extent = result.extentType === 'symmetric'
+    // Map extent enum back to the schema union. A `toPlane` target is a
+    // default plane, a construction plane (`cp:<id>`), or the picked face.
+    const toPlaneRef = (target: ExtrudeTargetPlane | undefined): PlaneRef | null => {
+      if (target === 'face') return extrudeState.endFace?.planeRef ?? null;
+      if (target?.startsWith('cp:')) return { type: 'constructionPlane', planeId: target.slice(3) };
+      return { type: 'defaultPlane', name: (target as 'XY' | 'XZ' | 'YZ' | undefined) ?? 'XY' };
+    };
+    const targetPlaneRef = result.extentType === 'toPlane' ? toPlaneRef(result.targetPlane) : null;
+    if (result.extentType === 'toPlane' && !targetPlaneRef) {
+      consoleLog('error', 'Pick the face to extrude to', 'extrude');
+      return;
+    }
+    const extent: ExtrudeFeatureInputs['extent'] = result.extentType === 'symmetric'
       ? { type: 'symmetric' as const, value: String(result.distance) }
       : result.extentType === 'throughAll'
         ? { type: 'throughAll' as const }
-        : result.extentType === 'toPlane'
-          ? {
-              type: 'toPlane' as const,
-              plane: {
-                type: 'defaultPlane' as const,
-                name: result.targetPlane ?? 'XY',
-              },
-            }
+        : targetPlaneRef
+          ? { type: 'toPlane' as const, plane: targetPlaneRef }
           : { type: 'distance' as const, value: String(result.distance) };
+    const startFrom = result.startType === 'face' ? extrudeState.startFace?.planeRef : undefined;
+    if (result.startType === 'face' && !startFrom) {
+      consoleLog('error', 'Pick the face to start from', 'extrude');
+      return;
+    }
 
     // Empty picker = "Auto" → leave targetBodies undefined so join and cut
     // act on the bodies the extrude touches. When the user
@@ -1429,6 +1476,7 @@ export function Shell({
       direction,
       extent,
       startOffset: String(result.startOffset),
+      ...(startFrom ? { startFrom } : {}),
       ...(targetBodies ? { targetBodies } : {}),
     };
 
@@ -1461,7 +1509,55 @@ export function Shell({
     }
 
     setExtrudeState({ visible: false, sketchId: null, sketchName: '', profiles: [], editingFeatureId: null });
-  }, [extrudeState.sketchId, extrudeState.profiles, extrudeState.editingFeatureId, partForFeature, commandBus]);
+  }, [extrudeState.sketchId, extrudeState.profiles, extrudeState.editingFeatureId, extrudeState.startFace, extrudeState.endFace, partForFeature, commandBus]);
+
+  /** Arm (or disarm) an Extrude face slot for the next viewport face click. */
+  const handleExtrudeArmFaceSlot = useCallback((slot: ExtrudeFaceSlot | null) => {
+    // Clear the selection so clicking the face that is already selected
+    // still registers as a pick.
+    if (slot) getAppState().selectionStore.getState().select(null);
+    setExtrudeState(prev => ({ ...prev, faceSlot: slot }));
+    if (slot) consoleLog('info', `Click the face to ${slot === 'start' ? 'start the extrude from' : 'extrude to'}`, 'extrude');
+  }, []);
+
+  const handleExtrudeClearFace = useCallback((slot: ExtrudeFaceSlot) => {
+    setExtrudeState(prev => (slot === 'start' ? { ...prev, startFace: null } : { ...prev, endFace: null }));
+  }, []);
+
+  /**
+   * While an Extrude face slot is armed, a viewport face click fills it with
+   * a stable face reference, so the extrude follows the face on rebuild.
+   * Same capture as the Hole dialog's face pick.
+   */
+  useEffect(() => {
+    if (!extrudeState.visible || !extrudeState.faceSlot) return;
+    const slot = extrudeState.faceSlot;
+    const { selectionStore, viewportStore } = getAppState();
+    const unsubscribe = selectionStore.subscribe((state, prev) => {
+      const sel = state.selection;
+      if (!sel || sel.type !== 'face') return;
+      const prevSel = prev?.selection;
+      if (prevSel?.type === 'face' && prevSel.bodyId === sel.bodyId && prevSel.faceId === sel.faceId) return;
+      const topo = viewportStore.getState().topologyMaps.find(t => t.bodyId === sel.bodyId);
+      const face = topo?.faces.find(f => f.faceId === sel.faceId);
+      if (!face?.stableFaceId) {
+        consoleLog('warn', `Face has no stable id yet (body ${sel.bodyId}); pick it again after the rebuild`, 'extrude');
+        return;
+      }
+      const picked: ExtrudePickedFace = {
+        label: `Face ${String(face.stableFaceId).slice(-6)}`,
+        planeRef: {
+          type: 'stableTopology',
+          bodyRef: { partId: sel.partId, bodyId: sel.bodyId },
+          stableFaceId: face.stableFaceId,
+        },
+      };
+      setExtrudeState(prev => (slot === 'start'
+        ? { ...prev, startFace: picked, faceSlot: null }
+        : { ...prev, endFace: picked, faceSlot: null }));
+    });
+    return () => { unsubscribe(); };
+  }, [extrudeState.visible, extrudeState.faceSlot]);
 
   const handleExtrudeCancel = useCallback(() => {
     useSketchEditorStore.getState().setSelectionIntent('editGeometry');
@@ -1742,10 +1838,18 @@ export function Shell({
               inputs.extent?.type === 'throughAll' ? 'throughAll' as const :
               inputs.extent?.type === 'toPlane'    ? 'toPlane'    as const :
                                                       'distance'    as const;
-            const existingTargetPlane =
-              inputs.extent?.type === 'toPlane' && inputs.extent.plane?.type === 'defaultPlane'
-                ? (inputs.extent.plane.name as 'XY' | 'XZ' | 'YZ')
-                : 'XY' as const;
+            const extentPlane = inputs.extent?.type === 'toPlane' ? inputs.extent.plane : undefined;
+            const existingTargetPlane: ExtrudeTargetPlane =
+              extentPlane?.type === 'defaultPlane' ? extentPlane.name
+                : extentPlane?.type === 'constructionPlane' ? `cp:${extentPlane.planeId}`
+                  : extentPlane?.type === 'stableTopology' ? 'face'
+                    : 'XY';
+            const faceOf = (ref: PlaneRef | undefined): ExtrudePickedFace | null =>
+              ref?.type === 'stableTopology'
+                ? { label: `Face ${String(ref.stableFaceId).slice(-6)}`, planeRef: ref }
+                : null;
+            const existingStartFace = faceOf(inputs.startFrom);
+            const existingEndFace = faceOf(extentPlane);
             const existingOperation = inputs.operation ?? 'newBody';
             const existingTargetBodyId =
               Array.isArray(inputs.targetBodies) && inputs.targetBodies.length > 0
@@ -1777,9 +1881,13 @@ export function Shell({
               sketchName: feature.name,
               profiles,
               editingFeatureId: featureId as FeatureId,
+              startFace: existingStartFace,
+              endFace: existingEndFace,
+              faceSlot: null,
               initialValues: {
                 distance: existingDistance,
                 startOffset: existingOffset,
+                startType: existingStartFace ? 'face' : 'profile',
                 direction: existingDirection,
                 extentType: existingExtentType,
                 targetPlane: existingTargetPlane,
@@ -2846,6 +2954,8 @@ export function Shell({
    * discriminated pick into the PlaneRef variant the schema expects.
    */
   const handlePlaneDialogPlanePicked = useCallback((pick: SketchPlanePick) => {
+    // Mounted without `pickFaces`, so a face never arrives here.
+    if (pick.kind === 'face') return;
     const planeRef: PlaneRef =
       pick.kind === 'default'
         ? { type: 'defaultPlane', name: pick.name }
@@ -3372,6 +3482,12 @@ export function Shell({
       viewportCtrl.setPickMode('edgeOrFace');
       return;
     }
+    if (extrudeState.visible && extrudeState.faceSlot) {
+      // An armed Extrude face slot (start / end face) takes face clicks;
+      // the profile picker is paused meanwhile.
+      viewportCtrl.setPickMode('face');
+      return;
+    }
     if (mirrorState.visible || patternState.visible) {
       // Mirror + Pattern both pick bodies — flipping pickMode to 'body'
       // lets the viewport raycaster return body-level hits even when
@@ -3402,7 +3518,7 @@ export function Shell({
       return;
     }
     viewportCtrl.setPickMode(otherPickerActive ? 'none' : 'face');
-  }, [viewportCtrl, sketchActive, extrudeState.visible, revolveState.visible, loftState.visible, filletState.visible, chamferState.visible, planeState.visible, planeState.kind, holeState.visible, mirrorState.visible, shellState.visible, patternState.visible]);
+  }, [viewportCtrl, sketchActive, extrudeState.visible, extrudeState.faceSlot, revolveState.visible, loftState.visible, filletState.visible, chamferState.visible, planeState.visible, planeState.kind, holeState.visible, mirrorState.visible, shellState.visible, patternState.visible]);
 
   // Push meshes to viewport when they change (including clearing when empty)
   useEffect(() => {
@@ -3749,12 +3865,12 @@ export function Shell({
         if (sketchActive && feature.id === editorActiveSketchId) continue;
         const inputs = feature.inputs as unknown as SketchFeatureInputs;
         if (Object.keys(sketchBuildGeometry(inputs)).length === 0) continue;
-        const plane = resolveSketchPlaneInput(inputs.plane, constructionPlanes);
+        const plane = resolveSketchPlaneInput(inputs.plane, constructionPlanes, sketchPlanes, feature.id);
         result.push({ id: feature.id, inputs, plane });
       }
     }
     return result;
-  }, [parts, sketchActive, editorActiveSketchId, constructionPlanes]);
+  }, [parts, sketchActive, editorActiveSketchId, constructionPlanes, sketchPlanes]);
 
   return (
     <div style={styles.root}>
@@ -3986,11 +4102,13 @@ export function Shell({
           )}
           {/* Sketch plane picker overlay (shown after clicking Sketch).
               Existing construction planes are passed through so the user can pick
-              one as the sketch base alongside the three default planes. */}
+              one as the sketch base alongside the three default planes, and any
+              flat body face is pickable too. */}
           {sketchPickingPlane && !sketchActive && viewportCtrl && (
             <SketchPlanePicker
               viewportCtrl={viewportCtrl}
               constructionPlanes={activePartPlanes}
+              pickFaces
               onPick={handlePlanePicked}
               onCancel={handleCancelPlanePick}
             />
@@ -4095,7 +4213,7 @@ export function Shell({
               .find(f => f.id === String(extrudeState.sketchId) && f.type === 'sketch');
             if (!sketchFeature) return null;
             const skInputs = sketchFeature.inputs as unknown as SketchFeatureInputs;
-            const skPlane = resolveSketchPlaneInput(skInputs.plane, constructionPlanes);
+            const skPlane = resolveSketchPlaneInput(skInputs.plane, constructionPlanes, sketchPlanes, sketchFeature.id);
             return (
               <ErrorBoundary
                 scopeLabel="the sketch profile picker"
@@ -4108,7 +4226,9 @@ export function Shell({
                   planeName={skPlane}
                   sketchId={extrudeState.sketchId}
                   initialProfiles={extrudeState.profiles}
-                  onProfilesChanged={(profiles) => {
+                  // Display-only while a face slot is armed, so a face click
+                  // doesn't also toggle the profile under it.
+                  onProfilesChanged={extrudeState.faceSlot ? undefined : (profiles) => {
                     setExtrudeState(prev => ({ ...prev, profiles }));
                   }}
                 />
@@ -4143,6 +4263,12 @@ export function Shell({
                 profileCount={extrudeState.profiles.length}
                 initialValues={extrudeState.initialValues}
                 availableBodies={availableBodies}
+                constructionPlanes={activePartPlanes.map(cp => ({ featureId: String(cp.featureId), name: cp.name }))}
+                startFace={extrudeState.startFace ?? null}
+                endFace={extrudeState.endFace ?? null}
+                armedFaceSlot={extrudeState.faceSlot ?? null}
+                onArmFaceSlot={handleExtrudeArmFaceSlot}
+                onClearFace={handleExtrudeClearFace}
                 onConfirm={handleExtrudeConfirm}
                 onCancel={handleExtrudeCancel}
               />
@@ -4155,7 +4281,7 @@ export function Shell({
               .find(f => f.id === String(revolveState.sketchId) && f.type === 'sketch');
             if (!sketchFeature) return null;
             const skInputs = sketchFeature.inputs as unknown as SketchFeatureInputs;
-            const skPlane = resolveSketchPlaneInput(skInputs.plane, constructionPlanes);
+            const skPlane = resolveSketchPlaneInput(skInputs.plane, constructionPlanes, sketchPlanes, sketchFeature.id);
             return (
               <ErrorBoundary
                 scopeLabel="the sketch profile picker"

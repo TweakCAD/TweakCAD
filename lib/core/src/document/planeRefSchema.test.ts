@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PlaneRef } from './schema.ts';
 import { bodyId, partId, stableFaceId } from '../ids.ts';
-import { PlaneRefSchema, ConstructionPlaneFeatureInputsSchema } from './validation.ts';
+import { PlaneRefSchema, ConstructionPlaneFeatureInputsSchema, ExtrudeFeatureInputsSchema } from './validation.ts';
 
 describe('PlaneRefSchema', () => {
   it('accepts a stableTopology plane ref', () => {
@@ -61,5 +61,23 @@ describe('PlaneRefSchema', () => {
       offset: '5',
     };
     expect(ConstructionPlaneFeatureInputsSchema.safeParse(inputs).success).toBe(true);
+  });
+
+  it('validates an extrude started from a face and extruded up to another face', () => {
+    const face = (stableFaceId: string) => ({
+      type: 'stableTopology',
+      bodyRef: { partId: 'p1', bodyId: 'body_a' },
+      stableFaceId,
+    });
+    const inputs = {
+      profiles: [{ sketchId: 's1', wireEntityIds: ['c1'] }],
+      operation: 'cut',
+      direction: { type: 'normal' },
+      extent: { type: 'toPlane', plane: face('face_top') },
+      startFrom: face('face_floor'),
+      startOffset: '1',
+    };
+    expect(ExtrudeFeatureInputsSchema.safeParse(inputs).success).toBe(true);
+    expect(ExtrudeFeatureInputsSchema.safeParse({ ...inputs, startFrom: { type: 'face' } }).success).toBe(false);
   });
 });

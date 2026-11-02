@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { triangleToFaceId, segmentToEdgeId } from './topologyLookup.ts';
+import { triangleToFaceId, segmentToEdgeId, faceMeshPlane } from './topologyLookup.ts';
 import type { TopologyMap } from '@tweakcad/core/src/document/schema.ts';
 import { bodyId, faceId, edgeId } from '@tweakcad/core/src/ids.ts';
 
@@ -103,5 +103,36 @@ describe('segmentToEdgeId', () => {
     const map = makeEdges([2]);
     expect(segmentToEdgeId(-1, map)).toBeNull();
     expect(segmentToEdgeId(0.5, map)).toBeNull();
+  });
+});
+
+describe('faceMeshPlane', () => {
+  // A unit square at y = 5 (two triangles wound so the normal is +Y),
+  // then a 90° bend down the side x = 1 (two more triangles).
+  const positions = new Float32Array([
+    0, 5, 0,   0, 5, 1,   1, 5, 1,   1, 5, 0,
+    1, 4, 0,   1, 4, 1,
+  ]);
+  const indices = new Uint32Array([
+    0, 1, 2,   0, 2, 3,   // top, +Y
+    3, 2, 5,   3, 5, 4,   // side, +X
+  ]);
+
+  it('returns the plane of a flat face, oriented by its winding', () => {
+    const plane = faceMeshPlane(positions, indices, 0, 2);
+    expect(plane).not.toBeNull();
+    expect(plane!.normal[0]).toBeCloseTo(0, 9);
+    expect(plane!.normal[1]).toBeCloseTo(1, 9);
+    expect(plane!.normal[2]).toBeCloseTo(0, 9);
+    expect(plane!.point[1]).toBe(5);
+  });
+
+  it('rejects a face whose triangles do not share one plane', () => {
+    expect(faceMeshPlane(positions, indices, 0, 4)).toBeNull();
+  });
+
+  it('rejects an empty or degenerate range', () => {
+    expect(faceMeshPlane(positions, indices, 2, 2)).toBeNull();
+    expect(faceMeshPlane(new Float32Array(9), new Uint32Array([0, 1, 2]), 0, 1)).toBeNull();
   });
 });

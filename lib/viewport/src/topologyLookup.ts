@@ -81,3 +81,61 @@ export function segmentToEdgeId(
   }
   return null;
 }
+
+/** A flat face's plane, read off its tessellation. */
+export type MeshFacePlane = {
+  /** Unit normal, oriented like the triangles' winding (outward). */
+  normal: [number, number, number];
+  /** A point on the plane (the first vertex of the face). */
+  point: [number, number, number];
+};
+
+/**
+ * The plane of the face covering triangles `[triStart, triEnd)` of an
+ * indexed mesh, or null when the face isn't flat: some triangle tilts away
+ * from the area-weighted normal, or a vertex sits off the plane by more than
+ * `tolerance` mm. A tessellated cylinder fails both checks; a planar face
+ * with holes passes.
+ */
+export function faceMeshPlane(
+  positions: ArrayLike<number>,
+  indices: ArrayLike<number>,
+  triStart: number,
+  triEnd: number,
+  tolerance = 1e-3,
+): MeshFacePlane | null {
+  if (!(triEnd > triStart)) return null;
+  const vert = (i: number): [number, number, number] => {
+    const k = indices[i]! * 3;
+    return [positions[k]!, positions[k + 1]!, positions[k + 2]!];
+  };
+  const triNormal = (t: number): [number, number, number] => {
+    const a = vert(t * 3), b = vert(t * 3 + 1), c = vert(t * 3 + 2);
+    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+    const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+    return [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx];
+  };
+
+  let nx = 0, ny = 0, nz = 0;
+  for (let t = triStart; t < triEnd; t++) {
+    const n = triNormal(t);
+    nx += n[0]; ny += n[1]; nz += n[2];
+  }
+  const len = Math.hypot(nx, ny, nz);
+  if (!(len > 1e-12)) return null;
+  const normal: [number, number, number] = [nx / len, ny / len, nz / len];
+  const point = vert(triStart * 3);
+  const d = normal[0] * point[0] + normal[1] * point[1] + normal[2] * point[2];
+
+  for (let t = triStart; t < triEnd; t++) {
+    const n = triNormal(t);
+    const nLen = Math.hypot(n[0], n[1], n[2]);
+    // Sliver triangles carry no reliable direction; the vertex check covers them.
+    if (nLen > 1e-9 && (n[0] * normal[0] + n[1] * normal[1] + n[2] * normal[2]) / nLen < 0.9999) return null;
+    for (let i = t * 3; i < t * 3 + 3; i++) {
+      const p = vert(i);
+      if (Math.abs(normal[0] * p[0] + normal[1] * p[1] + normal[2] * p[2] - d) > tolerance) return null;
+    }
+  }
+  return { normal, point };
+}

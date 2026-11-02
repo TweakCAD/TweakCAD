@@ -245,6 +245,7 @@ const ExtrudeFeatureInputsSchema = z.object({
   direction: DirectionSpecSchema,
   extent: ExtentSpecSchema,
   startOffset: ExpressionSchema.optional(),
+  startFrom: PlaneRefSchema.optional(),
   targetBodies: z.array(BodyRefSchema).optional(),
 });
 

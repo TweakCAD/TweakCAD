@@ -22,7 +22,7 @@ import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
 import type { BuildContext, BuildResult } from '@tweakcad/core/src/features/contracts.ts';
 import { detectSketchRegions } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import type { SketchRegion } from '@tweakcad/core/src/sketch/profileRegions.ts';
-import { resolvePlaneRef } from './resolvePlane.ts';
+import { resolveSketchPlaneRef } from './resolvePlane.ts';
 
 // ---- Resolved entity types (stored in featureOutputs) ----
 //
@@ -64,7 +64,7 @@ export async function buildSketch(
   node: FeatureNode,
   params: ResolvedParams,
   context: BuildContext,
-  _kernel: CadKernel,
+  kernel: CadKernel,
 ): Promise<BuildResult> {
   const inputs = node.inputs as unknown as SketchFeatureInputs;
 
@@ -155,8 +155,10 @@ export async function buildSketch(
   // Resolve the sketch plane. Default planes resolve to canonical bases;
   // a sketch authored on a construction plane reads the upstream plane
   // output via the shared resolver — same plane shape regardless of
-  // whether the source is a default plane or a Plane feature.
-  const plane: ResolvedSketchPlaneData = resolvePlaneRef(inputs.plane, context, params);
+  // whether the source is a default plane or a Plane feature. A sketch on
+  // a body face resolves the face on this rebuild, so it follows the face
+  // when upstream dimensions move it, and fails when the face is gone.
+  const plane: ResolvedSketchPlaneData = await resolveSketchPlaneRef(inputs.plane, context, params, kernel);
 
   const resolvedRegions = Object.fromEntries(
     detectSketchRegions(literalEntities).map(region => [region.id, region]),

@@ -5,7 +5,7 @@
  */
 
 import { createStore } from 'zustand/vanilla';
-import type { DisplayMesh, TopologyMap, PartBuildArtifact, ConstructionPlaneDisplay, FeatureBuildResult } from '../document/schema.ts';
+import type { DisplayMesh, TopologyMap, PartBuildArtifact, ConstructionPlaneDisplay, FeatureBuildResult, SketchPlaneDisplay } from '../document/schema.ts';
 import type { PartId, BodyId, FeatureId } from '../ids.ts';
 
 /** One part's slice of a rebuild, kept so the others survive its republish. */
@@ -13,6 +13,7 @@ export type PartRebuildResult = {
   meshes: DisplayMesh[];
   topoMaps: TopologyMap[];
   constructionPlanes: ConstructionPlaneDisplay[];
+  sketchPlanes: SketchPlaneDisplay[];
   featureResults: FeatureBuildResult[];
   bodyToFeature: Record<BodyId, FeatureId>;
 };
@@ -31,6 +32,12 @@ export type ViewportState = {
    * be empty). Replaced atomically on every rebuild.
    */
   constructionPlanes: ConstructionPlaneDisplay[];
+  /**
+   * World frames of the sketches placed on body faces, as the last rebuild
+   * resolved them. The editor draws such a sketch here; it can't resolve
+   * the face itself.
+   */
+  sketchPlanes: SketchPlaneDisplay[];
   /**
    * The last rebuild result per part. The flat fields above are the
    * concatenation of these, which is what the viewport, the tree and
@@ -63,6 +70,7 @@ export type ViewportState = {
     constructionPlanes: ConstructionPlaneDisplay[],
     featureResults: FeatureBuildResult[],
     bodyToFeature?: Record<BodyId, FeatureId>,
+    sketchPlanes?: SketchPlaneDisplay[],
   ) => void;
   /**
    * Drop results for parts that are no longer in the document — an undo
@@ -83,16 +91,18 @@ function flatten(resultsByPart: Record<PartId, PartRebuildResult>) {
   const displayMeshes: DisplayMesh[] = [];
   const topologyMaps: TopologyMap[] = [];
   const constructionPlanes: ConstructionPlaneDisplay[] = [];
+  const sketchPlanes: SketchPlaneDisplay[] = [];
   const featureResults = {} as Record<FeatureId, FeatureBuildResult>;
   const bodyToFeatureMap = {} as Record<BodyId, FeatureId>;
   for (const part of Object.values(resultsByPart)) {
     displayMeshes.push(...part.meshes);
     topologyMaps.push(...part.topoMaps);
     constructionPlanes.push(...part.constructionPlanes);
+    sketchPlanes.push(...part.sketchPlanes);
     for (const r of part.featureResults) featureResults[r.featureId] = r;
     Object.assign(bodyToFeatureMap, part.bodyToFeature);
   }
-  return { displayMeshes, topologyMaps, constructionPlanes, featureResults, bodyToFeatureMap };
+  return { displayMeshes, topologyMaps, constructionPlanes, sketchPlanes, featureResults, bodyToFeatureMap };
 }
 
 export function createViewportStore() {
@@ -102,6 +112,7 @@ export function createViewportStore() {
     partArtifacts: {} as Record<PartId, PartBuildArtifact>,
     bodyToFeatureMap: {} as Record<BodyId, FeatureId>,
     constructionPlanes: [],
+    sketchPlanes: [],
     resultsByPart: {} as Record<PartId, PartRebuildResult>,
     featureResults: {} as Record<FeatureId, FeatureBuildResult>,
     rebuilding: false,
@@ -114,6 +125,7 @@ export function createViewportStore() {
       constructionPlanes: ConstructionPlaneDisplay[],
       featureResults: FeatureBuildResult[],
       bodyToFeature?: Record<BodyId, FeatureId>,
+      sketchPlanes?: SketchPlaneDisplay[],
     ) => {
       set(state => {
         const resultsByPart = {
@@ -122,6 +134,7 @@ export function createViewportStore() {
             meshes,
             topoMaps,
             constructionPlanes,
+            sketchPlanes: sketchPlanes ?? [],
             featureResults,
             bodyToFeature: bodyToFeature ?? {},
           },
@@ -162,6 +175,7 @@ export function createViewportStore() {
         partArtifacts: {} as Record<PartId, PartBuildArtifact>,
         bodyToFeatureMap: {} as Record<BodyId, FeatureId>,
         constructionPlanes: [],
+        sketchPlanes: [],
         featureResults: {} as Record<FeatureId, FeatureBuildResult>,
         rebuilding: false,
         rebuildError: null,

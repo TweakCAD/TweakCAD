@@ -288,6 +288,7 @@ export class MockKernel implements CadKernel {
       uAxis: [1, 0, 0] as [number, number, number],
       vAxis: [0, 1, 0] as [number, number, number],
       normal: [0, 0, 1] as [number, number, number],
+      planar: true,
     };
   }
 

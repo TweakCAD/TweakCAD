@@ -8,7 +8,7 @@
  * 3. If any profile fails to resolve, the entire feature fails
  */
 
-import type { FeatureNode, ExtrudeFeatureInputs, ProfileRef, PlaneRef } from '@tweakcad/core/src/document/schema.ts';
+import type { FeatureNode, ExtrudeFeatureInputs, ProfileRef } from '@tweakcad/core/src/document/schema.ts';
 import type { ResolvedParams } from '@tweakcad/core/src/expressions.ts';
 import { evaluateExpression } from '@tweakcad/core/src/expressions.ts';
 import { mintBodyId } from './bodyIdentity.ts';
@@ -27,7 +27,7 @@ import type {
   ResolvedSketchEntityData,
   ResolvedSketchPlaneData,
 } from './buildSketch.ts';
-import { DEFAULT_PLANES, resolvePlaneRef } from './resolvePlane.ts';
+import { DEFAULT_PLANES, resolvePlaneRefAsync } from './resolvePlane.ts';
 import {
   regionHasCurveSegments,
   regionSegmentsToWire,
@@ -107,14 +107,24 @@ export async function buildExtrude(
     : undefined;
   const extrudeAxis = resolveExtrudeAxis(inputs, firstProfile);
 
+  // How far the profile moves along the sketch normal before extruding:
+  // onto the `startFrom` plane when set, plus the start offset.
+  const startShift = await resolveStartShift(inputs, params, context, kernel, sketchPlane) + signedOffset;
+  const sketchOrigin: Vec3 = sketchPlane?.origin ?? [0, 0, 0];
+  const sketchNormal: Vec3 = sketchPlane?.normal ?? firstProfile?.normal ?? [0, 0, 1];
+  const startPoint: Vec3 = [
+    sketchOrigin[0] + sketchNormal[0] * startShift,
+    sketchOrigin[1] + sketchNormal[1] * startShift,
+    sketchOrigin[2] + sketchNormal[2] * startShift,
+  ];
+
   const distance = await resolveExtentDistance(
     inputs,
     params,
     context,
     kernel,
     extrudeAxis,
-    sketchPlane,
-    startOffset,
+    startPoint,
     targetEntries.map(([, h]) => h),
   );
 
@@ -155,7 +165,7 @@ export async function buildExtrude(
     // Apply offset, then back-shift by half-distance for symmetric so
     // the body straddles the sketch plane.
     let shifted = profile;
-    if (signedOffset !== 0) shifted = offsetProfile(shifted, signedOffset);
+    if (startShift !== 0) shifted = offsetProfile(shifted, startShift);
     if (isSymmetric) shifted = offsetProfile(shifted, -distance / 2);
 
     const faceResult = await kernel.createSketchFace(shifted);
@@ -396,6 +406,31 @@ function resolveStartOffset(inputs: ExtrudeFeatureInputs, params: ResolvedParams
 }
 
 /**
+ * Distance along the sketch normal from the sketch plane to the
+ * `startFrom` plane, measured at the sketch origin: how far the profile
+ * moves so the extrude starts on that plane. 0 without `startFrom`.
+ * Resolved on every rebuild, so an extrude started from a face follows it.
+ */
+async function resolveStartShift(
+  inputs: ExtrudeFeatureInputs,
+  params: ResolvedParams,
+  context: BuildContext,
+  kernel: CadKernel,
+  sketchPlane: ResolvedSketchPlaneData | undefined,
+): Promise<number> {
+  if (!inputs.startFrom) return 0;
+  const start = await resolvePlaneRefAsync(inputs.startFrom, context, params, kernel, 'Extrude start face');
+  const origin: Vec3 = sketchPlane?.origin ?? [0, 0, 0];
+  const normal: Vec3 = sketchPlane?.normal ?? [0, 0, 1];
+  const along = dot(start.normal, normal);
+  if (Math.abs(along) < 1e-6) {
+    throw new Error('Extrude start face is perpendicular to the sketch plane, so the profile can never reach it');
+  }
+  const gap: Vec3 = [start.origin[0] - origin[0], start.origin[1] - origin[1], start.origin[2] - origin[2]];
+  return dot(start.normal, gap) / along;
+}
+
+/**
  * Compute the unit vector along which the extrude grows. Encodes the
  * `direction` field once so the per-profile loop and the throughAll /
  * toPlane distance resolvers share the same axis.
@@ -426,16 +461,16 @@ function resolveExtrudeAxis(
  *
  *  - `distance` / `symmetric` evaluate the stored Expression.
  *  - `throughAll` projects each target body's AABB onto the axis and
- *    spans from the start position (sketchPlane.origin + startOffset)
- *    to the farthest projected corner, plus slop. With no targets in
- *    scope, falls back to 100 mm so the feature still produces
+ *    spans from the start position (the sketch origin moved onto the
+ *    start plane) to the farthest projected corner, plus slop. With no
+ *    targets in scope, falls back to 100 mm so the feature still produces
  *    geometry.
- *  - `toPlane` resolves the target plane via the shared resolver and
- *    returns the signed projection of (targetOrigin − sketchOrigin)
- *    onto the axis, less the startOffset. Throws if the target is at
- *    or behind the start position (extrude would have zero / negative
- *    length) or if the target plane is parallel to the axis (the
- *    extrude could never reach it).
+ *  - `toPlane` resolves the target plane (default, construction or a
+ *    planar body face) and returns the distance along the axis from the
+ *    start position to it. Throws if the target is at or behind the start
+ *    position (extrude would have zero / negative length) or if the
+ *    target plane is parallel to the axis (the extrude could never reach
+ *    it).
  */
 async function resolveExtentDistance(
   inputs: ExtrudeFeatureInputs,
@@ -443,8 +478,7 @@ async function resolveExtentDistance(
   context: BuildContext,
   kernel: CadKernel,
   extrudeAxis: Vec3,
-  sketchPlane: ResolvedSketchPlaneData | undefined,
-  startOffset: number,
+  startPoint: Vec3,
   targetHandles: KernelBody[],
 ): Promise<number> {
   if (inputs.extent.type === 'distance' || inputs.extent.type === 'symmetric') {
@@ -453,8 +487,7 @@ async function resolveExtentDistance(
     return r.value;
   }
 
-  const origin: Vec3 = sketchPlane?.origin ?? [0, 0, 0];
-  const startProj = dot(origin, extrudeAxis) + startOffset;
+  const startProj = dot(startPoint, extrudeAxis);
 
   if (inputs.extent.type === 'throughAll') {
     if (targetHandles.length === 0) return 100;
@@ -479,14 +512,19 @@ async function resolveExtentDistance(
   }
 
   if (inputs.extent.type === 'toPlane') {
-    const target = resolvePlaneRef(inputs.extent.plane as PlaneRef, context, params);
+    const target = await resolvePlaneRefAsync(inputs.extent.plane, context, params, kernel, 'Extrude end face');
     const targetNormal = target.normal;
     const axisDotNormal = dot(extrudeAxis, targetNormal);
     if (Math.abs(axisDotNormal) < 1e-9) {
       throw new Error('Extrude toPlane: target plane is parallel to the extrude direction (would never reach)');
     }
-    const targetProj = dot(target.origin, extrudeAxis);
-    const signedDist = targetProj - startProj;
+    // Where the ray from the start position along the axis meets the plane.
+    const gap: Vec3 = [
+      target.origin[0] - startPoint[0],
+      target.origin[1] - startPoint[1],
+      target.origin[2] - startPoint[2],
+    ];
+    const signedDist = dot(targetNormal, gap) / axisDotNormal;
     if (signedDist <= 1e-9) {
       throw new Error('Extrude toPlane: target plane is at or behind the start position');
     }

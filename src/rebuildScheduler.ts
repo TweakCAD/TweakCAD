@@ -209,6 +209,7 @@ async function rebuildPart(
         meshes: fallbackResult.meshes,
         topologyMaps: fallbackResult.topologyMaps,
         constructionPlanes: fallbackResult.constructionPlanes,
+        sketchPlanes: fallbackResult.sketchPlanes,
         bodyToFeatureMap: fallbackResult.bodyToFeatureMap,
         diagnostics: fallbackResult.diagnostics,
       };
@@ -239,6 +240,7 @@ async function rebuildPart(
       result.constructionPlanes,
       result.featureResults,
       bodyToFeature,
+      result.sketchPlanes,
     );
   } catch (error) {
     console.error('[RebuildScheduler] Rebuild failed:', error);

@@ -251,7 +251,10 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
     name: 'sketch_create',
     description:
       'Create a new sketch feature on the given part, sitting on one of ' +
-      'the three default planes (XY, XZ, YZ). Returns `{ sketchId }`. ' +
+      'the three default planes (`plane`: XY, XZ, YZ) or on a planar body ' +
+      'face (`face`). A sketch on a face follows the face on every rebuild, ' +
+      'so it stays put on the face when upstream dimensions change. ' +
+      'Returns `{ sketchId }`. ' +
       "Use the sketchId in subsequent sketch_draw_* and feature_extrude calls.",
     inputSchema: {
       type: 'object',
@@ -268,8 +271,26 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
             'map to world XY: +X / +Y, XZ: +X / -Z, YZ: -Z / +Y, so a ' +
             'shape reads unmirrored from the +Z, +Y and +X side respectively.',
         },
+        face: {
+          type: 'object',
+          description:
+            'Sketch on this planar body face instead of a default plane (pass ' +
+            'exactly one of `plane` / `face`). Ids from `list_bodies` / ' +
+            '`list_faces`. Sketch origin = the world origin projected onto the ' +
+            "face's plane; sketch y = world +Y projected onto it (world -Z " +
+            'when the face normal is mostly +Y, +Z when mostly -Y) and x = ' +
+            'y × normal. So on a face parallel to a default plane the ' +
+            'coordinates match that plane: an upward (+Y) face uses the XZ ' +
+            'mapping (x = +X, y = -Z) at the face height.',
+          properties: {
+            bodyId: { type: 'string' },
+            stableFaceId: { type: 'string' },
+          },
+          required: ['bodyId', 'stableFaceId'],
+          additionalProperties: false,
+        },
       },
-      required: ['partId', 'plane'],
+      required: ['partId'],
       additionalProperties: false,
     },
   },
@@ -663,14 +684,48 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
       'still fail). If it failed, use `list_sketch_regions(sketchId)` to ' +
       'inspect what regions the detector found; common cause is no ' +
       'closed loop. Use `view_fit_all` + `view_screenshot` for visual ' +
-      'confirmation if requested.',
+      'confirmation if requested. ' +
+      '`startFace` starts the extrude on a planar face instead of the ' +
+      'sketch plane, and `toFace` extrudes (or cuts) up to a planar face ' +
+      'instead of a fixed distance. Both are re-resolved on every rebuild, ' +
+      'so the result follows the faces when upstream dimensions change.',
     inputSchema: {
       type: 'object',
       properties: {
         sketchId: { type: 'string', description: 'The sketch feature id to extrude from.' },
         distance: {
           type: 'number',
-          description: "Extrusion distance (mm). For direction='symmetric' this is the TOTAL extent (half each way).",
+          description:
+            "Extrusion distance (mm). For direction='symmetric' this is the TOTAL extent (half each way). " +
+            'Required unless `toFace` is given.',
+        },
+        toFace: {
+          type: 'object',
+          description:
+            'Extrude up to this planar face instead of `distance`. ' +
+            "`direction` picks which way to go; the face must lie ahead of the start. Not with direction 'symmetric'.",
+          properties: {
+            bodyId: { type: 'string' },
+            stableFaceId: { type: 'string' },
+          },
+          required: ['bodyId', 'stableFaceId'],
+          additionalProperties: false,
+        },
+        startFace: {
+          type: 'object',
+          description:
+            'Start the extrude on this planar face instead of the sketch plane: ' +
+            'the profile moves along the sketch normal onto the face.',
+          properties: {
+            bodyId: { type: 'string' },
+            stableFaceId: { type: 'string' },
+          },
+          required: ['bodyId', 'stableFaceId'],
+          additionalProperties: false,
+        },
+        startOffset: {
+          type: 'number',
+          description: 'Shift of the start along the extrude direction (mm), from the sketch plane or `startFace`. Default 0.',
         },
         operation: {
           type: 'string',
@@ -730,7 +785,7 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
           },
         },
       },
-      required: ['sketchId', 'distance'],
+      required: ['sketchId'],
       additionalProperties: false,
     },
   },

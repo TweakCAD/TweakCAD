@@ -116,3 +116,52 @@ describe('feature_extrude on concentric circles', () => {
     }
   });
 });
+
+describe('face anchors in sketch_create / feature_extrude', () => {
+  const top = { bodyId: 'body_box_0', stableFaceId: 'sf_box_5' };
+
+  it('sketch_create on a face stores the face as the sketch plane', async () => {
+    const { host, store, partId } = newHost();
+    const { sketchId } = await call<{ sketchId: string }>(host, 'sketch_create', { partId, face: top });
+    const sketch = store.getState().parts[partId]!.timeline.find(f => f.id === sketchId)!;
+    expect((sketch.inputs as unknown as SketchFeatureInputs).plane).toEqual({
+      type: 'stableTopology',
+      bodyRef: { partId, bodyId: 'body_box_0' },
+      stableFaceId: 'sf_box_5',
+    });
+  });
+
+  it('sketch_create takes exactly one of plane / face', async () => {
+    const { host, partId } = newHost();
+    const both = await executeTool('sketch_create', { partId, plane: 'XY', face: top }, host);
+    expect(both.ok).toBe(false);
+    const neither = await executeTool('sketch_create', { partId }, host);
+    expect(neither.ok).toBe(false);
+    const badFace = await executeTool('sketch_create', { partId, face: { bodyId: 'b' } }, host);
+    expect(badFace.ok).toBe(false);
+  });
+
+  it('feature_extrude maps toFace to a toPlane extent and startFace to startFrom', async () => {
+    const { host, store, partId, sketchId } = await bossSketch();
+    await call(host, 'feature_extrude', {
+      sketchId, operation: 'cut', toFace: top, startFace: { bodyId: 'body_box_0', stableFaceId: 'sf_box_4' }, startOffset: 2,
+    });
+    const inputs = lastExtrude(store, partId);
+    expect(inputs.extent).toEqual({
+      type: 'toPlane',
+      plane: { type: 'stableTopology', bodyRef: { partId, bodyId: 'body_box_0' }, stableFaceId: 'sf_box_5' },
+    });
+    expect(inputs.startFrom).toEqual({
+      type: 'stableTopology', bodyRef: { partId, bodyId: 'body_box_0' }, stableFaceId: 'sf_box_4',
+    });
+    expect(inputs.startOffset).toBe('2');
+    expect(inputs.operation).toBe('cut');
+  });
+
+  it('feature_extrude needs a distance or a toFace, not both', async () => {
+    const { host, sketchId } = await bossSketch();
+    expect((await executeTool('feature_extrude', { sketchId }, host)).ok).toBe(false);
+    expect((await executeTool('feature_extrude', { sketchId, distance: 5, toFace: top }, host)).ok).toBe(false);
+    expect((await executeTool('feature_extrude', { sketchId, toFace: top, direction: 'symmetric' }, host)).ok).toBe(false);
+  });
+});

@@ -17,6 +17,7 @@ import { evaluateExpression } from '@tweakcad/core/src/expressions.ts';
 import type { BuildContext } from '@tweakcad/core/src/features/contracts.ts';
 import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
 import type { KernelBody } from '@tweakcad/kernel/src/types.ts';
+import { nearestDefaultPlaneName, sketchFrameOnPlane } from '@tweakcad/core/src/sketch/facePlane.ts';
 import type {
   ResolvedSketchPlaneData,
 } from './buildSketch.ts';
@@ -64,8 +65,9 @@ export const DEFAULT_PLANES = {
  *  - `featureOutput`        → not yet supported; reserved for the case
  *                              where a face or other feature publishes
  *                              a derived plane.
- *  - `stableTopology`       → not yet supported; needs the kernel to
- *                              report a face's underlying plane.
+ *  - `stableTopology`       → a body face; needs the kernel, so it is
+ *                              resolved by {@link resolvePlaneRefAsync}
+ *                              and this sync resolver throws.
  *
  * Errors are thrown rather than returned so the rebuilder's
  * try/catch reports the feature as failed.
@@ -98,13 +100,85 @@ export function resolvePlaneRef(
     );
   }
 
-  // stableTopology — caller must use `resolveFacePlaneRef` instead so a
+  // stableTopology — caller must use `resolvePlaneRefAsync` instead so a
   // kernel handle is available for `getFacePlane`. Throw here to make
   // accidental sync calls visible at the call site rather than silently
   // returning a fallback.
   throw new Error(
-    `PlaneRef.stableTopology cannot be resolved synchronously; use resolveFacePlaneRef`,
+    `PlaneRef.stableTopology cannot be resolved synchronously; use resolvePlaneRefAsync`,
   );
+}
+
+/**
+ * Resolve any {@link PlaneRef}, including a body face. A face must be
+ * planar; `role` names what the plane is for ("Sketch face", "Extrude
+ * start face", ...) so a face that no longer resolves fails the feature
+ * with a message saying which reference broke.
+ *
+ * A face resolves to its own plane: origin at the face centroid, normal
+ * outward. Builders that need a sketch frame use {@link resolveSketchPlaneRef}.
+ */
+export async function resolvePlaneRefAsync(
+  ref: PlaneRef,
+  context: BuildContext,
+  params: ResolvedParams,
+  kernel: CadKernel,
+  role: string,
+): Promise<ResolvedSketchPlaneData> {
+  if (ref.type !== 'stableTopology') return resolvePlaneRef(ref, context, params);
+  const face = await resolveFacePlane(ref, context, kernel, role);
+  if (!face.planar) {
+    throw new Error(`${role} ${ref.stableFaceId} is not planar; pick a flat face`);
+  }
+  return {
+    name: nearestDefaultPlaneName(face.normal),
+    origin: face.origin,
+    uAxis: face.uAxis,
+    vAxis: face.vAxis,
+    normal: face.normal,
+  };
+}
+
+/**
+ * Resolve a sketch's plane. Default and construction planes resolve as in
+ * {@link resolvePlaneRef}; a body face resolves to the face's current plane
+ * with the frame from {@link sketchFrameOnPlane} — the same function the
+ * editor uses on sketch entry, so both agree on the sketch's 2D axes.
+ */
+export async function resolveSketchPlaneRef(
+  ref: PlaneRef,
+  context: BuildContext,
+  params: ResolvedParams,
+  kernel: CadKernel,
+): Promise<ResolvedSketchPlaneData> {
+  if (ref.type !== 'stableTopology') return resolvePlaneRef(ref, context, params);
+  const plane = await resolvePlaneRefAsync(ref, context, params, kernel, 'Sketch face');
+  const frame = sketchFrameOnPlane(plane.normal, plane.origin);
+  return { name: plane.name, ...frame };
+}
+
+async function resolveFacePlane(
+  ref: Extract<PlaneRef, { type: 'stableTopology' }>,
+  context: BuildContext,
+  kernel: CadKernel,
+  role: string,
+): ReturnType<CadKernel['getFacePlane']> {
+  const bodyHandle = context.bodies.get(ref.bodyRef.bodyId);
+  if (!bodyHandle) {
+    throw new Error(
+      `${role} ${ref.stableFaceId}: body ${ref.bodyRef.bodyId} does not exist at this point in the timeline`,
+    );
+  }
+  const face = ref.repairHint !== undefined
+    ? await kernel.resolveFaceRef(bodyHandle as KernelBody, ref.stableFaceId, ref.repairHint)
+    : await kernel.resolveFaceRef(bodyHandle as KernelBody, ref.stableFaceId);
+  if (!face) {
+    throw new Error(
+      `${role} ${ref.stableFaceId} no longer exists on body ${ref.bodyRef.bodyId}; ` +
+      `an upstream change removed it. Pick the face again.`,
+    );
+  }
+  return kernel.getFacePlane(face);
 }
 
 /**

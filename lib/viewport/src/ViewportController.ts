@@ -6,12 +6,14 @@
 
 import * as THREE from 'three';
 import type { DisplayMesh, TopologyMap, Selection, ConstructionPlaneDisplay } from '@tweakcad/core/src/document/schema.ts';
-import type { BodyId, FaceId, EdgeId, FeatureId } from '@tweakcad/core/src/ids.ts';
+import type { BodyId, FaceId, EdgeId, FeatureId, StableFaceId } from '@tweakcad/core/src/ids.ts';
 import { MeshRegistry, SECTION_STENCIL_RENDER_ORDER } from './MeshRegistry.ts';
+import type { MeshEntry } from './MeshRegistry.ts';
 import { ConstructionPlaneLayer } from './ConstructionPlaneLayer.ts';
 import { TransformGizmo } from './TransformGizmo.ts';
 import type { FeatureDisplayMode } from './displayMode.ts';
-import { triangleToFaceId, segmentToEdgeId } from './topologyLookup.ts';
+import { triangleToFaceId, segmentToEdgeId, faceMeshPlane } from './topologyLookup.ts';
+import type { MeshFacePlane } from './topologyLookup.ts';
 import { SelectionHighlight } from './selectionHighlight.ts';
 import { fitFraming, homeFraming, lerpFraming, HOME_THETA, HOME_PHI } from './cameraFraming.ts';
 import type { CameraFraming } from './cameraFraming.ts';
@@ -817,6 +819,52 @@ export class ViewportController {
     const faceId = triangleToFaceId(bestFace.triIdx, bestFace.topoMap);
     if (!faceId) return null;
     return { type: 'face', bodyId: bestFace.bodyId, faceId };
+  }
+
+  /**
+   * The body face under a screen point, whatever the pick mode, with the
+   * hit distance (so an overlay can compare it with its own hits) and the
+   * face's plane when it is flat. Used by pickers that run their own
+   * raycasts, such as the sketch-plane picker.
+   */
+  faceAt(clientX: number, clientY: number): {
+    bodyId: BodyId;
+    faceId: FaceId;
+    stableFaceId: StableFaceId | undefined;
+    distance: number;
+    plane: MeshFacePlane | null;
+  } | null {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return null;
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.pickRaycaster.setFromCamera(ndc, this.camera);
+    let best: { dist: number; entry: MeshEntry; triIdx: number } | null = null;
+    for (const entry of this.meshRegistry.getEntries()) {
+      if (!entry.mesh.visible) continue;
+      const h = this.pickRaycaster.intersectObject(entry.mesh, false)[0];
+      if (!h || typeof h.faceIndex !== 'number') continue;
+      if (best && h.distance >= best.dist) continue;
+      best = { dist: h.distance, entry, triIdx: h.faceIndex };
+    }
+    if (!best) return null;
+    const face = best.entry.topoMap?.faces.find(f => best.triIdx >= f.triStart && best.triIdx < f.triEnd);
+    if (!face) return null;
+    const geometry = best.entry.mesh.geometry;
+    const positions = geometry.getAttribute('position');
+    const index = geometry.getIndex();
+    const plane = positions && index
+      ? faceMeshPlane(positions.array, index.array, face.triStart, face.triEnd)
+      : null;
+    return {
+      bodyId: best.entry.bodyId,
+      faceId: face.faceId,
+      stableFaceId: face.stableFaceId,
+      distance: best.dist,
+      plane,
+    };
   }
 
   /**
