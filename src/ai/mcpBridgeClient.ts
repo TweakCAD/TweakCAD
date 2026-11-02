@@ -36,6 +36,7 @@ import {
 import { setBridgeStatus } from './bridgeStatusStore.ts';
 import { getActiveViewport } from './viewportRegistry.ts';
 import { createBrowserToolHost } from './browserToolHost.ts';
+import { createTransactionBalance, type TransactionBalance } from './transactionBalance.ts';
 
 // ---- Wire types (subset of the bridge's protocol definition) ----
 
@@ -79,6 +80,19 @@ export interface BridgeClientDeps {
  */
 export function startBridgeClient(deps: BridgeClientDeps): () => void {
   let socket: WebSocket | null = null;
+  /**
+   * The undo transactions the external client opened over `socket`. Unlike a
+   * chat turn, a bridge session has no end the client is guaranteed to reach:
+   * it can open a transaction and then crash, be closed, or simply never send
+   * `end_transaction`. Whatever it left open is closed when its connection
+   * goes, so the editor's undo is not left disabled for the rest of the
+   * session.
+   */
+  let socketBalance: TransactionBalance | null = null;
+
+  function closeConnectionTransactions(balance: TransactionBalance): void {
+    void balance.closeOpen(() => deps.commandBus.endTransaction());
+  }
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectAttempt = 0;
   let stopped = false;
@@ -102,6 +116,10 @@ export function startBridgeClient(deps: BridgeClientDeps): () => void {
       socket.onopen = null;
       try { socket.close(); } catch { /* already closed */ }
       socket = null;
+    }
+    if (socketBalance) {
+      closeConnectionTransactions(socketBalance);
+      socketBalance = null;
     }
     currentUrl = null;
   }
@@ -134,6 +152,8 @@ export function startBridgeClient(deps: BridgeClientDeps): () => void {
       return;
     }
     socket = ws;
+    const balance = createTransactionBalance();
+    socketBalance = balance;
 
     ws.onopen = () => {
       reconnectAttempt = 0;
@@ -145,7 +165,7 @@ export function startBridgeClient(deps: BridgeClientDeps): () => void {
 
     ws.onmessage = (ev) => {
       const data = typeof ev.data === 'string' ? ev.data : String(ev.data);
-      handleFrame(data, ws);
+      handleFrame(data, ws, balance);
     };
 
     ws.onerror = () => {
@@ -154,6 +174,9 @@ export function startBridgeClient(deps: BridgeClientDeps): () => void {
 
     ws.onclose = () => {
       socket = null;
+      if (socketBalance === balance) socketBalance = null;
+      // The client is gone; nothing will close what it opened.
+      closeConnectionTransactions(balance);
       if (!stopped && currentUrl === url) scheduleReconnect();
     };
   }
@@ -172,7 +195,7 @@ export function startBridgeClient(deps: BridgeClientDeps): () => void {
     }, delay);
   }
 
-  function handleFrame(text: string, ws: WebSocket): void {
+  function handleFrame(text: string, ws: WebSocket, balance: TransactionBalance): void {
     let parsed: unknown;
     try {
       parsed = JSON.parse(text);
@@ -181,7 +204,7 @@ export function startBridgeClient(deps: BridgeClientDeps): () => void {
     }
     if (!isExecuteToolRequest(parsed)) return;
     const req = parsed;
-    runTool(req)
+    runTool(req, balance)
       .then((response) => {
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(response));
       })
@@ -201,14 +224,14 @@ export function startBridgeClient(deps: BridgeClientDeps): () => void {
    * so it always sees the current viewport controller (which may mount after
    * the bridge connects).
    */
-  async function runTool(req: ExecuteToolRequest): Promise<ToolResponse> {
+  async function runTool(req: ExecuteToolRequest, balance: TransactionBalance): Promise<ToolResponse> {
     const host = createBrowserToolHost({
       documentStore: deps.documentStore,
       commandBus: deps.commandBus,
       viewportStore: deps.viewportStore,
       viewportController: getActiveViewport(),
     });
-    const result = await executeTool(req.name, req.input, host);
+    const result = await executeTool(req.name, req.input, balance.wrap(host));
     if (result.ok) {
       return { id: req.id, ok: true, result: result.value };
     }
