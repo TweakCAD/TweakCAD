@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import * as Comlink from 'comlink';
+import type * as Comlink from 'comlink';
 import { WorkerPool } from './pool.ts';
 import type { CadWorkerApi } from './cadWorker.ts';
 import type { CadPart, CadProject } from '@tweakcad/core/src/document/schema.ts';

@@ -25,6 +25,8 @@ import { resolveActivePartId } from '@tweakcad/core/src/document/featureLookup.t
 import type { MeasureTarget, MeasureResult } from '@tweakcad/worker/src/protocol.ts';
 import type { WorkerRebuildResult } from '@tweakcad/worker/src/cadWorker.ts';
 import type { AppState } from './appInit.ts';
+import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
+import type { incrementalRebuild } from '@tweakcad/worker/src/rebuilder.ts';
 
 // ---- State ----
 
@@ -35,8 +37,8 @@ let stopListening: (() => void) | null = null;
 
 // Fallback: main-thread kernel + rebuilder (lazy loaded only if worker fails)
 let mainThreadFallback: {
-  kernel: import('@tweakcad/kernel/src/interface.ts').CadKernel;
-  rebuild: typeof import('@tweakcad/worker/src/rebuilder.ts').incrementalRebuild;
+  kernel: CadKernel;
+  rebuild: typeof incrementalRebuild;
 } | null = null;
 
 /**
@@ -53,7 +55,7 @@ async function ensureMainThreadFallback(): Promise<typeof mainThreadFallback & o
     import('@tweakcad/worker/src/rebuilder.ts'),
   ]);
 
-  let kernel: import('@tweakcad/kernel/src/interface.ts').CadKernel;
+  let kernel: CadKernel;
   try {
     kernel = new OcctKernel();
     await kernel.init();

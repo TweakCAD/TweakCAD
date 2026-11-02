@@ -63,6 +63,6 @@ export function storageIcon(s: DocumentStorage): 'page' | 'cloud' | 'pencil' {
 /** Default filename when going from cloud/unsaved → disk via Save As. */
 export function suggestFilename(s: DocumentStorage, docName: string): string {
   if (s.kind === 'disk') return s.filename;
-  const safe = docName.toLowerCase().replace(/[^a-z0-9_\-]+/g, '-').replace(/^-+|-+$/g, '');
+  const safe = docName.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
   return `${safe || 'document'}.cadjson`;
 }

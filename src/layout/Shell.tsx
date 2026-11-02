@@ -1,12 +1,12 @@
 import { sketchBuildGeometry } from '@tweakcad/core/src/sketch/derivedGeometry.ts';
 import { isSaasAvailable } from '../storage/saasState.ts';
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore } from 'react';
 import * as THREE from 'three';
 import { ViewportController } from '@tweakcad/viewport/src/ViewportController.ts';
 import { useDocumentState, useUndoRedo, useCommandBus } from '../hooks/useDocumentStore.ts';
 import { getAppState } from '../appInit.ts';
 import type { PartId, FeatureId, BodyId } from '@tweakcad/core/src/ids.ts';
-import type { ProfileRef, SketchFeatureInputs, SketchEntity, ExtrudeFeatureInputs, PlaneRef, ConstructionPlaneDisplay, PrimitiveFeatureInputs, PrimitiveKind, MoveFeatureInputs } from '@tweakcad/core/src/document/schema.ts';
+import type { ProfileRef, SketchFeatureInputs, SketchEntity, ExtrudeFeatureInputs, PlaneRef, ConstructionPlaneDisplay, PrimitiveFeatureInputs, PrimitiveKind, MoveFeatureInputs, EdgeRef, FaceRef, SketchEditorSnapshot, LoftFeatureInputs, HoleFeatureInputs } from '@tweakcad/core/src/document/schema.ts';
 import { regionToProfileRef } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import { sketchToDxf } from '@tweakcad/core/src/sketch/io/dxf.ts';
 import { dxfToEditorState } from '@tweakcad/core/src/sketch/io/dxfImport.ts';
@@ -74,7 +74,6 @@ import { BooleanDialog } from '../components/BooleanDialog.tsx';
 import { MeasurePanel } from '../components/MeasurePanel.tsx';
 import { measureInWorker } from '../rebuildScheduler.ts';
 import type { MeasureTarget } from '@tweakcad/worker/src/protocol.ts';
-import type { Selection } from '@tweakcad/core/src/document/schema.ts';
 import type { BooleanDialogResult } from '../components/BooleanDialog.tsx';
 import type { PrimitiveDialogResult } from '../components/PrimitiveDialog.tsx';
 import { MirrorDialog } from '../components/MirrorDialog.tsx';
@@ -117,6 +116,7 @@ import { useComponentEditor } from '../components/ComponentDialog.tsx';
 import { registerThumbnailCapture } from '../storage/thumbnailCapture.ts';
 import { featureIconType } from '../icons/cadIcons.tsx';
 import { targetsExactly } from '@tweakcad/worker/src/featureBuilders/buildMove.ts';
+import type { SaasState } from '../storage/index.ts';
 
 // Sketch ↔ document plumbing notes:
 //   - There is no composite `SketchRectangleEntity`/`SketchSlotEntity`;
@@ -206,7 +206,7 @@ export type ShellProps = {
   /** Opens the revision-history panel. Absent when the project is not in the
    *  cloud — a disk file has no history to show. */
   onOpenHistory?: (() => void) | undefined;
-  saas?: import('../storage/index.ts').SaasState;
+  saas?: SaasState;
   /** Open the inline sign-in modal. */
   onRequestSignIn?: () => void;
   /** Sign out + refresh state. */
@@ -494,7 +494,7 @@ export function Shell({
     visible: boolean;
     // Stable EdgeRefs in click order. The dialog renders them as a list
     // with remove-X buttons; the entries here also drive its label text.
-    edges: import('@tweakcad/core/src/document/schema.ts').EdgeRef[];
+    edges: EdgeRef[];
   }>({ visible: false, edges: [] });
 
   // Chamfer-dialog state — structurally identical to filletState since
@@ -504,7 +504,7 @@ export function Shell({
   // don't bleed into each other on cancel.
   const [chamferState, setChamferState] = useState<{
     visible: boolean;
-    edges: import('@tweakcad/core/src/document/schema.ts').EdgeRef[];
+    edges: EdgeRef[];
   }>({ visible: false, edges: [] });
 
   // Fillet / Chamfer "Tangent chain" toggle: an edge pick also adds the
@@ -565,7 +565,6 @@ export function Shell({
   // face or edge, and a parallel picker would be a second set of highlight
   // rules to keep in step with the first.
   const [measureOpen, setMeasureOpen] = useState(false);
-  const [measureSelection, setMeasureSelection] = useState<Selection | null>(null);
 
   const handleToolbarMeasureClick = useCallback(() => {
     setMeasureOpen(v => !v);
@@ -574,12 +573,14 @@ export function Shell({
   // Only subscribed while the panel is open: the selection store fires on
   // every hover-to-click transition in the viewport, and re-rendering Shell
   // for a panel nobody has opened is work for nothing.
-  useEffect(() => {
-    if (!measureOpen) { setMeasureSelection(null); return; }
-    const { selectionStore } = getAppState();
-    setMeasureSelection(selectionStore.getState().selection);
-    return selectionStore.subscribe(state => setMeasureSelection(state.selection));
-  }, [measureOpen]);
+  const subscribeMeasureSelection = useCallback(
+    (onChange: () => void) => (measureOpen ? getAppState().selectionStore.subscribe(onChange) : () => {}),
+    [measureOpen],
+  );
+  const measureSelection = useSyncExternalStore(
+    subscribeMeasureSelection,
+    () => (measureOpen ? getAppState().selectionStore.getState().selection : null),
+  );
 
   /**
    * The current selection as something the worker can measure.
@@ -633,7 +634,7 @@ export function Shell({
   // tree.
   const [shellState, setShellState] = useState<{
     visible: boolean;
-    faces: import('@tweakcad/core/src/document/schema.ts').FaceRef[];
+    faces: FaceRef[];
     initialValues?: Partial<ShellDialogResult>;
   }>({ visible: false, faces: [] });
 
@@ -716,7 +717,7 @@ export function Shell({
   // Held in a ref so the picker callback reads the latest value without a
   // re-render dependency. Cleared on pick / cancel.
   const pendingSketchImportRef = useRef<{
-    snapshot: import('@tweakcad/core/src/document/schema.ts').SketchEditorSnapshot;
+    snapshot: SketchEditorSnapshot;
     name: string;
   } | null>(null);
 
@@ -1030,7 +1031,7 @@ export function Shell({
 
     const baseName = pick.fileName.replace(/\.dxf$/i, '');
     pendingSketchImportRef.current = {
-      snapshot: toSnapshot(state) as unknown as import('@tweakcad/core/src/document/schema.ts').SketchEditorSnapshot,
+      snapshot: toSnapshot(state) as unknown as SketchEditorSnapshot,
       name: baseName || 'Imported sketch',
     };
     consoleLog('info', `DXF "${pick.fileName}": ${state.geometries.size} curve(s). Pick a plane`, 'sketch');
@@ -1077,7 +1078,7 @@ export function Shell({
 
     const baseName = pick.fileName.replace(/\.svg$/i, '');
     pendingSketchImportRef.current = {
-      snapshot: toSnapshot(state) as unknown as import('@tweakcad/core/src/document/schema.ts').SketchEditorSnapshot,
+      snapshot: toSnapshot(state) as unknown as SketchEditorSnapshot,
       name: baseName || 'Imported sketch',
     };
     consoleLog('info', `SVG "${pick.fileName}": ${state.geometries.size} curve(s). Pick a plane`, 'sketch');
@@ -1098,7 +1099,7 @@ export function Shell({
     // Map the picker's discriminated pick into the corresponding PlaneRef
     // variant the document schema accepts. The downstream sketch builder's
     // `resolvePlaneRef` handles both shapes uniformly.
-    const planeRef: import('@tweakcad/core/src/document/schema.ts').PlaneRef =
+    const planeRef: PlaneRef =
       pick.kind === 'default'
         ? { type: 'defaultPlane', name: pick.name }
         : { type: 'constructionPlane', planeId: pick.featureId };
@@ -1797,7 +1798,7 @@ export function Shell({
             const inputs = feature.inputs as {
               kind: 'offsetFromPlane' | 'offsetFromFace';
               basePlane?: PlaneRef;
-              face?: import('@tweakcad/core/src/document/schema.ts').FaceRef;
+              face?: FaceRef;
               offset?: number | string;
             };
             const n = typeof inputs.offset === 'number' ? inputs.offset : parseFloat(String(inputs.offset));
@@ -2130,7 +2131,7 @@ export function Shell({
     const partId = partForFeature(profiles[0]?.sketchId);
     if (!partId) return;
 
-    const inputs: import('@tweakcad/core/src/document/schema.ts').LoftFeatureInputs = {
+    const inputs: LoftFeatureInputs = {
       profiles,
       operation: result.operation,
       ...(result.targetBodyId
@@ -2504,7 +2505,7 @@ export function Shell({
         return;
       }
 
-      const ref: import('@tweakcad/core/src/document/schema.ts').FaceRef = {
+      const ref: FaceRef = {
         type: 'stableTopology',
         bodyRef: { partId: sel.partId, bodyId: sel.bodyId },
         stableFaceId: face.stableFaceId,
@@ -2827,7 +2828,7 @@ export function Shell({
         return;
       }
 
-      const faceRef: import('@tweakcad/core/src/document/schema.ts').FaceRef = {
+      const faceRef: FaceRef = {
         type: 'stableTopology',
         bodyRef: { partId: sel.partId, bodyId: sel.bodyId },
         stableFaceId: face.stableFaceId,
@@ -2844,8 +2845,8 @@ export function Shell({
    * when the dialog is in `offsetFromPlane` mode). Maps the picker's
    * discriminated pick into the PlaneRef variant the schema expects.
    */
-  const handlePlaneDialogPlanePicked = useCallback((pick: import('../sketch/SketchPlanePicker.tsx').SketchPlanePick) => {
-    const planeRef: import('@tweakcad/core/src/document/schema.ts').PlaneRef =
+  const handlePlaneDialogPlanePicked = useCallback((pick: SketchPlanePick) => {
+    const planeRef: PlaneRef =
       pick.kind === 'default'
         ? { type: 'defaultPlane', name: pick.name }
         : { type: 'constructionPlane', planeId: pick.featureId };
@@ -2970,6 +2971,7 @@ export function Shell({
     const part = proj.parts[partId];
     const newFeature = part?.timeline[part.timeline.length - 1];
     if (newFeature && newFeature.type === 'constructionPlane') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- records the draft this effect just dispatched
       setPlaneState(s => ({
         ...s,
         editingFeatureId: newFeature.id,
@@ -3036,7 +3038,7 @@ export function Shell({
         return;
       }
 
-      const faceRef: import('@tweakcad/core/src/document/schema.ts').FaceRef = {
+      const faceRef: FaceRef = {
         type: 'stableTopology',
         bodyRef: { partId: sel.partId, bodyId: sel.bodyId },
         stableFaceId: face.stableFaceId,
@@ -3132,7 +3134,7 @@ export function Shell({
     // v1 (face-center-auto placement). Stored as Expression strings so
     // future click-to-position can swap in real numbers without a
     // schema migration.
-    const inputs: import('@tweakcad/core/src/document/schema.ts').HoleFeatureInputs = {
+    const inputs: HoleFeatureInputs = {
       face: result.faceRef,
       center: ['0', '0'],
       direction: { type: 'normal' },
@@ -3502,7 +3504,7 @@ export function Shell({
       const modes = computeAllBodyDisplayModes({
         bodyIds: meshes.map(m => m.bodyId),
         project: doc,
-        bodyToFeatureMap: viewportStore.getState().bodyToFeatureMap as Readonly<Record<string, import('@tweakcad/core/src/ids.ts').FeatureId>>,
+        bodyToFeatureMap: viewportStore.getState().bodyToFeatureMap as Readonly<Record<string, FeatureId>>,
         hiddenBodies,
         context,
         // Fusion-style: everything outside the active part ghosts, so the
@@ -3551,17 +3553,17 @@ export function Shell({
     const ctrl = ctrlRef.current;
     if (!ctrl) return;
     if (selectedBodyId) {
-      ctrl.highlightBodies(new Set([selectedBodyId as import('@tweakcad/core/src/ids.ts').BodyId]));
+      ctrl.highlightBodies(new Set([selectedBodyId as BodyId]));
       return;
     }
     if (!selectedFeatureId) {
       ctrl.highlightBodies(null);
       return;
     }
-    const highlightSet = new Set<import('@tweakcad/core/src/ids.ts').BodyId>();
+    const highlightSet = new Set<BodyId>();
     for (const [bodyId, featureId] of Object.entries(bodyToFeatureMap)) {
       if (featureId === selectedFeatureId) {
-        highlightSet.add(bodyId as import('@tweakcad/core/src/ids.ts').BodyId);
+        highlightSet.add(bodyId as BodyId);
       }
     }
     ctrl.highlightBodies(highlightSet.size > 0 ? highlightSet : null);
@@ -3738,14 +3740,13 @@ export function Shell({
   // Collect visible sketch features for readonly SketchViewer display.
   // Excludes the sketch currently being edited (SketchEditor handles that).
   const visibleSketches = useMemo(() => {
-    const activeSketchId = activeSketchIdRef.current;
     const result: { id: string; inputs: SketchFeatureInputs; plane: SketchPlaneInput }[] = [];
     for (const part of parts) {
       for (const feature of part.timeline) {
         if (feature.type !== 'sketch') continue;
         if (!feature.visible || !feature.enabled) continue;
         // Skip the sketch being actively edited — SketchEditor renders it
-        if (sketchActive && feature.id === activeSketchId) continue;
+        if (sketchActive && feature.id === editorActiveSketchId) continue;
         const inputs = feature.inputs as unknown as SketchFeatureInputs;
         if (Object.keys(sketchBuildGeometry(inputs)).length === 0) continue;
         const plane = resolveSketchPlaneInput(inputs.plane, constructionPlanes);
@@ -3753,7 +3754,7 @@ export function Shell({
       }
     }
     return result;
-  }, [parts, sketchActive, constructionPlanes]);
+  }, [parts, sketchActive, editorActiveSketchId, constructionPlanes]);
 
   return (
     <div style={styles.root}>
@@ -3937,7 +3938,7 @@ export function Shell({
             viewportCtrl={viewportCtrl}
             planeName={sketchPlaneConfig ?? sketchPlaneName}
             activeTool={sketchTool}
-            sketchId={activeSketchIdRef.current}
+            sketchId={editorActiveSketchId}
             onActiveToolChange={(tool) => setSketchTool(tool)}
             onSketchRemoved={handleSketchRemoved}
           />

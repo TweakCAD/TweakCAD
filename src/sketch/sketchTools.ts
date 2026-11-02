@@ -432,7 +432,7 @@ export function handleToolMove(
           // transaction with the moved set anchored — constraint enforcement
           // adjusts NEIGHBOURING points (e.g. coincident-linked rectangle
           // corners) without overriding the user's drag.
-          const updates: { id: import('@tweakcad/core/src/sketch/types.ts').SketchPointId; x: number; y: number }[] = [];
+          const updates: { id: SketchPointId; x: number; y: number }[] = [];
           for (const pointId of store.getGeometryPointIds(geom.id)) {
             const point = store.points.get(pointId);
             if (point) updates.push({ id: pointId, x: point.x + dx, y: point.y + dy });

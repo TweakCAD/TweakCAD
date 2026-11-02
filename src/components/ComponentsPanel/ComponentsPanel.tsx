@@ -88,12 +88,17 @@ export function ComponentsPanel({ onClose, commandBus, partId }: ComponentsPanel
     return () => window.clearTimeout(handle);
   }, [searchInput]);
 
-  // Fetch the list whenever the debounced search changes.
+  // Fetch the list whenever the debounced search changes. The loading and
+  // error reset happens during render, as soon as the search changes.
+  const [requestedSearch, setRequestedSearch] = useState<string | null>(null);
+  if (requestedSearch !== debouncedSearch) {
+    setRequestedSearch(debouncedSearch);
+    setLoading(true);
+    setError(null);
+  }
   const reqIdRef = useRef(0);
   useEffect(() => {
     const id = ++reqIdRef.current;
-    setLoading(true);
-    setError(null);
     void listComponents(getApiClient(), {
       limit: 48,
       search: debouncedSearch || undefined,

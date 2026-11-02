@@ -757,7 +757,8 @@ export function drawArc(
   // Normalize so the sweep is always non-zero CCW. If end < start we
   // add 2π once — the loop covers the long way around. If they're
   // equal we reject (zero-length arc).
-  let { startAngle, endAngle } = args;
+  const { startAngle } = args;
+  let { endAngle } = args;
   if (endAngle === startAngle) {
     throw new Error('drawArc: startAngle and endAngle must differ.');
   }
@@ -801,7 +802,7 @@ export function drawArc(
   };
 }
 
-export interface DrawArc3PointOptions extends DrawArcOptions {}
+export type DrawArc3PointOptions = DrawArcOptions;
 
 /**
  * Draw an arc passing through three points (start, mid, end). Computes

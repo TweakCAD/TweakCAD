@@ -10,7 +10,7 @@
  */
 
 import * as Comlink from 'comlink';
-import type { CadPart, CadProject, DisplayMesh, TopologyMap, FeatureBuildResult } from '@tweakcad/core/src/document/schema.ts';
+import type { CadPart, CadProject, DisplayMesh, TopologyMap, FeatureBuildResult, ConstructionPlaneDisplay } from '@tweakcad/core/src/document/schema.ts';
 import type { PartId } from '@tweakcad/core/src/ids.ts';
 import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
 import { OcctKernel } from '@tweakcad/kernel/src/occtKernel.ts';
@@ -31,7 +31,7 @@ export type WorkerRebuildResult = {
    * Construction planes for the viewport to render as translucent
    * rectangles. Always present; may be empty when no plane features exist.
    */
-  constructionPlanes: import('@tweakcad/core/src/document/schema.ts').ConstructionPlaneDisplay[];
+  constructionPlanes: ConstructionPlaneDisplay[];
   /** Mapping from bodyId to the featureId that created it */
   bodyToFeatureMap: Record<string, string>;
   diagnostics: string[];

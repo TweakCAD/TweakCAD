@@ -48,6 +48,8 @@ import { buildPrimitive } from './featureBuilders/buildPrimitive.ts';
 import { buildMove } from './featureBuilders/buildMove.ts';
 import { buildBoolean } from './featureBuilders/buildBoolean.ts';
 import { buildComponent } from './featureBuilders/buildComponent.ts';
+import type { ResolvedParams } from '@tweakcad/core/src/expressions.ts';
+import type { BuildContext, BuildResult } from '@tweakcad/core/src/features/contracts.ts';
 
 export type SubTimelineResult = {
   bodies: KernelBody[];
@@ -123,12 +125,12 @@ export async function runSubTimeline(
  */
 export async function dispatchFeatureBuilder(
   feature: FeatureNode,
-  params: import('@tweakcad/core/src/expressions.ts').ResolvedParams,
-  context: import('@tweakcad/core/src/features/contracts.ts').BuildContext,
+  params: ResolvedParams,
+  context: BuildContext,
   kernel: CadKernel,
   project: CadProject,
   visited: Set<string>,
-): Promise<import('@tweakcad/core/src/features/contracts.ts').BuildResult> {
+): Promise<BuildResult> {
   switch (feature.type) {
     case 'sketch':            return buildSketch(feature, params, context, kernel);
     case 'extrude':           return buildExtrude(feature, params, context, kernel);

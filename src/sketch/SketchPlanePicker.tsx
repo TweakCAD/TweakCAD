@@ -222,15 +222,7 @@ export function SketchPlanePicker({ viewportCtrl, constructionPlanes, onPick, on
 
   // Apply hover styling — bump opacity on the focused mesh.
   useEffect(() => {
-    for (const p of pickablesRef.current) {
-      if (!(p.mesh.material instanceof THREE.MeshBasicMaterial)) continue;
-      // Default planes use 0.15 idle / 0.45 hover; CPs use 0.18 / 0.5
-      // (slightly more present since CPs are user-created reference).
-      const isCp = p.pick.kind === 'construction';
-      p.mesh.material.opacity = p.hoverKey === hovered
-        ? (isCp ? 0.5 : 0.45)
-        : (isCp ? 0.18 : 0.15);
-    }
+    applyHoverOpacity(pickablesRef.current, hovered);
   }, [hovered]);
 
   // Picker overlay click handling: raycast to find which plane was hit.
@@ -328,6 +320,20 @@ export function SketchPlanePicker({ viewportCtrl, constructionPlanes, onPick, on
       </div>
     </>
   );
+}
+
+// ---- Hover styling ----
+
+function applyHoverOpacity(pickables: readonly Pickable[], hovered: string | null): void {
+  for (const p of pickables) {
+    if (!(p.mesh.material instanceof THREE.MeshBasicMaterial)) continue;
+    // Default planes use 0.15 idle / 0.45 hover; CPs use 0.18 / 0.5
+    // (slightly more present since CPs are user-created reference).
+    const isCp = p.pick.kind === 'construction';
+    p.mesh.material.opacity = p.hoverKey === hovered
+      ? (isCp ? 0.5 : 0.45)
+      : (isCp ? 0.18 : 0.15);
+  }
 }
 
 // ---- Hit testing ----

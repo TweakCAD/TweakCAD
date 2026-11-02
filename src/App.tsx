@@ -56,6 +56,7 @@ import { useSettingsDialog } from './components/SettingsDialog.tsx';
 import { startBridgeClient } from './ai/mcpBridgeClient.ts';
 import { refreshSaasState, isSignedIn } from './storage/index.ts';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
+import type { PartId } from '@tweakcad/core/src/ids.ts';
 
 type StorageRuntime = {
   scheduler: AutosaveScheduler;
@@ -79,14 +80,14 @@ type StorageRuntime = {
  *   4. Attach the autosave scheduler.
  */
 export function App() {
-  const appState = useMemo(() => initializeApp(), []);
+  const appState = useMemo(() => {
+    const state = initializeApp();
+    setSketchStoreRef(state.sketchStore);
+    setDisplayContextStoreRef(state.displayContextStore);
+    return state;
+  }, []);
   const [storage, setStorage] = useState<StorageRuntime | null>(null);
   const saas = useSaasState();
-
-  useMemo(() => {
-    setSketchStoreRef(appState.sketchStore);
-    setDisplayContextStoreRef(appState.displayContextStore);
-  }, [appState]);
 
   useEffect(() => {
     initRebuildScheduler(appState);
@@ -180,13 +181,16 @@ export function App() {
   const [autoExportStatus, setAutoExportStatus] = useState<
     AutoExportStatus[] | null
   >(null);
+  // The status panel opens as soon as the cloud context resolves, before
+  // the first status arrives.
+  const autoExportDue = storage?.context.kind === 'cloud' && shouldAutoExport();
+  if (autoExportDue && autoExportStatus === null) setAutoExportStatus([]);
   useEffect(() => {
     if (autoExportFiredRef.current) return;
     if (!storage) return;
     if (storage.context.kind !== 'cloud') return;
     if (!shouldAutoExport()) return;
     autoExportFiredRef.current = true;
-    setAutoExportStatus([]);
     void runAutoExport(
       appState.documentStore,
       storage.context.cloudProjectId,
@@ -379,7 +383,7 @@ export function App() {
       // v1 imports into the first part. Multi-part documents land
       // when the document model grows assembly support; until then
       // there's a single active part by convention.
-      const partId = partIds[0] as import('@tweakcad/core/src/ids.ts').PartId;
+      const partId = partIds[0] as PartId;
 
       // Warn before the work, not after. A large import makes a cloud project
       // exceed the storage limit, and the server only says so on the next
@@ -445,7 +449,7 @@ export function App() {
         reportFileError('Component import failed', new Error('The document has no part to import into.'));
         return;
       }
-      const partId = partIds[0] as import('@tweakcad/core/src/ids.ts').PartId;
+      const partId = partIds[0] as PartId;
 
       // Strip extension for the display name; falls back to the file
       // base if the source's metadata.name is unset.
@@ -719,7 +723,7 @@ export function App() {
           void isSignedIn;
         }}
       />
-      {fileHandles && storage && (
+      {storage && (
         <SaveAsPicker
           open={saveAsOpen}
           docName={appState.documentStore.getState().metadata.name}
@@ -727,9 +731,10 @@ export function App() {
           onClose={() => setSaveAsOpen(false)}
           onPickDisk={() => {
             setSaveAsOpen(false);
-            void saveAsToDisk(fileHandles);
+            if (fileHandles) void saveAsToDisk(fileHandles);
           }}
           onPickCloud={async (projectName) => {
+            if (!fileHandles) return;
             const created = await saveAsNewCloudProject(
               fileHandles,
               projectName,

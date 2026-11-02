@@ -504,7 +504,7 @@ async function fileToComponentResult(file: File): Promise<ComponentImportPickRes
   try {
     parsed = JSON.parse(text);
   } catch (err) {
-    throw new Error(`"${file.name}" is not valid JSON: ${(err as Error).message}`);
+    throw new Error(`"${file.name}" is not valid JSON: ${(err as Error).message}`, { cause: err });
   }
   if (!parsed || typeof parsed !== 'object') {
     throw new Error(`"${file.name}" is not a CAD document.`);

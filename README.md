@@ -91,8 +91,8 @@ pnpm lint        # eslint src/ lib/
 ```
 
 Tests are co-located (`name.test.ts` next to the source they cover). CI runs
-typecheck, the unit suite and the build on every push; `lint` runs too but is
-advisory for now (see [CONTRIBUTING.md](./CONTRIBUTING.md)).
+typecheck, the unit suite, the build and lint on every push (see
+[CONTRIBUTING.md](./CONTRIBUTING.md)).
 
 Contributions welcome — start with [CONTRIBUTING.md](./CONTRIBUTING.md). To
 report a security issue, see [SECURITY.md](./SECURITY.md) rather than opening

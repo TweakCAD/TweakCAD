@@ -98,6 +98,9 @@ export function SketchEditor({
     if (isActive && viewportCtrl) {
       const manager = new SketchSceneManager(viewportCtrl, planeName);
       sceneManagerRef.current = manager;
+      // The manager needs the live viewport, so it can only be built here;
+      // overlays read it from state.
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- publishes the manager this effect created
       setSceneManagerState(manager);
 
       // Initial sync

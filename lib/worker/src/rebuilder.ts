@@ -300,8 +300,6 @@ export async function incrementalRebuild(
     }
 
     try {
-      let result;
-
       // Track bodies before the build for consumed/created tracking.
       // Snapshotted as id -> HANDLE (not just ids) so the orphan sweep below
       // can free shapes the builder replaced or consumed.
@@ -313,7 +311,7 @@ export async function incrementalRebuild(
       // same code path. `visited` starts empty here; an component
       // builder adds its componentRef and threads through to nested
       // sub-builds for cycle defense.
-      result = await dispatchFeatureBuilder(feature, params, context, kernel, project, new Set());
+      const result = await dispatchFeatureBuilder(feature, params, context, kernel, project, new Set());
 
       // Consumed/created body tracking
       const consumed: BodyId[] = [];

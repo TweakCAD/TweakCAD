@@ -382,7 +382,7 @@ export type SketchRemoveConstraintCommand = {
 export type SketchTrimCommand = {
   type: 'SketchTrim';
   sketchId: FeatureId;
-  geometryId: import('../sketch/types.ts').SketchGeometryId;
+  geometryId: SketchGeometryId;
   cursor: [number, number];
 };
 
@@ -394,7 +394,7 @@ export type SketchTrimCommand = {
 export type SketchExtendCommand = {
   type: 'SketchExtend';
   sketchId: FeatureId;
-  geometryId: import('../sketch/types.ts').SketchGeometryId;
+  geometryId: SketchGeometryId;
 };
 
 /**
@@ -407,8 +407,8 @@ export type SketchExtendCommand = {
 export type SketchFilletCommand = {
   type: 'SketchFillet';
   sketchId: FeatureId;
-  geometryAId: import('../sketch/types.ts').SketchGeometryId;
-  geometryBId: import('../sketch/types.ts').SketchGeometryId;
+  geometryAId: SketchGeometryId;
+  geometryBId: SketchGeometryId;
   radius?: number;
 };
 
@@ -423,7 +423,7 @@ export type SketchFilletCommand = {
 export type SketchOffsetCommand = {
   type: 'SketchOffset';
   sketchId: FeatureId;
-  geometryId: import('../sketch/types.ts').SketchGeometryId;
+  geometryId: SketchGeometryId;
   distance: number;
   cursor: [number, number];
   construction?: boolean;
@@ -440,7 +440,7 @@ export type SketchOffsetCommand = {
 export type SketchMirrorCommand = {
   type: 'SketchMirror';
   sketchId: FeatureId;
-  geometryIds: ReadonlyArray<import('../sketch/types.ts').SketchGeometryId>;
+  geometryIds: ReadonlyArray<SketchGeometryId>;
   axisA: [number, number];
   axisB: [number, number];
 };

@@ -41,13 +41,11 @@ jobs:
       # script); kept last so a type or test failure reports sooner.
       - run: pnpm build
 
-  # Advisory, not a gate: `pnpm lint` still reports errors (most of them one
-  # rule, `consistent-type-imports`), and a blocking job would start every PR
-  # red. Turn `continue-on-error` off in the change that clears them.
+  # A gate like `ci`: any lint error fails the run. Warnings are reported
+  # but don't fail it.
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -2120,7 +2120,7 @@ export async function executeSketchApplyConstraint(
   const before = asProject(host.getDocument());
   const beforeIds = new Set(readEditorSnapshot(before, sketchId).constraints.map((c) => c.id));
 
-  const cmd: import('../commands/types.ts').CadCommand = {
+  const cmd: CadCommand = {
     type: 'SketchApplyConstraint',
     sketchId: sketchId as FeatureId,
     constraint: constraint as SketchConstraintInput,
@@ -2150,7 +2150,7 @@ export async function executeSketchRemoveConstraint(
   if (typeof sketchId !== 'string') return err(invalidInput('`sketchId` must be a string'));
   if (typeof constraintId !== 'string') return err(invalidInput('`constraintId` must be a string'));
 
-  const cmd: import('../commands/types.ts').CadCommand = {
+  const cmd: CadCommand = {
     type: 'SketchRemoveConstraint',
     sketchId: sketchId as FeatureId,
     constraintId: constraintId as SketchConstraintId,

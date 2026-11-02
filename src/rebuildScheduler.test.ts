@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import * as Comlink from 'comlink';
+import type * as Comlink from 'comlink';
 import { DocumentStore } from '@tweakcad/core/src/store/documentStore.ts';
 import { createViewportStore } from '@tweakcad/core/src/store/viewportStore.ts';
 import { newProjectWithPart } from '@tweakcad/core/src/document/factory.ts';

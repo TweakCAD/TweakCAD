@@ -5,18 +5,18 @@
  */
 
 import { useSyncExternalStore } from 'react';
-import type { SketchToolId, SketchPreview, ResolvedSketchEntity2D } from '@tweakcad/core/src/store/sketchStore.ts';
+import type { SketchToolId, SketchPreview, ResolvedSketchEntity2D, createSketchStore } from '@tweakcad/core/src/store/sketchStore.ts';
 import type { Vec2 } from '@tweakcad/core/src/math.ts';
 import type { FeatureId } from '@tweakcad/core/src/ids.ts';
 import type { PlaneRef } from '@tweakcad/core/src/document/schema.ts';
 
 // ---- Store reference ----
 
-let storeRef: ReturnType<typeof import('@tweakcad/core/src/store/sketchStore.ts').createSketchStore> | null = null;
+let storeRef: ReturnType<typeof createSketchStore> | null = null;
 
 /** Set the store reference (called once during app init) */
 export function setSketchStoreRef(
-  store: ReturnType<typeof import('@tweakcad/core/src/store/sketchStore.ts').createSketchStore>,
+  store: ReturnType<typeof createSketchStore>,
 ): void {
   storeRef = store;
 }

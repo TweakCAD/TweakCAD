@@ -119,8 +119,8 @@ export function ParametersDialog({ open, onClose }: DialogProps) {
     return r.ok ? r.value : {};
   }, [scope, project]);
 
-  const dispatch = useCallback(
-    (cmd: Parameters<typeof commandBus.dispatch>[0]) => commandBus.dispatch(cmd),
+  const dispatch = useCallback<RowDispatch>(
+    (cmd) => commandBus.dispatch(cmd),
     [commandBus],
   );
 
@@ -926,8 +926,9 @@ function ConfigurationRowView({ row, isActive, partId, params, onSetActive, disp
               placeholder={p.expression}
               onChange={e => setOverrides(prev => ({ ...prev, [p.name]: e.target.value }))}
               onBlur={() => {
-                const nextOverrides = { ...overrides };
-                if ((nextOverrides[p.name] ?? '').trim() === '') delete nextOverrides[p.name];
+                const nextOverrides = (overrides[p.name] ?? '').trim() === ''
+                  ? Object.fromEntries(Object.entries(overrides).filter(([key]) => key !== p.name))
+                  : { ...overrides };
                 commit(nextOverrides, name);
               }}
               onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}

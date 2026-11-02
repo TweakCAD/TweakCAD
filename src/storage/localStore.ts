@@ -88,7 +88,7 @@ function openDb(): Promise<IDBDatabase> {
 function run<T>(
   storeName: string,
   mode: IDBTransactionMode,
-  fn: (store: IDBObjectStore) => IDBRequest<T> | void,
+  fn: (store: IDBObjectStore) => IDBRequest<T> | undefined,
 ): Promise<T | undefined> {
   return openDb().then(
     (db) =>
@@ -112,9 +112,7 @@ function run<T>(
 
 export const localStore = {
   async put(record: LocalProjectRecord): Promise<void> {
-    await run<void>(STORE_PROJECTS, 'readwrite', (store) => {
-      store.put(record);
-    });
+    await run(STORE_PROJECTS, 'readwrite', (store) => void store.put(record));
   },
 
   async get(id: string): Promise<LocalProjectRecord | undefined> {
@@ -122,9 +120,7 @@ export const localStore = {
   },
 
   async delete(id: string): Promise<void> {
-    await run<void>(STORE_PROJECTS, 'readwrite', (store) => {
-      store.delete(id);
-    });
+    await run(STORE_PROJECTS, 'readwrite', (store) => void store.delete(id));
   },
 
   /**
@@ -134,9 +130,7 @@ export const localStore = {
    * before any in-app "new document" action is reachable.
    */
   async clearAll(): Promise<void> {
-    await run<void>(STORE_PROJECTS, 'readwrite', (store) => {
-      store.clear();
-    });
+    await run(STORE_PROJECTS, 'readwrite', (store) => void store.clear());
   },
 
   async listAll(): Promise<LocalProjectRecord[]> {

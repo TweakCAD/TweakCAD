@@ -84,12 +84,8 @@ what changed, why, and what you ran. Not a narrative of how the work went.
 
 ## CI
 
-Every push runs typecheck, the unit suite and the build. All three must be
-green.
-
-`pnpm lint` also runs, but is **advisory for now**: it reports 71 pre-existing
-errors, 47 of them a single rule (`consistent-type-imports`). Don't add new
-ones — and if you clear a batch, say so, and the gate can start blocking.
+Every push runs typecheck, the unit suite, the build and `pnpm lint`. All
+four must be green. Lint errors fail the run; warnings are reported but don't.
 
 ## Where the design lives
 

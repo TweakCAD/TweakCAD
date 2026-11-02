@@ -108,10 +108,8 @@ export function SketchViewer({
   // emits 3 profiles upstream, the effect re-runs, and all 4 land back
   // in the selection. `resolveProfile` disambiguates via the stored
   // `interiorPoint`, picking the one region that actually contains it.
-  useEffect(() => {
+  const initialSelection = useMemo(() => {
     const regions = detectSketchRegions(sketchBuildGeometry(sketchInputs));
-    regionsRef.current = regions;
-
     const initialIds = new Set<string>();
     if (initialProfiles && initialProfiles.length > 0) {
       for (const profileRef of initialProfiles) {
@@ -121,9 +119,20 @@ export function SketchViewer({
         }
       }
     }
-    selectedIdsRef.current = initialIds;
-    setSelectedCount(initialIds.size);
+    return { regions, initialIds };
   }, [sketchInputs, initialProfiles]);
+  // A new initial selection resets the count during render, so the
+  // region-fill effect below redraws in the same commit.
+  const [seededSelection, setSeededSelection] = useState<typeof initialSelection | null>(null);
+  if (seededSelection !== initialSelection) {
+    setSeededSelection(initialSelection);
+    setSelectedCount(initialSelection.initialIds.size);
+  }
+  useEffect(() => {
+    regionsRef.current = initialSelection.regions;
+    // Copied: clicks toggle ids in place.
+    selectedIdsRef.current = new Set(initialSelection.initialIds);
+  }, [initialSelection]);
 
   // Main scene setup: geometry lines + region fills
   useEffect(() => {

@@ -4,16 +4,16 @@
  */
 
 import { useSyncExternalStore } from 'react';
-import type { DisplayContext } from '@tweakcad/core/src/store/displayContextStore.ts';
+import type { DisplayContext, createDisplayContextStore } from '@tweakcad/core/src/store/displayContextStore.ts';
 import type { PartId } from '@tweakcad/core/src/ids.ts';
 
 // ---- Store reference ----
 
-let storeRef: ReturnType<typeof import('@tweakcad/core/src/store/displayContextStore.ts').createDisplayContextStore> | null = null;
+let storeRef: ReturnType<typeof createDisplayContextStore> | null = null;
 
 /** Set the store reference (called once during app init) */
 export function setDisplayContextStoreRef(
-  store: ReturnType<typeof import('@tweakcad/core/src/store/displayContextStore.ts').createDisplayContextStore>,
+  store: ReturnType<typeof createDisplayContextStore>,
 ): void {
   storeRef = store;
 }

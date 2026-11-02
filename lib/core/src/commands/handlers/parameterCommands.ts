@@ -263,6 +263,9 @@ export const deleteParameterHandler: CommandHandler = {
     if (command.type !== 'DeleteParameter') return;
     const table = getMutableScopeTable(draft, command.scope);
     if (!table) return;
+    // Deleting on the draft keeps the undo patch a single-key remove;
+    // rebuilding `values` would record a whole-table replace.
+    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- name-keyed record
     delete table.values[command.name];
     draft.metadata.updatedAt = new Date().toISOString();
   },
