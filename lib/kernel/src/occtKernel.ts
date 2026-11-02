@@ -381,6 +381,44 @@ export class OcctKernel implements CadKernel {
     return all;
   }
 
+  /**
+   * Fold a binary `*WithHistory` boolean over `first` and `rest`: each
+   * step's result is the next step's first operand, so every call gives
+   * per-input → per-result face mappings. Input hashes are collected per
+   * step: OCCT only reports history for the hashes it is given, and the
+   * accumulated body's faces are new after every step.
+   *
+   * Each intermediate result is disposed as soon as the next step has
+   * stored its own result. The tracker copies stable IDs into the new
+   * body's entry when it is recorded, so nothing reads the intermediate's
+   * entry afterwards. The caller's bodies are never disposed.
+   */
+  private foldWithHistory(
+    first: KernelBody,
+    rest: KernelBody[],
+    op: (a: ShapeHandle, b: ShapeHandle, inputFaceHashes: number[], bound: number) => EvolutionData,
+    origin: string,
+  ): KernelBody {
+    let acc = first;
+    try {
+      for (const tool of rest) {
+        const evo = op(
+          this.getBodyShape(acc),
+          this.getBodyShape(tool),
+          this.collectInputFaceHashes([acc, tool]),
+          HASH_UPPER_BOUND,
+        );
+        const next = this.storeBodyWithHistory(evo.result, [acc, tool], evo, origin);
+        if (acc !== first) this.dispose(acc);
+        acc = next;
+      }
+    } catch (e) {
+      if (acc !== first) this.dispose(acc);
+      throw e;
+    }
+    return acc;
+  }
+
   private storeFace(shape: ShapeHandle, bodyHandle: string): KernelFace {
     const handle = nextHandle('face');
     this.faces.set(handle, shape);
@@ -878,29 +916,12 @@ export class OcctKernel implements CadKernel {
         return err(kernelError('parameter', 'FUSE_NEEDS_2', 'Boolean fuse requires at least 2 bodies'));
       }
       const k = this.getKernel();
-      // *WithHistory is binary-only; fold pairwise so each call gives us
-      // per-input → per-result face mappings. After each step the
-      // accumulated body becomes the next input — its tracker entry
-      // (just populated by storeBodyWithHistory) feeds the next merge.
-      // The hashes are collected per step: OCCT only reports history for
-      // the hashes it is given, and the accumulated body's faces are new
-      // after every step.
-      let accBody = targets[0]!;
-      for (let i = 1; i < targets.length; i++) {
-        const evo = k.fuseWithHistory(
-          this.getBodyShape(accBody),
-          this.getBodyShape(targets[i]!),
-          this.collectInputFaceHashes([accBody, targets[i]!]),
-          HASH_UPPER_BOUND,
-        );
-        accBody = this.storeBodyWithHistory(
-          evo.result,
-          [accBody, targets[i]!],
-          evo,
-          'fuse',
-        );
-      }
-      return ok(accBody);
+      return ok(this.foldWithHistory(
+        targets[0]!,
+        targets.slice(1),
+        (a, b, hashes, bound) => k.fuseWithHistory(a, b, hashes, bound),
+        'fuse',
+      ));
     } catch (e) {
       console.error('[OcctKernel] booleanFuse failed:', e);
       return err(kernelError('kernel', 'FUSE_FAILED', e instanceof Error ? e.message : String(e)));
@@ -918,20 +939,12 @@ export class OcctKernel implements CadKernel {
     try {
       if (tools.length === 0) return ok(target);
       const k = this.getKernel();
-      // Same pairwise fold as booleanFuse — cutWithHistory is binary,
-      // so peel tools off one at a time. The result becomes the new
-      // target for the next iteration (input hashes per step, as in fuse).
-      let accBody = target;
-      for (const tool of tools) {
-        const evo = k.cutWithHistory(
-          this.getBodyShape(accBody),
-          this.getBodyShape(tool),
-          this.collectInputFaceHashes([accBody, tool]),
-          HASH_UPPER_BOUND,
-        );
-        accBody = this.storeBodyWithHistory(evo.result, [accBody, tool], evo, 'cut');
-      }
-      return ok(accBody);
+      return ok(this.foldWithHistory(
+        target,
+        tools,
+        (a, b, hashes, bound) => k.cutWithHistory(a, b, hashes, bound),
+        'cut',
+      ));
     } catch (e) {
       console.error('[OcctKernel] booleanCut failed:', e);
       return err(kernelError('kernel', 'CUT_FAILED', e instanceof Error ? e.message : String(e)));
@@ -944,23 +957,12 @@ export class OcctKernel implements CadKernel {
         return err(kernelError('parameter', 'INTERSECT_NEEDS_2', 'Boolean intersect requires at least 2 bodies'));
       }
       const k = this.getKernel();
-      // Pairwise fold via intersectWithHistory — same shape as fuse/cut.
-      let accBody = targets[0]!;
-      for (let i = 1; i < targets.length; i++) {
-        const evo = k.intersectWithHistory(
-          this.getBodyShape(accBody),
-          this.getBodyShape(targets[i]!),
-          this.collectInputFaceHashes([accBody, targets[i]!]),
-          HASH_UPPER_BOUND,
-        );
-        accBody = this.storeBodyWithHistory(
-          evo.result,
-          [accBody, targets[i]!],
-          evo,
-          'intersect',
-        );
-      }
-      return ok(accBody);
+      return ok(this.foldWithHistory(
+        targets[0]!,
+        targets.slice(1),
+        (a, b, hashes, bound) => k.intersectWithHistory(a, b, hashes, bound),
+        'intersect',
+      ));
     } catch (e) {
       console.error('[OcctKernel] booleanIntersect failed:', e);
       return err(kernelError('kernel', 'INTERSECT_FAILED', e instanceof Error ? e.message : String(e)));
