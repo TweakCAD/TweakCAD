@@ -42,6 +42,19 @@ function hasExpression(
   );
 }
 
+/**
+ * The constraint's stored `value` for an expression's result.
+ *
+ * Expressions follow the document's units: millimetres for lengths, degrees
+ * for angles — a parameter is written `30` for 30°. An angle constraint's
+ * `value` is in radians because that is what the solver works in, so an
+ * angle's expression is converted on the way in. Copying it straight across
+ * read 30 as 30 rad, and the line settled at about −81°.
+ */
+function constraintValue(c: SketchConstraint, evaluated: number): number {
+  return c.type === 'angle' ? (evaluated * Math.PI) / 180 : evaluated;
+}
+
 export type SketchResolveResult = {
   state: EditorState;
   /** Expressions that could not be evaluated, or a solve that failed. */
@@ -78,7 +91,7 @@ export function resolveSketchDimensions(
       );
       continue; // keep the last solved value rather than zeroing the dimension
     }
-    constraints.set(c.id, { ...c, value: evaluated.value } as SketchConstraint);
+    constraints.set(c.id, { ...c, value: constraintValue(c, evaluated.value) } as SketchConstraint);
     applied++;
   }
 

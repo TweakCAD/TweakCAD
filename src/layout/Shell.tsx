@@ -3771,6 +3771,9 @@ export function Shell({
         : result?.status === 'suppressed' ? 'suppressed' as const
         : 'success' as const;
       const errorMessage = result?.status === 'failed' ? result.error.message : undefined;
+      const warningMessage = result?.status === 'success' && result.warnings?.length
+        ? result.warnings.join(' ')
+        : undefined;
       const blockedBy = result?.status === 'blocked' ? result.blockedBy : undefined;
       // V11.5 continuation: compute sketch DOF here so the project tree
       // can render a Lock badge on fully-constrained sketches without
@@ -3787,6 +3790,7 @@ export function Shell({
         ...f,
         status,
         ...(errorMessage !== undefined ? { errorMessage } : {}),
+        ...(warningMessage !== undefined ? { warningMessage } : {}),
         ...(blockedBy !== undefined ? { blockedBy } : {}),
         ...(dof !== undefined ? { dof } : {}),
       };

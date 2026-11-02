@@ -58,6 +58,25 @@ describe('buildDiagnostics — status mapping', () => {
     expect(out.featureResults[f1]).toBeDefined();
   });
 
+  it('success with warnings → one warning diagnostic carrying them', () => {
+    // A sketch whose parameter-driven dimension could not be applied builds
+    // at its last solved shape; the assistant has to be able to see that.
+    const f1 = featureId('f1');
+    const proj = projectWithFeatures([f1]);
+    const results: Record<FeatureId, FeatureBuildResult> = {
+      [f1]: { featureId: f1, status: 'success', bodies: [], warnings: ['Dimension "pcd" could not be evaluated.'] },
+    };
+    const out = buildDiagnostics(results, proj);
+    expect(out.diagnostics).toEqual([
+      expect.objectContaining({
+        severity: 'warning',
+        code: 'BUILT_WITH_WARNINGS',
+        featureId: f1,
+        message: 'Dimension "pcd" could not be evaluated.',
+      }),
+    ]);
+  });
+
   it('suppressed → no diagnostic, included in featureResults', () => {
     const f1 = featureId('f1');
     const proj = projectWithFeatures([f1]);

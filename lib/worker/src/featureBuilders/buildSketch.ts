@@ -77,12 +77,15 @@ export async function buildSketch(
   // reference a parameter, which keeps the expression-valued coordinates
   // that make an imported component parametric working as they do today.
   let sketchGeometry = sketchBuildGeometry(inputs);
+  // A dimension that could not be evaluated or solved keeps the sketch at its
+  // last solved shape, which is more useful than failing it — but the user
+  // has to be told. These used to go only to the worker's console, so the
+  // sketch reported plain success while ignoring its parameters.
+  let warnings: string[] = [];
   if (sketchHasParametricDimensions(inputs.editorModel)) {
     await ensureSketchSolver();
     const resolved = resolveSketchDimensions(fromSnapshot(inputs.editorModel), params);
-    for (const d of resolved.diagnostics) {
-      console.warn(`[buildSketch ${node.id}] ${d}`);
-    }
+    warnings = resolved.diagnostics;
     if (resolved.solved) {
       sketchGeometry = editorModelToBuildGeometry(resolved.state);
     }
@@ -179,5 +182,6 @@ export async function buildSketch(
         planeNormal: plane.normal,
       },
     },
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
 }

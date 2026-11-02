@@ -8,6 +8,11 @@
  * has to ask what unit a stored number is in, and the expression grammar
  * needs no unit literals.
  *
+ * One stored number is not in degrees: a sketch angle constraint's `value`,
+ * which is in radians because it is the solver's working value (the last
+ * solved number, not something the user typed). Its `expression` is in
+ * degrees like every other angle, and is converted when it is applied.
+ *
  * There is deliberately no document-level unit system and no length
  * converter. `CadProject` carried `units: 'mm' | 'inch'` until this was
  * settled, but nothing read it and nothing converted, so a file declaring

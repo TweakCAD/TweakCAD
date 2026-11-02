@@ -146,3 +146,89 @@ describe('parameter-driven sketch dimensions', () => {
     expect(Math.hypot(c.x - a.x, c.y - a.y)).toBeCloseTo(40, 6);
   });
 });
+
+describe('parameter-driven sketch dimensions — angles', () => {
+  beforeAll(async () => {
+    await initPlaneGCS(findWasm());
+  }, 30_000);
+
+  // Expressions follow the document's units, so an angle parameter is written
+  // in degrees; the constraint's `value` is radians for the solver.
+  function twoLinesAtAngle(expression: string): EditorState {
+    const O = sketchPointId('p_o');
+    const X = sketchPointId('p_x');
+    const Y = sketchPointId('p_y');
+    const L1 = sketchGeometryId('g_l1');
+    const L2 = sketchGeometryId('g_l2');
+    const ANG = sketchConstraintId('c_ang');
+    const LEN = sketchConstraintId('c_len');
+    return {
+      points: new Map<SketchPointId, SketchPoint>([
+        [O, { id: O, x: 0, y: 0, fixed: true }],
+        [X, { id: X, x: 10, y: 0, fixed: true }],
+        [Y, { id: Y, x: 10 * Math.cos(0.5), y: 10 * Math.sin(0.5), fixed: false }],
+      ]),
+      geometries: new Map<SketchGeometryId, SketchGeometry>([
+        [L1, { id: L1, type: 'line', startId: O, endId: X, construction: false }],
+        [L2, { id: L2, type: 'line', startId: O, endId: Y, construction: false }],
+      ]),
+      constraints: new Map<SketchConstraintId, SketchConstraint>([
+        [ANG, { id: ANG, type: 'angle', geometryA: L1, geometryB: L2, value: 0.5, expression } as SketchConstraint],
+        [LEN, { id: LEN, type: 'distance', pointA: O, pointB: Y, value: 10 } as SketchConstraint],
+      ]),
+    };
+  }
+
+  it('reads an angle expression in degrees', () => {
+    const out = resolveSketchDimensions(twoLinesAtAngle('theta'), { theta: 30 });
+    expect(out.solved).toBe(true);
+    const y = out.state.points.get(sketchPointId('p_y'))!;
+    // Used to be taken as 30 rad, settling the line at about −81°.
+    expect((Math.atan2(y.y, y.x) * 180) / Math.PI).toBeCloseTo(30, 4);
+  });
+
+  it('stores the solved angle in radians', () => {
+    const out = resolveSketchDimensions(twoLinesAtAngle('theta * 2'), { theta: 22.5 });
+    const ang = out.state.constraints.get(sketchConstraintId('c_ang')) as { value: number };
+    expect(ang.value).toBeCloseTo(Math.PI / 4, 9);
+  });
+});
+
+describe('parameter-driven sketch dimensions — through a rebuild', () => {
+  beforeAll(async () => {
+    await initPlaneGCS(findWasm());
+  }, 30_000);
+
+  it('reports a dimension that cannot be evaluated as a warning on the sketch', async () => {
+    const { incrementalRebuild, clearRebuildCache } = await import('@tweakcad/worker/src/rebuilder.ts');
+    const { MockKernel } = await import('@tweakcad/kernel/src/mockKernel.ts');
+    const { newProjectWithPart } = await import('@tweakcad/core/src/document/factory.ts');
+    const { toSnapshot } = await import('@tweakcad/core/src/sketch/operations.ts');
+    clearRebuildCache();
+    const kernel = new MockKernel();
+    await kernel.init();
+    const project = newProjectWithPart('P', 'Part 1');
+    const part = Object.values(project.parts)[0]!;
+    part.timeline = [{
+      id: 'f_sketch',
+      type: 'sketch',
+      name: 'Sketch 1',
+      version: 1,
+      enabled: true,
+      visible: true,
+      // `width` is not a parameter of this project — deleted, say.
+      inputs: { plane: { type: 'defaultPlane', name: 'XY' }, editorModel: toSnapshot(lineWithDrivenLength('width', 10)) },
+      dependsOn: [],
+      createdAt: '2026-11-02T00:00:00.000Z',
+      updatedAt: '2026-11-02T00:00:00.000Z',
+    } as never];
+
+    const result = await incrementalRebuild(part, project, kernel, 0);
+
+    const sketch = result.featureResults[0]!;
+    expect(sketch.status).toBe('success');
+    expect(sketch.status === 'success' ? sketch.warnings : undefined).toEqual([
+      expect.stringContaining('could not be evaluated'),
+    ]);
+  });
+});

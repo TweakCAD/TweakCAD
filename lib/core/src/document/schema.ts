@@ -1242,7 +1242,11 @@ export type SketchPlaneDisplay = {
 };
 
 export type FeatureBuildResult =
-  | { featureId: FeatureId; status: 'success'; bodies: BuiltBody[] }
+  /**
+   * `warnings`: the feature built, but not quite as authored (see
+   * `BuildResult.warnings`). Absent when there are none.
+   */
+  | { featureId: FeatureId; status: 'success'; bodies: BuiltBody[]; warnings?: string[] }
   | { featureId: FeatureId; status: 'suppressed' }
   | { featureId: FeatureId; status: 'blocked'; blockedBy: FeatureId }
   | { featureId: FeatureId; status: 'failed'; error: FeatureError };

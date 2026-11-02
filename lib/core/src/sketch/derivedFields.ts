@@ -19,6 +19,7 @@ import type {
   SketchPoint,
   SketchPointId,
 } from './types.ts';
+import { extractParameterRefs } from '../expressions.ts';
 
 /** Tolerance below which a radius difference is solver noise, not a change. */
 const RADIUS_EPSILON = 1e-6;
@@ -46,6 +47,26 @@ export function syncDerivedGeometryFields(
     }
   }
   return next ?? geometries;
+}
+
+/**
+ * The parameter names this sketch's dimension expressions reference.
+ *
+ * `DeleteParameter` uses it to refuse deleting a parameter a sketch dimension
+ * still uses: unlike a feature input, an unresolvable dimension does not fail
+ * its feature — the sketch keeps its last solved shape — so the deletion would
+ * otherwise go through and silently stop the parameter driving anything.
+ */
+export function sketchDimensionParameterRefs(
+  editorModel: { constraints?: readonly unknown[] } | undefined,
+): Set<string> {
+  const refs = new Set<string>();
+  for (const c of editorModel?.constraints ?? []) {
+    const expr = (c as { expression?: unknown }).expression;
+    if (typeof expr !== 'string' || expr.trim() === '') continue;
+    for (const name of extractParameterRefs(expr)) refs.add(name);
+  }
+  return refs;
 }
 
 /**

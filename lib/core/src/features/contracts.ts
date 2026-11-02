@@ -37,6 +37,13 @@ export type BuildContext = {
 export type BuildResult = {
   bodies: { bodyId: BodyId; handle: unknown }[];
   outputs?: FeatureOutputs;
+  /**
+   * Problems that did not stop the feature building but left it not quite
+   * as authored — a parameter-driven sketch dimension that could not be
+   * evaluated or solved, so the sketch kept its last solved shape. Carried
+   * onto the feature's `success` result so the user sees them.
+   */
+  warnings?: string[];
 };
 
 /** Named outputs from a feature (semantic references) */

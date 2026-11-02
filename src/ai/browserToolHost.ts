@@ -84,6 +84,15 @@ function partFeatureSet(doc: CadProject, partId: PartId): Set<FeatureId> | null 
 function resultToDiagnostic(result: FeatureBuildResult): Diagnostic | null {
   switch (result.status) {
     case 'success':
+      if (!result.warnings?.length) return null;
+      return {
+        id: `diag-${result.featureId}-warning`,
+        severity: 'warning',
+        code: 'BUILT_WITH_WARNINGS',
+        message: result.warnings.join(' '),
+        featureId: result.featureId,
+        recoverable: true,
+      };
     case 'suppressed':
       return null;
     case 'blocked':
