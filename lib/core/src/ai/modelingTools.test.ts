@@ -7,7 +7,7 @@ import { CommandBus } from '../commands/bus.ts';
 import { DocumentStore } from '../store/documentStore.ts';
 import { newProjectWithPart } from '../document/factory.ts';
 import { createSketchHandler, createExtrudeHandler } from '../commands/handlers/featureCommands.ts';
-import { sketchDrawCircleHandler } from '../commands/handlers/sketchDrawCommands.ts';
+import { sketchDrawCircleHandler, sketchDrawRectangleHandler, sketchDrawSlotHandler } from '../commands/handlers/sketchDrawCommands.ts';
 import { detectSketchRegions, pointInRegion, resolveProfile } from '../sketch/profileRegions.ts';
 import { sketchBuildGeometry } from '../sketch/derivedGeometry.ts';
 import type { ExtrudeFeatureInputs, SketchFeatureInputs } from '../document/schema.ts';
@@ -21,6 +21,8 @@ function newHost(): { host: ToolHost; store: DocumentStore; partId: PartId } {
   bus.register('CreateSketch', createSketchHandler);
   bus.register('CreateExtrude', createExtrudeHandler);
   bus.register('SketchDrawCircle', sketchDrawCircleHandler);
+  bus.register('SketchDrawRectangle', sketchDrawRectangleHandler);
+  bus.register('SketchDrawSlot', sketchDrawSlotHandler);
   const host: ToolHost = {
     getDocument: () => store.getState(),
     getDiagnostics: () => ({ diagnostics: [], featureResults: {} }),
@@ -163,5 +165,28 @@ describe('face anchors in sketch_create / feature_extrude', () => {
     expect((await executeTool('feature_extrude', { sketchId }, host)).ok).toBe(false);
     expect((await executeTool('feature_extrude', { sketchId, distance: 5, toFace: top }, host)).ok).toBe(false);
     expect((await executeTool('feature_extrude', { sketchId, toFace: top, direction: 'symmetric' }, host)).ok).toBe(false);
+  });
+});
+
+describe('sketch_draw_rectangle / sketch_draw_slot return every curve they draw', () => {
+  // Both draw several curves (invariant #11: no composite entity). They used
+  // to return one `entityId` — whichever new id the diff met first — so a
+  // caller could not build a profile from the result.
+  it.each([
+    ['sketch_draw_rectangle', { corner: [0, 0], width: 60, height: 30 }, ['line', 'line', 'line', 'line']],
+    ['sketch_draw_slot', { center1: [0, 0], center2: [20, 0], width: 6 }, ['arc', 'arc', 'line', 'line']],
+  ] as const)('%s returns all its entity ids, which close into one region', async (tool, args, kinds) => {
+    const { host, store, partId } = newHost();
+    const { sketchId } = await call<{ sketchId: string }>(host, 'sketch_create', { partId, plane: 'XY' });
+
+    const { entityIds } = await call<{ entityIds: string[] }>(host, tool, { sketchId, ...args });
+
+    const sketch = store.getState().parts[partId]!.timeline.find((f) => f.id === sketchId)!;
+    const entities = sketchBuildGeometry(sketch.inputs as unknown as SketchFeatureInputs) as Record<string, { type: string }>;
+    expect(entityIds.map((id) => entities[id]!.type).sort()).toEqual([...kinds]);
+    expect(new Set(entityIds)).toEqual(new Set(Object.keys(entities)));
+    const regions = detectSketchRegions(entities as never);
+    expect(regions).toHaveLength(1);
+    expect(new Set(regions[0]!.entityIds.map(String))).toEqual(new Set(entityIds));
   });
 });

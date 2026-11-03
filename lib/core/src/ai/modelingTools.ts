@@ -366,12 +366,14 @@ export async function executeSketchDrawLine(
 
 /**
  * sketch_draw_rectangle — `SketchDrawRectangle` with id-diff return.
- * Returns `{ entityId }` (the single collapsed rectangle entity id).
+ * Returns `{ entityIds }`: the four line entities the rectangle is drawn as
+ * (invariant #11, no composite rectangle). It used to return one
+ * `entityId` — whichever of the four the diff met first.
  */
 export async function executeSketchDrawRectangle(
   args: Record<string, unknown>,
   host: ToolHost,
-): Promise<Result<{ entityId: EntityId }, ToolExecutionError>> {
+): Promise<Result<{ entityIds: EntityId[] }, ToolExecutionError>> {
   const sketchId = args['sketchId'];
   const corner = args['corner'];
   const width = args['width'];
@@ -399,9 +401,9 @@ export async function executeSketchDrawRectangle(
   };
   try {
     const after = asProject(await host.dispatchCommand(cmd));
-    const newId = diffNewEntityId(beforeEnts, sketchEntities(after, sketchId));
-    if (!newId) return err(hostError('SketchDrawRectangle dispatched but no new entity id found'));
-    return ok({ entityId: newId });
+    const newIds = diffNewEntityIds(beforeEnts, sketchEntities(after, sketchId));
+    if (newIds.length === 0) return err(hostError('SketchDrawRectangle dispatched but no new entity ids found'));
+    return ok({ entityIds: newIds });
   } catch (e) {
     return err(hostError(e instanceof Error ? e.message : String(e)));
   }
@@ -447,12 +449,13 @@ export async function executeSketchDrawCircle(
 
 /**
  * sketch_draw_slot — `SketchDrawSlot` with id-diff return.
- * Returns `{ entityId }`.
+ * Returns `{ entityIds }`: the two lines and two arcs the slot is drawn as
+ * (invariant #11, no composite slot).
  */
 export async function executeSketchDrawSlot(
   args: Record<string, unknown>,
   host: ToolHost,
-): Promise<Result<{ entityId: EntityId }, ToolExecutionError>> {
+): Promise<Result<{ entityIds: EntityId[] }, ToolExecutionError>> {
   const sketchId = args['sketchId'];
   const center1 = args['center1'];
   const center2 = args['center2'];
@@ -478,9 +481,9 @@ export async function executeSketchDrawSlot(
   };
   try {
     const after = asProject(await host.dispatchCommand(cmd));
-    const newId = diffNewEntityId(beforeEnts, sketchEntities(after, sketchId));
-    if (!newId) return err(hostError('SketchDrawSlot dispatched but no new entity id found'));
-    return ok({ entityId: newId });
+    const newIds = diffNewEntityIds(beforeEnts, sketchEntities(after, sketchId));
+    if (newIds.length === 0) return err(hostError('SketchDrawSlot dispatched but no new entity ids found'));
+    return ok({ entityIds: newIds });
   } catch (e) {
     return err(hostError(e instanceof Error ? e.message : String(e)));
   }
