@@ -68,6 +68,21 @@ function indexedEdgeStableId(origin: string, index: number): StableEdgeId {
 }
 
 /**
+ * Whether an ID names its face or edge by walk order: everything
+ * {@link indexedFaceStableId} / {@link indexedEdgeStableId} mint, with or
+ * without `_orphan_` and `:n` uniqueness suffixes. Such an ID can come to
+ * name a different entity when an edit changes the walk, so a repair hint
+ * may overrule it (`chooseByHint`).
+ *
+ * IDs minted from provenance (sketch entities, generators, copy keys) must
+ * not end in `_<digits>` before their suffixes, so they are never taken for
+ * walk-order IDs and a stale hint cannot move them.
+ */
+export function isWalkOrderId(id: string): boolean {
+  return /^s[fe]_.+_\d+(:\d+)*$/.test(id);
+}
+
+/**
  * Sort key for a result sub-shape, by its walk index. Compared
  * lexicographically, ascending. Used to decide which of several faces that
  * ended up with the same stable ID keeps it unsuffixed.
@@ -402,8 +417,9 @@ export class ShapeEvolutionTracker {
    *    edge a boolean trimmed, or an edge of a transformed copy. It keeps
    *    the input's ID, so it is not renamed by walk order when an unrelated
    *    edit adds or removes edges elsewhere in the result.
-   * 3. **Walk index** — `se_<origin>_<n>`: edges the op created (a
-   *    boolean's section edges, a fillet's boundary edges).
+   * 3. **Orphan** — `se_<origin>_orphan_<walkIndex>`: edges the op
+   *    created (a boolean's section edges, a fillet's boundary edges). The
+   *    tag keeps these out of the namespace of IDs minted any other way.
    *
    * When several result edges end up with one ID (an edge split into
    * pieces, or a copy fused back onto its source), the bare ID stays on the
@@ -436,7 +452,7 @@ export class ShapeEvolutionTracker {
         if (resultEdges.has(rh) && !assigned.has(rh)) assigned.set(rh, { ...found, how: 1 });
       }
     }
-    const ids = resultEdgeHashes.map((h, i) => assigned.get(h)?.id ?? indexedEdgeStableId(origin, i));
+    const ids = resultEdgeHashes.map((h, i) => assigned.get(h)?.id ?? indexedEdgeStableId(`${origin}_orphan`, i));
     const rank: ElementOrderKey = i => {
       const hash = resultEdgeHashes[i];
       const a = hash === undefined ? undefined : assigned.get(hash);

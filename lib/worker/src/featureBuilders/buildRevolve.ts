@@ -101,6 +101,7 @@ export async function buildRevolve(
     bodies = await joinTouchingBodies({
       ...operands,
       newBodies: async ([tool]) => [{ bodyId: mintBodyId(node.id), handle: tool! }],
+      featureId: node.id,
     });
   } else if (inputs.operation === 'cut') {
     bodies = await cutTouchingBodies({ ...operands, featureId: node.id });

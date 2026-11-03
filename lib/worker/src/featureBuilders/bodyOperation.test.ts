@@ -160,6 +160,7 @@ describe('joinTouchingBodies — all or nothing', () => {
       kernel,
       explicitTargets: false,
       newBodies: async () => [],
+      featureId: 'joiner',
     })).rejects.toThrow(/Join failed/);
 
     expect(context.bodies.get(A)).toBe(a);

@@ -52,7 +52,7 @@ export async function buildPrimitive(
 
   const dims = resolveDimensions(inputs.shape, params);
   const local = await makeCanonicalBody(inputs.shape.kind, dims, node.id, kernel);
-  const body = await place(local, inputs.transform, kernel);
+  const body = await place(local, inputs.transform, kernel, node.id);
 
   return applyOperation(node.id, inputs, body, context, kernel);
 }
@@ -230,9 +230,10 @@ async function place(
   body: KernelBody,
   transform: Transform3D | undefined,
   kernel: CadKernel,
+  featureId: string,
 ): Promise<KernelBody> {
   if (isIdentity(transform) || !transform) return body;
-  const result = await kernel.transform(body, transform);
+  const result = await kernel.transform(body, transform, featureId);
   // `transform` returns a new body; the one at the origin is not used again.
   releaseShapes(kernel, [body]);
   if (!result.ok) throw new Error(`Failed to place primitive: ${result.error.message}`);
@@ -267,6 +268,7 @@ async function applyOperation(
     bodies = await joinTouchingBodies({
       ...operands,
       newBodies: async ([tool]) => [{ bodyId: mintBodyId(featureId), handle: tool! }],
+      featureId,
     });
   } else if (inputs.operation === 'cut') {
     bodies = await cutTouchingBodies({ ...operands, featureId });

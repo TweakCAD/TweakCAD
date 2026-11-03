@@ -218,7 +218,7 @@ export async function buildExtrude(
   const newBodies = async (tools: KernelBody[]) => {
     let combined = tools[0]!;
     if (tools.length > 1) {
-      const fuseResult = await kernel.booleanFuse(tools);
+      const fuseResult = await kernel.booleanFuse(tools, node.id);
       if (!fuseResult.ok) {
         throw new Error(`Failed to merge profile bodies: ${fuseResult.error.message}`);
       }
@@ -237,7 +237,7 @@ export async function buildExtrude(
   };
   let allBodies: EmittedBody[];
   if (inputs.operation === 'join') {
-    allBodies = await joinTouchingBodies({ ...operands, newBodies });
+    allBodies = await joinTouchingBodies({ ...operands, newBodies, featureId: node.id });
   } else if (inputs.operation === 'cut') {
     allBodies = await cutTouchingBodies({ ...operands, featureId: node.id });
   } else {

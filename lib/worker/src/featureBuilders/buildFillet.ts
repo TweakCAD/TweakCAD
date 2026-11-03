@@ -93,7 +93,7 @@ export async function buildFillet(
     throw new Error(`Fillet radius must be positive (got ${radiusResult.value})`);
   }
 
-  const bodyResult = await kernel.fillet(body, edges, radiusResult.value);
+  const bodyResult = await kernel.fillet(body, edges, radiusResult.value, node.id);
   if (!bodyResult.ok) {
     throw new Error(`Fillet failed: ${bodyResult.error.message}`);
   }

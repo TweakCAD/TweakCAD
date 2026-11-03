@@ -81,7 +81,7 @@ export async function buildMirror(
   };
 
   // 3. Mirror.
-  const mirrorResult = await kernel.mirror(sourceBody, resolvedPlane);
+  const mirrorResult = await kernel.mirror(sourceBody, resolvedPlane, node.id);
   if (!mirrorResult.ok) {
     throw new Error(`Mirror failed: ${mirrorResult.error.message}`);
   }
@@ -93,7 +93,7 @@ export async function buildMirror(
   // body's id (matches Hole's in-place modification convention) so
   // downstream features that reference it keep working.
   if (inputs.operation === 'join') {
-    const fuseResult = await kernel.booleanFuse([sourceBody, mirroredBody]);
+    const fuseResult = await kernel.booleanFuse([sourceBody, mirroredBody], node.id);
     if (!fuseResult.ok) {
       throw new Error(`Mirror join (fuse) failed: ${fuseResult.error.message}`);
     }

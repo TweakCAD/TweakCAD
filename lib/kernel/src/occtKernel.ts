@@ -38,7 +38,7 @@ import type {
   KernelError,
 } from './types.ts';
 import { OcctKernel as UpstreamKernel, type ShapeHandle, type EvolutionData } from 'occt-wasm';
-import { ShapeEvolutionTracker, type EvolutionRecord } from './topologyTracker.ts';
+import { ShapeEvolutionTracker, isWalkOrderId, type EvolutionRecord } from './topologyTracker.ts';
 
 /**
  * Upper bound for `kernel.hashCode(shape, upperBound)` — used as the modulo
@@ -946,7 +946,7 @@ export class OcctKernel implements CadKernel {
 
   // --- Boolean operations ---
 
-  async booleanFuse(targets: KernelBody[]): Promise<Result<KernelBody, KernelError>> {
+  async booleanFuse(targets: KernelBody[], origin?: string): Promise<Result<KernelBody, KernelError>> {
     try {
       if (targets.length < 2) {
         return err(kernelError('parameter', 'FUSE_NEEDS_2', 'Boolean fuse requires at least 2 bodies'));
@@ -956,7 +956,7 @@ export class OcctKernel implements CadKernel {
         targets[0]!,
         targets.slice(1),
         (a, b, hashes, bound) => k.fuseWithHistory(a, b, hashes, bound),
-        'fuse',
+        originTag('fuse', origin),
       ));
     } catch (e) {
       console.error('[OcctKernel] booleanFuse failed:', e);
@@ -985,6 +985,7 @@ export class OcctKernel implements CadKernel {
   async booleanCut(
     target: KernelBody,
     tools: KernelBody[],
+    origin?: string,
   ): Promise<Result<KernelBody, KernelError>> {
     try {
       if (tools.length === 0) return ok(target);
@@ -993,7 +994,7 @@ export class OcctKernel implements CadKernel {
         target,
         tools,
         (a, b, hashes, bound) => k.cutWithHistory(a, b, hashes, bound),
-        'cut',
+        originTag('cut', origin),
       ));
     } catch (e) {
       console.error('[OcctKernel] booleanCut failed:', e);
@@ -1001,7 +1002,7 @@ export class OcctKernel implements CadKernel {
     }
   }
 
-  async booleanIntersect(targets: KernelBody[]): Promise<Result<KernelBody, KernelError>> {
+  async booleanIntersect(targets: KernelBody[], origin?: string): Promise<Result<KernelBody, KernelError>> {
     try {
       if (targets.length < 2) {
         return err(kernelError('parameter', 'INTERSECT_NEEDS_2', 'Boolean intersect requires at least 2 bodies'));
@@ -1011,7 +1012,7 @@ export class OcctKernel implements CadKernel {
         targets[0]!,
         targets.slice(1),
         (a, b, hashes, bound) => k.intersectWithHistory(a, b, hashes, bound),
-        'intersect',
+        originTag('intersect', origin),
       ));
     } catch (e) {
       console.error('[OcctKernel] booleanIntersect failed:', e);
@@ -1025,6 +1026,7 @@ export class OcctKernel implements CadKernel {
     body: KernelBody,
     edges: KernelEdge[],
     radius: number,
+    origin?: string,
   ): Promise<Result<KernelBody, KernelError>> {
     try {
       const k = this.getKernel();
@@ -1043,7 +1045,7 @@ export class OcctKernel implements CadKernel {
           inputFaceHashes,
           HASH_UPPER_BOUND,
         );
-        return ok(this.storeBodyWithHistory(evo.result, [body], evo, 'fillet'));
+        return ok(this.storeBodyWithHistory(evo.result, [body], evo, originTag('fillet', origin)));
       } finally {
         for (const e of selected.toRelease) k.release(e);
       }
@@ -1057,6 +1059,7 @@ export class OcctKernel implements CadKernel {
     body: KernelBody,
     edges: KernelEdge[],
     distance: number,
+    origin?: string,
   ): Promise<Result<KernelBody, KernelError>> {
     try {
       const k = this.getKernel();
@@ -1071,7 +1074,7 @@ export class OcctKernel implements CadKernel {
           inputFaceHashes,
           HASH_UPPER_BOUND,
         );
-        return ok(this.storeBodyWithHistory(evo.result, [body], evo, 'chamfer'));
+        return ok(this.storeBodyWithHistory(evo.result, [body], evo, originTag('chamfer', origin)));
       } finally {
         for (const e of selected.toRelease) k.release(e);
       }
@@ -1081,7 +1084,7 @@ export class OcctKernel implements CadKernel {
     }
   }
 
-  async mirror(body: KernelBody, plane: ResolvedPlane): Promise<Result<KernelBody, KernelError>> {
+  async mirror(body: KernelBody, plane: ResolvedPlane, origin?: string): Promise<Result<KernelBody, KernelError>> {
     try {
       const k = this.getKernel();
       const shape = this.getBodyShape(body);
@@ -1099,14 +1102,14 @@ export class OcctKernel implements CadKernel {
         inputFaceHashes,
         HASH_UPPER_BOUND,
       );
-      return ok(this.storeBodyWithHistory(evo.result, [body], evo, 'mirror'));
+      return ok(this.storeBodyWithHistory(evo.result, [body], evo, originTag('mirror', origin)));
     } catch (e) {
       console.error('[OcctKernel] mirror failed:', e);
       return err(kernelError('kernel', 'MIRROR_FAILED', e instanceof Error ? e.message : String(e)));
     }
   }
 
-  async transform(body: KernelBody, t: Transform3D): Promise<Result<KernelBody, KernelError>> {
+  async transform(body: KernelBody, t: Transform3D, origin?: string): Promise<Result<KernelBody, KernelError>> {
     try {
       const k = this.getKernel();
       const shape = this.getBodyShape(body);
@@ -1116,7 +1119,7 @@ export class OcctKernel implements CadKernel {
       // face/edge IDs carry over from the input body via hash-match.
       const matrix = transform3x4(t);
       const out = k.transform(shape, matrix);
-      return ok(this.storeModifiedBody(out, [body], 'transform'));
+      return ok(this.storeModifiedBody(out, [body], originTag('transform', origin)));
     } catch (e) {
       console.error('[OcctKernel] transform failed:', e);
       return err(kernelError('kernel', 'TRANSFORM_FAILED', e instanceof Error ? e.message : String(e)));
@@ -1195,6 +1198,7 @@ export class OcctKernel implements CadKernel {
     facesToRemove: KernelFace[],
     thickness: number,
     tolerance: number = 1e-3,
+    origin?: string,
   ): Promise<Result<KernelBody, KernelError>> {
     try {
       if (facesToRemove.length === 0) {
@@ -1221,7 +1225,7 @@ export class OcctKernel implements CadKernel {
         inputFaceHashes,
         HASH_UPPER_BOUND,
       );
-      return ok(this.storeBodyWithHistory(evo.result, [body], evo, 'shell'));
+      return ok(this.storeBodyWithHistory(evo.result, [body], evo, originTag('shell', origin)));
     } catch (e) {
       console.error('[OcctKernel] shell failed:', e);
       return err(kernelError('kernel', 'SHELL_FAILED', e instanceof Error ? e.message : String(e)));
@@ -1233,6 +1237,7 @@ export class OcctKernel implements CadKernel {
     dir: Vec3,
     count: number,
     spacing: number,
+    origin?: string,
   ): Promise<Result<KernelBody[], KernelError>> {
     try {
       if (count < 1) {
@@ -1259,7 +1264,7 @@ export class OcctKernel implements CadKernel {
           inputFaceHashes,
           HASH_UPPER_BOUND,
         );
-        copies.push(this.storeBodyWithHistory(evo.result, [body], evo, 'linearPattern'));
+        copies.push(this.storeBodyWithHistory(evo.result, [body], evo, originTag('linearPattern', origin)));
       }
       return ok(copies);
     } catch (e) {
@@ -1274,6 +1279,7 @@ export class OcctKernel implements CadKernel {
     body: KernelBody,
     axis: ResolvedAxis,
     count: number,
+    origin?: string,
   ): Promise<Result<KernelBody[], KernelError>> {
     try {
       if (count < 1) {
@@ -1300,7 +1306,7 @@ export class OcctKernel implements CadKernel {
           inputFaceHashes,
           HASH_UPPER_BOUND,
         );
-        copies.push(this.storeBodyWithHistory(evo.result, [body], evo, 'circularPattern'));
+        copies.push(this.storeBodyWithHistory(evo.result, [body], evo, originTag('circularPattern', origin)));
       }
       return ok(copies);
     } catch (e) {
@@ -1460,7 +1466,9 @@ export class OcctKernel implements CadKernel {
     const k = this.getKernel();
     const targetHash = this.tracker.resolveStableFaceId(body.handle, stableFaceId);
     const faceShapes = k.getSubShapes(this.getBodyShape(body), 'face');
-    const matched = this.chooseSubShape(faceShapes, targetHash, repairHint, (fh) => this.describeFace(fh));
+    const matched = this.chooseSubShape(
+      faceShapes, targetHash, repairHint, (fh) => this.describeFace(fh), !isWalkOrderId(String(stableFaceId)),
+    );
     return matched === undefined ? null : this.storeFace(matched, body.handle);
   }
 
@@ -1475,6 +1483,7 @@ export class OcctKernel implements CadKernel {
     targetHash: number | undefined,
     hint: RepairHint | undefined,
     describe: (handle: ShapeHandle) => RepairHint,
+    trustFound: boolean,
   ): ShapeHandle | undefined {
     const k = this.getKernel();
     let chosen = -1;
@@ -1490,7 +1499,7 @@ export class OcctKernel implements CadKernel {
           described.set(i, d);
         }
         return d;
-      });
+      }, trustFound);
       return chosen >= 0 ? candidates[chosen] : undefined;
     } finally {
       candidates.forEach((h, i) => { if (i !== chosen) k.release(h); });
@@ -1601,7 +1610,9 @@ export class OcctKernel implements CadKernel {
     const k = this.getKernel();
     const targetHash = this.tracker.resolveStableEdgeId(body.handle, stableEdgeId);
     const edgeShapes = k.getSubShapes(this.getBodyShape(body), 'edge');
-    const matched = this.chooseSubShape(edgeShapes, targetHash, repairHint, (eh) => this.describeEdge(eh));
+    const matched = this.chooseSubShape(
+      edgeShapes, targetHash, repairHint, (eh) => this.describeEdge(eh), !isWalkOrderId(String(stableEdgeId)),
+    );
     return matched === undefined ? null : this.storeEdge(matched, body.handle);
   }
 

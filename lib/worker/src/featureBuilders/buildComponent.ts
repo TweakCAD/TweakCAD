@@ -143,7 +143,7 @@ export async function buildComponent(
   // Place the component before any boolean runs. A `cut` instance has to be
   // where the user put it for the subtraction to land in the right place —
   // transforming afterwards would move the hole instead of making it.
-  const placedBodies = await placeBodies(componentBodies, inputs.transform, kernel);
+  const placedBodies = await placeBodies(componentBodies, inputs.transform, kernel, node.id);
 
   const mode = inputs.boolean ?? 'newBody';
   if (mode === 'newBody' || context.bodies.size === 0) {
@@ -297,12 +297,13 @@ async function placeBodies(
   bodies: KernelBody[],
   transform: Transform3D | undefined,
   kernel: CadKernel,
+  featureIdValue: FeatureId,
 ): Promise<KernelBody[]> {
   if (isIdentityTransform(transform) || !transform) return bodies;
   const placed: KernelBody[] = [];
   try {
     for (const body of bodies) {
-      const result = await kernel.transform(body, transform);
+      const result = await kernel.transform(body, transform, String(featureIdValue));
       if (!result.ok) {
         throw new Error(`Failed to place component: ${result.error.message}`);
       }
@@ -351,7 +352,7 @@ async function cutFromHosts(
 
   try {
     for (const [hostId, hostHandle] of hostEntries) {
-      const result = await kernel.booleanCut(hostHandle, componentBodies);
+      const result = await kernel.booleanCut(hostHandle, componentBodies, String(featureIdValue));
       if (!result.ok) {
         throw new Error(`Component cut against host body failed: ${result.error.message}`);
       }
@@ -388,7 +389,7 @@ async function joinWithHosts(
     ...hostEntries.map(([, handle]) => handle),
     ...componentBodies,
   ];
-  const fused = await kernel.booleanFuse(allTargets);
+  const fused = await kernel.booleanFuse(allTargets, String(featureIdValue));
   if (!fused.ok) {
     throw new Error(`Component join with hosts failed: ${fused.error.message}`);
   }

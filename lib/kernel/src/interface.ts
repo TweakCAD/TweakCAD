@@ -105,14 +105,19 @@ export interface CadKernel {
 
   // --- Boolean operations ---
 
-  /** Fuse (union) multiple bodies */
-  booleanFuse(targets: KernelBody[]): Promise<Result<KernelBody, KernelError>>;
+  /**
+   * Fuse (union) multiple bodies.
+   * `origin` tags the IDs this op mints for new faces and edges; builders
+   * pass the feature id so two features of the same kind never share them. The same holds for every
+   * modify op below that takes an `origin`.
+   */
+  booleanFuse(targets: KernelBody[], origin?: string): Promise<Result<KernelBody, KernelError>>;
 
   /** Cut tool bodies from a target body */
-  booleanCut(target: KernelBody, tools: KernelBody[]): Promise<Result<KernelBody, KernelError>>;
+  booleanCut(target: KernelBody, tools: KernelBody[], origin?: string): Promise<Result<KernelBody, KernelError>>;
 
   /** Intersect multiple bodies */
-  booleanIntersect(targets: KernelBody[]): Promise<Result<KernelBody, KernelError>>;
+  booleanIntersect(targets: KernelBody[], origin?: string): Promise<Result<KernelBody, KernelError>>;
 
   /**
    * Split a body into one independent body per connected solid. A solid
@@ -145,6 +150,7 @@ export interface CadKernel {
     body: KernelBody,
     edges: KernelEdge[],
     radius: number,
+    origin?: string,
   ): Promise<Result<KernelBody, KernelError>>;
 
   /** Apply chamfer to edges */
@@ -152,17 +158,18 @@ export interface CadKernel {
     body: KernelBody,
     edges: KernelEdge[],
     distance: number,
+    origin?: string,
   ): Promise<Result<KernelBody, KernelError>>;
 
   /** Mirror a body across a plane */
-  mirror(body: KernelBody, plane: ResolvedPlane): Promise<Result<KernelBody, KernelError>>;
+  mirror(body: KernelBody, plane: ResolvedPlane, origin?: string): Promise<Result<KernelBody, KernelError>>;
 
   /**
    * Apply a rigid transform (translation + rotation) to a body, returning
    * the transformed body. OCCT's transform preserves TShapes, so stable
    * face/edge IDs carry over via hash-match. Used for body Move.
    */
-  transform(body: KernelBody, transform: Transform3D): Promise<Result<KernelBody, KernelError>>;
+  transform(body: KernelBody, transform: Transform3D, origin?: string): Promise<Result<KernelBody, KernelError>>;
 
   /**
    * Sweep a closed profile face along the boundary wire of a closed
@@ -207,6 +214,7 @@ export interface CadKernel {
     facesToRemove: KernelFace[],
     thickness: number,
     tolerance?: number,
+    origin?: string,
   ): Promise<Result<KernelBody, KernelError>>;
 
   /**
@@ -219,6 +227,7 @@ export interface CadKernel {
     dir: Vec3,
     count: number,
     spacing: number,
+    origin?: string,
   ): Promise<Result<KernelBody[], KernelError>>;
 
   /**
@@ -231,6 +240,7 @@ export interface CadKernel {
     body: KernelBody,
     axis: ResolvedAxis,
     count: number,
+    origin?: string,
   ): Promise<Result<KernelBody[], KernelError>>;
 
   // --- Query ---

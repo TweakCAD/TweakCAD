@@ -77,6 +77,8 @@ export async function joinTouchingBodies(opts: {
   kernel: CadKernel;
   explicitTargets: boolean;
   newBodies: (tools: KernelBody[]) => Promise<EmittedBody[]>;
+  /** Tags the IDs the fuse mints for new faces and edges. */
+  featureId: string;
 }): Promise<EmittedBody[]> {
   let emitted: EmittedBody[] = [];
   try {
@@ -94,11 +96,12 @@ async function joinBodies(opts: {
   kernel: CadKernel;
   explicitTargets: boolean;
   newBodies: (tools: KernelBody[]) => Promise<EmittedBody[]>;
+  featureId: string;
 }): Promise<EmittedBody[]> {
   const { tools, candidates, context, kernel } = opts;
   if (candidates.length === 0) return opts.newBodies(tools);
   if (opts.explicitTargets) {
-    const group = await fuseGroup(candidates, tools, kernel);
+    const group = await fuseGroup(candidates, tools, kernel, opts.featureId);
     commitConsumed(context, group.consumed);
     return [group.body];
   }
@@ -151,6 +154,7 @@ async function joinBodies(opts: {
         group.targets.map(j => candidates[j]!),
         group.tools.map(t => tools[t]!),
         kernel,
+        opts.featureId,
       );
       joined.push({ order: group.targets[0]!, body: fused.body });
       consumed.push(...fused.consumed);
@@ -174,8 +178,9 @@ async function fuseGroup(
   targets: [BodyId, KernelBody][],
   tools: KernelBody[],
   kernel: CadKernel,
+  featureId: string,
 ): Promise<{ body: EmittedBody; consumed: BodyId[] }> {
-  const fused = await kernel.booleanFuse([...targets.map(([, h]) => h), ...tools]);
+  const fused = await kernel.booleanFuse([...targets.map(([, h]) => h), ...tools], featureId);
   if (!fused.ok) throw new Error(`Join failed: ${fused.error.message}`);
   return {
     body: { bodyId: carryBodyId(targets[0]![0]), handle: fused.value },
@@ -302,7 +307,7 @@ async function cutBodies(opts: {
       }
       if (reaching.length === 0) continue;
 
-      const cut = await kernel.booleanCut(handle, reaching);
+      const cut = await kernel.booleanCut(handle, reaching, opts.featureId);
       if (!cut.ok) throw new Error(`Cut failed: ${cut.error.message}`);
       produced.push(cut.value);
       if (kernel.getMassProperties) {
