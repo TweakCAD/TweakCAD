@@ -49,7 +49,8 @@ import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
 import type { KernelBody } from '@tweakcad/kernel/src/types.ts';
 import type { BuildContext, BuildResult } from '@tweakcad/core/src/features/contracts.ts';
 import { runSubTimeline } from '../subTimelineRunner.ts';
-import { carryBodyId } from './bodyIdentity.ts';
+import { carryBodyId, mintBodyId } from './bodyIdentity.ts';
+import { splitDisconnected } from './bodyOperation.ts';
 import { releaseShapes } from './releaseShapes.ts';
 
 export async function buildComponent(
@@ -150,7 +151,7 @@ export async function buildComponent(
   }
   try {
     return mode === 'cut'
-      ? await cutFromHosts(placedBodies, context, kernel)
+      ? await cutFromHosts(placedBodies, context, kernel, node.id)
       : await joinWithHosts(placedBodies, context, kernel, node.id);
   } finally {
     // Cut out of or fused into the hosts, the component's own bodies are
@@ -342,9 +343,11 @@ async function cutFromHosts(
   componentBodies: KernelBody[],
   context: BuildContext,
   kernel: CadKernel,
+  featureIdValue: FeatureId,
 ): Promise<BuildResult> {
   const builtBodies: { bodyId: BodyId; handle: KernelBody }[] = [];
   const hostEntries = Array.from(context.bodies.entries()) as Array<[BodyId, KernelBody]>;
+  let minted = 0;
 
   try {
     for (const [hostId, hostHandle] of hostEntries) {
@@ -352,7 +355,11 @@ async function cutFromHosts(
       if (!result.ok) {
         throw new Error(`Component cut against host body failed: ${result.error.message}`);
       }
-      builtBodies.push({ bodyId: carryBodyId(hostId), handle: result.value });
+      // A cut right through a host leaves its pieces as separate bodies; the
+      // heir keeps the host's id (see `splitDisconnected`).
+      builtBodies.push(...await splitDisconnected(
+        kernel, hostId, result.value, () => mintBodyId(String(featureIdValue), minted++),
+      ));
     }
   } catch (error) {
     // Free the cuts already made; the hosts are still in the context.

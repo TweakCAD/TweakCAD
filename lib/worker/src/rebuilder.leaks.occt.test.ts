@@ -156,3 +156,22 @@ describe('OcctKernel — resolved faces and edges go with their body', () => {
     expect(liveShapes(kernel)).toBe(0);
   });
 });
+
+describe('rebuild leaves no shapes behind — a cut that splits a body', () => {
+  it('publishes the pieces and frees the compound they came from', async () => {
+    const { part, project } = onePart([
+      node('host', 'primitive', {
+        shape: { kind: 'box', width: '10', height: '10', depth: '10' },
+        transform: { position: [0, 0, 0], rotation: [0, 0, 0, 1] },
+        operation: 'newBody',
+      }),
+      node('slot', 'primitive', {
+        shape: { kind: 'box', width: '2', height: '20', depth: '20' },
+        transform: { position: [2, 0, 0], rotation: [0, 0, 0, 1] },
+        operation: 'cut',
+      }),
+    ]);
+    // Two bodies: the two pieces.
+    expect(await rebuildCounts(part, project)).toEqual([2, 2, 2, 2]);
+  }, 60_000);
+});

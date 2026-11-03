@@ -239,7 +239,7 @@ export async function buildExtrude(
   if (inputs.operation === 'join') {
     allBodies = await joinTouchingBodies({ ...operands, newBodies });
   } else if (inputs.operation === 'cut') {
-    allBodies = await cutTouchingBodies(operands);
+    allBodies = await cutTouchingBodies({ ...operands, featureId: node.id });
   } else {
     allBodies = await newBodies(profileBodies);
     // Several profiles fuse into one body; the separate solids are spent.

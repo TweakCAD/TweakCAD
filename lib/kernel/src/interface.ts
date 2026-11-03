@@ -126,6 +126,18 @@ export interface CadKernel {
    */
   decomposeBody(body: KernelBody, origin: string): Promise<KernelBody[]>;
 
+  /**
+   * Split a body that holds more than one solid — the result of a cut that
+   * went right through — into one body per solid. Returns `null` when the
+   * body is a single solid (nothing to split).
+   *
+   * Unlike {@link decomposeBody}, the pieces keep the face and edge ids they
+   * had on `body` (they share its faces and edges), so picks made on the body
+   * still resolve on whichever piece now holds them. The input body's handle
+   * is unaffected; the caller decides what to do with it.
+   */
+  splitSolids(body: KernelBody, origin: string): Promise<KernelBody[] | null>;
+
   // --- Modify ---
 
   /** Apply fillet to edges */

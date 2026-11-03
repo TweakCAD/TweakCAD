@@ -160,6 +160,11 @@ export class MockKernel implements CadKernel {
     return [body];
   }
 
+  /** Mock bodies have no geometry, so nothing ever splits. */
+  async splitSolids(_body: KernelBody, _origin: string): Promise<KernelBody[] | null> {
+    return null;
+  }
+
   async fillet(
     _body: KernelBody,
     _edges: KernelEdge[],
