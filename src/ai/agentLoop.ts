@@ -38,6 +38,7 @@ import {
   type ToolResultBlock,
 } from './chatClient.ts';
 import type { ChatMessage, ChatTurnEvent } from '../components/ChatPanel.tsx';
+import { createTransactionBalance } from './transactionBalance.ts';
 
 /** Hard cap on rounds-per-human-turn. Beyond this we error out. */
 const MAX_ROUNDS = 8;
@@ -61,33 +62,17 @@ export interface AgentTurnArgs {
  * stack open after the turn, so every later edit joined a transaction that
  * never committed and nothing could be undone again. `closeOpen` ends those
  * levels; an `end_transaction` with none of the model's own open is ignored,
- * so it cannot close the turn's transaction early.
+ * so it cannot close the turn's transaction early. The counting itself is
+ * shared with the MCP bridge (`transactionBalance.ts`).
  */
 export function withBalancedTransactions(host: ToolHost): {
   host: ToolHost;
   closeOpen: () => Promise<void>;
 } {
-  let open = 0;
-  // Inherit every other method (and the optional viewport ones) from the
-  // real host; only the transaction pair is replaced.
-  const wrapped = Object.create(host) as ToolHost;
-  wrapped.beginTransaction = async (label: string) => {
-    await host.beginTransaction(label);
-    open++;
-  };
-  wrapped.endTransaction = async () => {
-    if (open === 0) return;
-    open--;
-    await host.endTransaction();
-  };
+  const balance = createTransactionBalance();
   return {
-    host: wrapped,
-    closeOpen: async () => {
-      while (open > 0) {
-        open--;
-        await host.endTransaction();
-      }
-    },
+    host: balance.wrap(host),
+    closeOpen: () => balance.closeOpen(() => host.endTransaction()),
   };
 }
 
