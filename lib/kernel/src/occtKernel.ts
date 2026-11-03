@@ -957,6 +957,20 @@ export class OcctKernel implements CadKernel {
     return this.decomposeToBodies(this.getBodyShape(body), origin);
   }
 
+  async splitSolids(body: KernelBody, origin: string): Promise<KernelBody[] | null> {
+    const k = this.getKernel();
+    const solids = k.getSubShapes(this.getBodyShape(body), 'solid');
+    if (solids.length < 2) {
+      for (const s of solids) k.release(s);
+      return null;
+    }
+    // Each solid shares its faces and edges with the compound it came from,
+    // so hash-match carries the compound's stable ids onto the piece that
+    // holds them (`storeModifiedBody`) — a pick made before the split still
+    // resolves on the piece it is on.
+    return solids.map((solid, i) => this.storeModifiedBody(solid, [body], `${origin}_${i}`));
+  }
+
   async booleanCut(
     target: KernelBody,
     tools: KernelBody[],

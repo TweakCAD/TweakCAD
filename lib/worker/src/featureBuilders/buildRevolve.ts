@@ -103,7 +103,7 @@ export async function buildRevolve(
       newBodies: async ([tool]) => [{ bodyId: mintBodyId(node.id), handle: tool! }],
     });
   } else if (inputs.operation === 'cut') {
-    bodies = await cutTouchingBodies(operands);
+    bodies = await cutTouchingBodies({ ...operands, featureId: node.id });
   } else {
     bodies = [{ bodyId: mintBodyId(node.id), handle: bodyResult.value }];
   }

@@ -78,6 +78,7 @@ describe('cutTouchingBodies — all or nothing', () => {
       context,
       kernel,
       explicitTargets: false,
+      featureId: 'cutter',
     })).rejects.toThrow(/Cut failed/);
 
     expect(context.bodies.get(A)).toBe(a);
@@ -118,6 +119,7 @@ describe('cutTouchingBodies — all or nothing', () => {
       context,
       kernel,
       explicitTargets: false,
+      featureId: 'cutter',
     });
 
     expect(out.map((o) => String(o.bodyId))).toEqual([String(A)]);

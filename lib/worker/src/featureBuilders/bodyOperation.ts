@@ -19,7 +19,7 @@ import type { BodyId } from '@tweakcad/core/src/ids.ts';
 import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
 import type { KernelBody } from '@tweakcad/kernel/src/types.ts';
 import type { BuildContext } from '@tweakcad/core/src/features/contracts.ts';
-import { carryBodyId } from './bodyIdentity.ts';
+import { carryBodyId, mintBodyId, rankSplitPieces } from './bodyIdentity.ts';
 import { releaseShapes } from './releaseShapes.ts';
 
 /** Bodies closer than this (mm) count as touching. */
@@ -220,6 +220,39 @@ export function releaseUnusedTools(
 }
 
 /**
+ * If a cut left `body` as several disconnected solids, publish each as its
+ * own body: the identity heir (`rankSplitPieces`, largest then by centroid)
+ * keeps `bodyId`, the rest get ids minted for the cutting feature in rank
+ * order, so they are named the same on every rebuild. The pieces keep the
+ * face and edge ids they had (`CadKernel.splitSolids`). A body that is still
+ * one solid comes back unchanged.
+ *
+ * Without this a cut straight through a block published both halves as one
+ * compound under the original id: neither could be picked, moved or hidden
+ * on its own.
+ */
+export async function splitDisconnected(
+  kernel: CadKernel,
+  bodyId: BodyId,
+  body: KernelBody,
+  mint: () => BodyId,
+): Promise<EmittedBody[]> {
+  const whole = [{ bodyId: carryBodyId(bodyId), handle: body }];
+  const massOf = kernel.getMassProperties?.bind(kernel);
+  if (!massOf) return whole;
+  const pieces = await kernel.splitSolids(body, `split_${String(bodyId)}`);
+  if (!pieces) return whole;
+  const props = await Promise.all(pieces.map(p => massOf(p)));
+  const ranked = rankSplitPieces(props.map(p => ({ volume: p.volume, centroid: p.centerOfMass })))
+    .map(index => pieces[index] as KernelBody);
+  releaseShapes(kernel, [body]); // replaced by its pieces
+  return ranked.map((handle, rank) => ({
+    bodyId: rank === 0 ? carryBodyId(bodyId) : mint(),
+    handle,
+  }));
+}
+
+/**
  * Cut the tools from every candidate they overlap. A candidate the tools only
  * touch, or that loses no volume, is left unchanged. Throws when no candidate
  * loses material.
@@ -236,6 +269,8 @@ export async function cutTouchingBodies(opts: {
   context: BuildContext;
   kernel: CadKernel;
   explicitTargets: boolean;
+  /** The cutting feature: names the extra pieces of a body the cut split. */
+  featureId: string;
 }): Promise<EmittedBody[]> {
   try {
     return await cutBodies(opts);
@@ -250,10 +285,12 @@ async function cutBodies(opts: {
   context: BuildContext;
   kernel: CadKernel;
   explicitTargets: boolean;
+  featureId: string;
 }): Promise<EmittedBody[]> {
   const { tools, candidates, context, kernel } = opts;
   const out: EmittedBody[] = [];
   const consumed: BodyId[] = [];
+  let minted = 0;
   // Every result shape made so far, so a failure can free them all — including
   // one whose volume check is still running.
   const produced: KernelBody[] = [];
@@ -279,7 +316,12 @@ async function cutBodies(opts: {
         }
       }
       consumed.push(id);
-      out.push({ bodyId: carryBodyId(id), handle: cut.value });
+      const pieces = await splitDisconnected(kernel, id, cut.value, () => mintBodyId(opts.featureId, minted++));
+      if (pieces[0]?.handle !== cut.value) {
+        // Replaced by its pieces: track those for failure cleanup instead.
+        produced.splice(produced.indexOf(cut.value), 1, ...pieces.map(p => p.handle));
+      }
+      out.push(...pieces);
     }
     if (out.length === 0) {
       throw new Error(

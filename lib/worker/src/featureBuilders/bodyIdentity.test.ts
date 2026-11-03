@@ -27,7 +27,7 @@ import type { ResolvedParams } from '@tweakcad/core/src/expressions.ts';
 import { buildFillet } from './buildFillet.ts';
 import { buildChamfer } from './buildChamfer.ts';
 import { buildShell } from './buildShell.ts';
-import { carryBodyId, mintBodyId, pickIdentityHeir } from './bodyIdentity.ts';
+import { carryBodyId, mintBodyId, pickIdentityHeir, rankSplitPieces } from './bodyIdentity.ts';
 
 const PART = partId('p1');
 /** Deliberately named after its CREATING feature, which is the whole point:
@@ -192,5 +192,30 @@ describe('pickIdentityHeir — which piece of a split keeps the id', () => {
   it('is deterministic for fully identical pieces', () => {
     const pieces = [at(5, [0, 0, 0]), at(5, [0, 0, 0])];
     expect(pickIdentityHeir(pieces)).toBe(pickIdentityHeir(pieces));
+  });
+});
+
+describe('rankSplitPieces — the order the pieces of a split are named in', () => {
+  const at = (volume: number, centroid: [number, number, number]) => ({ volume, centroid });
+
+  it('treats volumes that differ only by float noise as a tie, and breaks it by centroid', () => {
+    // A symmetric cut returns halves whose volumes differ in the last bits.
+    // Exact comparison let that noise choose the heir.
+    const left = at(400.0000000001, [-3, 0, 0]);
+    const right = at(400, [3, 0, 0]);
+    expect(pickIdentityHeir([left, right])).toBe(0);
+    expect(pickIdentityHeir([right, left])).toBe(1);
+    const noisier = at(400.0000000001, [3, 0, 0]);
+    expect(pickIdentityHeir([at(400, [-3, 0, 0]), noisier])).toBe(0);
+  });
+
+  it('ranks heir first, then the rest by the same rule, whatever the input order', () => {
+    const big = at(9, [0, 0, 0]);
+    const smallA = at(1, [0, 0, 0]);
+    const smallB = at(1, [5, 0, 0]);
+    const order1 = rankSplitPieces([smallB, big, smallA]).map(i => [smallB, big, smallA][i]);
+    const order2 = rankSplitPieces([smallA, smallB, big]).map(i => [smallA, smallB, big][i]);
+    expect(order1).toEqual([big, smallA, smallB]);
+    expect(order2).toEqual([big, smallA, smallB]);
   });
 });

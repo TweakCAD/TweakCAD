@@ -269,7 +269,7 @@ async function applyOperation(
       newBodies: async ([tool]) => [{ bodyId: mintBodyId(featureId), handle: tool! }],
     });
   } else if (inputs.operation === 'cut') {
-    bodies = await cutTouchingBodies(operands);
+    bodies = await cutTouchingBodies({ ...operands, featureId });
   } else {
     bodies = [{ bodyId: mintBodyId(featureId), handle: primitive }];
   }

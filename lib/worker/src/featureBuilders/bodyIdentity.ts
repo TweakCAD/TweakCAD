@@ -109,24 +109,37 @@ function compareCentroid(
 }
 
 export function pickIdentityHeir(pieces: readonly SplitPiece[]): number {
-  const first = pieces[0];
-  if (!first) return -1;
+  return rankSplitPieces(pieces)[0] ?? -1;
+}
 
-  let bestIndex = 0;
-  let best = first;
-  for (let i = 1; i < pieces.length; i++) {
-    const candidate = pieces[i];
-    if (!candidate) continue;
-    const bigger = candidate.volume > best.volume;
-    // Equal volume falls through to the centroid so the result does not
-    // depend on the order the kernel happened to return the pieces in.
-    const tiedButEarlier =
-      candidate.volume === best.volume &&
-      compareCentroid(candidate.centroid, best.centroid) < 0;
-    if (bigger || tiedButEarlier) {
-      bestIndex = i;
-      best = candidate;
-    }
+/**
+ * Volumes this close (relative) count as equal. A symmetric split comes back
+ * from the kernel as two volumes that differ in the last few bits; comparing
+ * them exactly let float noise pick the heir, so an unrelated upstream change
+ * could move the identity to the other piece.
+ */
+const VOLUME_TIE_RELATIVE = 1e-6;
+
+function compareSplitPieces(a: SplitPiece, b: SplitPiece): number {
+  const scale = Math.max(Math.abs(a.volume), Math.abs(b.volume), 1e-12);
+  if (Math.abs(a.volume - b.volume) > VOLUME_TIE_RELATIVE * scale) {
+    return b.volume - a.volume; // larger first
   }
-  return bestIndex;
+  return compareCentroid(a.centroid, b.centroid);
+}
+
+/**
+ * Order the pieces of a split: the identity heir first (see
+ * {@link pickIdentityHeir}), then the rest by the same rule. The order is
+ * what names the other pieces — they get the splitting feature's minted ids
+ * in this order — so it must not depend on the order the kernel returned
+ * them in.
+ *
+ * @returns Indices into `pieces`, heir first.
+ */
+export function rankSplitPieces(pieces: readonly SplitPiece[]): number[] {
+  return pieces
+    .map((piece, index) => ({ piece, index }))
+    .sort((a, b) => compareSplitPieces(a.piece, b.piece) || a.index - b.index)
+    .map(entry => entry.index);
 }
