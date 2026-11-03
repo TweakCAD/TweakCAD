@@ -87,6 +87,7 @@ export async function buildLinearPattern(
     direction,
     count,
     spacingResult.value,
+    node.id,
   );
   if (!patternResult.ok) {
     throw new Error(`Linear Pattern failed: ${patternResult.error.message}`);

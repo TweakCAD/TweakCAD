@@ -101,12 +101,12 @@ export async function buildImportedGeometry(
 
     const bt = perBody[String(id)];
     if (bt && !isIdentityTransform(bt)) {
-      const r = await kernel.transform(handle, bt);
+      const r = await kernel.transform(handle, bt, node.id);
       if (!r.ok) throw new Error(`Placing "${inputs.fileName}" body ${i} failed: ${r.error.message}`);
       await replace(r.value);
     }
     if (groupT && !isIdentityTransform(groupT)) {
-      const r = await kernel.transform(handle, groupT);
+      const r = await kernel.transform(handle, groupT, node.id);
       if (!r.ok) throw new Error(`Placing "${inputs.fileName}" failed: ${r.error.message}`);
       await replace(r.value);
     }

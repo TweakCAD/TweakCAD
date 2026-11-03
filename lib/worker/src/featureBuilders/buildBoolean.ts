@@ -59,10 +59,10 @@ export async function buildBoolean(
 
   const toolHandles = tools.map(t => t.handle);
   const result = inputs.operation === 'union'
-    ? await kernel.booleanFuse([target, ...toolHandles])
+    ? await kernel.booleanFuse([target, ...toolHandles], node.id)
     : inputs.operation === 'subtract'
-      ? await kernel.booleanCut(target, toolHandles)
-      : await kernel.booleanIntersect([target, ...toolHandles]);
+      ? await kernel.booleanCut(target, toolHandles, node.id)
+      : await kernel.booleanIntersect([target, ...toolHandles], node.id);
 
   if (!result.ok) {
     throw new Error(`Boolean ${inputs.operation} failed: ${result.error.message}`);

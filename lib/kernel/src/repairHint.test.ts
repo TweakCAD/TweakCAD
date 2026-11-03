@@ -72,6 +72,19 @@ describe('chooseByHint', () => {
     expect(pick([lookAlike, moved], 1)).toBe(1);
   });
 
+  it('never moves an id that names its entity by provenance, however stale the hint', () => {
+    // A pattern copy moved; another copy now sits exactly where the picked
+    // one was. A walk-order id gives way to the hint; a provenance id stands.
+    const cands = [picked, moved];
+    expect(chooseByHint(cands.length, 1, picked, (i) => cands[i]!)).toBe(0);
+    expect(chooseByHint(cands.length, 1, picked, (i) => cands[i]!, true)).toBe(1);
+  });
+
+  it('still lets the hint stand in for a provenance id that is gone', () => {
+    const cands = [far, picked];
+    expect(chooseByHint(cands.length, -1, picked, (i) => cands[i]!, true)).toBe(1);
+  });
+
   it('stands in the closest loose match when the id is gone, or nothing', () => {
     expect(pick([far, lookAlike, moved], -1)).toBe(1);
     expect(pick([far, moved], -1)).toBe(-1);

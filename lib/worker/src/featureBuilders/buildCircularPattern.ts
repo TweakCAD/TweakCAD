@@ -84,7 +84,7 @@ export async function buildCircularPattern(
   }
 
   // 5. Kernel call.
-  const patternResult = await kernel.circularPattern(sourceBody, axis, count);
+  const patternResult = await kernel.circularPattern(sourceBody, axis, count, node.id);
   if (!patternResult.ok) {
     throw new Error(`Circular Pattern failed: ${patternResult.error.message}`);
   }

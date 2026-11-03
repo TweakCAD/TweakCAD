@@ -107,15 +107,23 @@ export function scoreAgainstHint(
  *   against the id.
  * - The id was not found: the closest match within {@link HINT_TOLERANCE},
  *   or -1.
+ *
+ * @param trustFound The id names its entity by provenance rather than by
+ *   walk order (`isWalkOrderId` is false). Then a found id always stands: a
+ *   hint is a snapshot from pick time, and when an edit moves the entity and
+ *   another one comes to sit where it was, the hint would point at the
+ *   wrong one. The hint still finds a stand-in when the id is gone.
  */
 export function chooseByHint(
   count: number,
   found: number,
   hint: RepairHint | undefined,
   describe: (index: number) => RepairHint,
+  trustFound = false,
 ): number {
   if (!hint) return found;
   if (found >= 0) {
+    if (trustFound) return found;
     if (scoreAgainstHint(describe(found), hint, SAME_TOLERANCE) !== null) return found;
     const same = closestMatch(count, found, hint, describe, SAME_TOLERANCE);
     return same >= 0 ? same : found;

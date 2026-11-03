@@ -184,7 +184,7 @@ export async function buildHole(
       throw new Error(`Counterbore cylinder failed: ${cboreResult.error.message}`);
     }
 
-    const fuseResult = await kernel.booleanFuse([toolBody, cboreResult.value]);
+    const fuseResult = await kernel.booleanFuse([toolBody, cboreResult.value], node.id);
     if (!fuseResult.ok) {
       throw new Error(`Counterbore fuse failed: ${fuseResult.error.message}`);
     }
@@ -246,7 +246,7 @@ export async function buildHole(
       throw new Error(`Countersink cone failed: ${coneResult.error.message}`);
     }
 
-    const fuseResult = await kernel.booleanFuse([toolBody, coneResult.value]);
+    const fuseResult = await kernel.booleanFuse([toolBody, coneResult.value], node.id);
     if (!fuseResult.ok) {
       throw new Error(`Countersink fuse failed: ${fuseResult.error.message}`);
     }
@@ -259,7 +259,7 @@ export async function buildHole(
   const volumeBefore = kernel.getMassProperties
     ? (await kernel.getMassProperties(targetHandle as KernelBody)).volume
     : undefined;
-  const cutResult = await kernel.booleanCut(targetHandle as KernelBody, [toolBody]);
+  const cutResult = await kernel.booleanCut(targetHandle as KernelBody, [toolBody], node.id);
   if (!cutResult.ok) {
     throw new Error(`Hole cut failed: ${cutResult.error.message}`);
   }

@@ -86,7 +86,7 @@ export async function buildChamfer(
     throw new Error(`Chamfer distance must be positive (got ${distanceResult.value})`);
   }
 
-  const bodyResult = await kernel.chamfer(body, edges, distanceResult.value);
+  const bodyResult = await kernel.chamfer(body, edges, distanceResult.value, node.id);
   if (!bodyResult.ok) {
     throw new Error(`Chamfer failed: ${bodyResult.error.message}`);
   }

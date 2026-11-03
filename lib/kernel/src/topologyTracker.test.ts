@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { ShapeEvolutionTracker, type EvolutionRecord } from './topologyTracker.ts';
+import { ShapeEvolutionTracker, isWalkOrderId, type EvolutionRecord } from './topologyTracker.ts';
 
 describe('ShapeEvolutionTracker.recordEvolution', () => {
   /**
@@ -373,12 +373,12 @@ describe('ShapeEvolutionTracker — edge IDs stay unique per body', () => {
     tracker.registerFreshBody('a', [100], [10], 'box');
     tracker.recordEvolution('step1', ['a'], [100], { modified: [], generated: [], deleted: [] }, 'fuse');
     tracker.recordEdgeEvolution('step1', ['a'], [77, 10], 'fuse');
-    expect(tracker.getStableEdgeId('step1', 77)).toBe('se_fuse_0');
+    expect(tracker.getStableEdgeId('step1', 77)).toBe('se_fuse_orphan_0');
 
     tracker.recordEvolution('step2', ['step1'], [100], { modified: [], generated: [], deleted: [] }, 'fuse');
     tracker.recordEdgeEvolution('step2', ['step1'], [88, 77], 'fuse');
-    expect(tracker.getStableEdgeId('step2', 77)).toBe('se_fuse_0');
-    expect(tracker.getStableEdgeId('step2', 88)).toBe('se_fuse_0:1');
+    expect(tracker.getStableEdgeId('step2', 77)).toBe('se_fuse_orphan_0');
+    expect(tracker.getStableEdgeId('step2', 88)).toBe('se_fuse_orphan_0:1');
   });
 });
 
@@ -400,7 +400,7 @@ describe('ShapeEvolutionTracker.recordEdgeEvolution with edge history', () => {
 
     expect(tracker.getStableEdgeId('result', 10)).toBe('se_a_0');
     expect(tracker.getStableEdgeId('result', 21)).toBe('se_a_1');
-    expect(tracker.getStableEdgeId('result', 99)).toBe('se_fuse_2');
+    expect(tracker.getStableEdgeId('result', 99)).toBe('se_fuse_orphan_2');
   });
 
   it('keeps the bare ID on the first piece of a split edge by order, suffixing the rest', () => {
@@ -441,7 +441,32 @@ describe('ShapeEvolutionTracker.recordEdgeEvolution with edge history', () => {
     const tracker = setup();
     tracker.recordEdgeEvolution('result', ['a', 'b'], [21], 'fuse', { modified: [777, 1, 21, 20, 1, 888] });
 
-    expect(tracker.getStableEdgeId('result', 21)).toBe('se_fuse_0');
+    expect(tracker.getStableEdgeId('result', 21)).toBe('se_fuse_orphan_0');
     expect(tracker.getStableEdgeId('result', 888)).toBeUndefined();
+  });
+});
+
+describe('isWalkOrderId', () => {
+  it('recognises every ID the tracker mints by walk order', () => {
+    const tracker = new ShapeEvolutionTracker();
+    tracker.registerFreshBody('box', [100, 101], [10, 11], 'extrude_feature_ab12cd34');
+    tracker.recordEvolution('cut', ['box'], [100, 200, 201], { modified: [], generated: [], deleted: [] }, 'cut_feature_9f');
+    tracker.recordEdgeEvolution('cut', ['box'], [10, 77, 78], 'cut_feature_9f');
+    const ids = [
+      tracker.getStableFaceId('box', 101),
+      tracker.getStableEdgeId('box', 11),
+      tracker.getStableFaceId('cut', 200),
+      tracker.getStableEdgeId('cut', 77),
+      'sf_extrude_box_5:1',
+    ].map(String);
+
+    expect(ids.slice(2, 4)).toEqual(['sf_cut_feature_9f_orphan_1', 'se_cut_feature_9f_orphan_1']);
+    for (const id of ids) expect(isWalkOrderId(id), id).toBe(true);
+  });
+
+  it('does not take IDs minted from provenance for walk-order ones', () => {
+    for (const id of ['sf_extrude_ab12_s_geo_1a2b', 'se_cut_9f_x_k3j9a', 'sf_src_0@mirror_7.m', 'sf_x:1a']) {
+      expect(isWalkOrderId(id), id).toBe(false);
+    }
   });
 });

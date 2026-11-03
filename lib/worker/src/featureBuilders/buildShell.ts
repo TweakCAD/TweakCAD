@@ -114,7 +114,7 @@ export async function buildShell(
 
   // 5. Kernel call. The kernel routes through shellWithHistory and
   // propagates stable IDs through `storeBodyWithHistory`.
-  const shellResult = await kernel.shell(body, faces, thicknessResult.value, tolerance);
+  const shellResult = await kernel.shell(body, faces, thicknessResult.value, tolerance, node.id);
   if (!shellResult.ok) {
     throw new Error(`Shell failed: ${shellResult.error.message}`);
   }

@@ -52,7 +52,7 @@ export async function buildMove(
     // not turn it into a second error the user has to clear.
     if (!handle) continue;
 
-    const result = await kernel.transform(handle, inputs.transform);
+    const result = await kernel.transform(handle, inputs.transform, node.id);
     if (!result.ok) {
       throw new Error(`Move failed for ${id}: ${result.error.message}`);
     }
