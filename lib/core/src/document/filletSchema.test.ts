@@ -21,7 +21,7 @@ function makeFilletNode(): FeatureNode {
       bodyRef: { partId: partId('p1'), bodyId: bodyId('body_a') },
       stableEdgeId: stableEdgeId('edge_002'),
       repairHint: {
-        centroid: [10, 0, 5],
+        center: [10, 0, 5],
         normal: [0, 1, 0],
       },
     },
@@ -73,7 +73,7 @@ describe('FilletFeatureInputs serialization', () => {
     expect(edge1?.type).toBe('stableTopology');
     if (edge1?.type === 'stableTopology') {
       expect(edge1.repairHint).toEqual({
-        centroid: [10, 0, 5],
+        center: [10, 0, 5],
         normal: [0, 1, 0],
       });
     }

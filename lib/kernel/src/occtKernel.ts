@@ -17,6 +17,7 @@ import type { FaceId, StableFaceId, StableEdgeId } from '@tweakcad/core/src/ids.
 import type { CadKernel } from './interface.ts';
 import { build3MF, EXPORT_MIME } from './occtExports.ts';
 import { dedupePointsForInterpolation } from './splineDedup.ts';
+import { chooseByHint } from './repairHint.ts';
 import { FINE_TESSELLATION } from './types.ts';
 import type {
   KernelBody,
@@ -1401,7 +1402,7 @@ export class OcctKernel implements CadKernel {
           triStart,
           triEnd: triStart + triCount,
           semanticRef: `face_${i}`,
-          ...(stable !== undefined ? { stableFaceId: stable } : {}),
+          ...(stable !== undefined ? { stableFaceId: stable, ...this.hintField(() => this.describeFace(fh)) } : {}),
         });
       }
     } finally {
@@ -1433,7 +1434,7 @@ export class OcctKernel implements CadKernel {
         edgeId: makeEdgeId(`e_${i}`),
         lineSegments,
         adjacentFaces: [faceA, faceB],
-        ...(stable !== undefined ? { stableEdgeId: stable } : {}),
+        ...(stable !== undefined ? { stableEdgeId: stable, ...this.hintField(() => this.describeEdge(eh)) } : {}),
       });
     }
     for (const eh of edgeShapes) k.release(eh);
@@ -1447,105 +1448,99 @@ export class OcctKernel implements CadKernel {
     repairHint?: RepairHint,
   ): Promise<KernelFace | null> {
     const k = this.getKernel();
-    const shape = this.getBodyShape(body);
     const targetHash = this.tracker.resolveStableFaceId(body.handle, stableFaceId);
-    const faceShapes = k.getSubShapes(shape, 'face');
-    let matched: ShapeHandle | undefined;
-
-    if (targetHash !== undefined) {
-      for (let i = 0; i < faceShapes.length; i++) {
-        const fh = faceShapes[i]!;
-        if (matched === undefined && k.hashCode(fh, HASH_UPPER_BOUND) === targetHash) {
-          matched = fh;
-        } else {
-          k.release(fh);
-        }
-      }
-    } else if (repairHint) {
-      matched = this.pickFaceByHint(faceShapes, repairHint);
-      // pickFaceByHint releases all non-matched handles itself.
-    } else {
-      for (const fh of faceShapes) k.release(fh);
-    }
-
-    if (matched === undefined) return null;
-    return this.storeFace(matched, body.handle);
+    const faceShapes = k.getSubShapes(this.getBodyShape(body), 'face');
+    const matched = this.chooseSubShape(faceShapes, targetHash, repairHint, (fh) => this.describeFace(fh));
+    return matched === undefined ? null : this.storeFace(matched, body.handle);
   }
 
   /**
-   * Score-and-pick a face by {@link RepairHint}. Releases every handle in
-   * `candidates` that isn't selected. Returns the winning handle (caller
-   * owns it) or undefined if no candidate clears the thresholds.
-   *
-   * Thresholds are intentionally conservative — false positives are worse
-   * than false negatives (a wrong attachment is a silent bug; a null lets
-   * the UI prompt the user to re-pick).
+   * Pick the sub-shape a stable ref resolves to: the one whose hash the
+   * tracker maps the id to, checked against the ref's hint
+   * ({@link chooseByHint}). Releases every handle in `candidates` except the
+   * one returned, which the caller owns.
    */
-  private pickFaceByHint(candidates: ShapeHandle[], hint: RepairHint): ShapeHandle | undefined {
+  private chooseSubShape(
+    candidates: ShapeHandle[],
+    targetHash: number | undefined,
+    hint: RepairHint | undefined,
+    describe: (handle: ShapeHandle) => RepairHint,
+  ): ShapeHandle | undefined {
     const k = this.getKernel();
-    const CENTROID_MAX_MM = 10;
-    const NORMAL_MAX_RAD = 0.5;
-    const AREA_RATIO_MIN = 0.5;
-    const AREA_RATIO_MAX = 2.0;
-
-    let bestIdx = -1;
-    let bestScore = Infinity;
-    const scored: { idx: number; centroidDist: number }[] = [];
-
-    for (let i = 0; i < candidates.length; i++) {
-      const fh = candidates[i]!;
-      let pass = true;
-      let centroidDist = 0;
-
-      if (hint.centroid) {
-        const com = k.getSurfaceCenterOfMass(fh);
-        const dx = com.x - hint.centroid[0];
-        const dy = com.y - hint.centroid[1];
-        const dz = com.z - hint.centroid[2];
-        centroidDist = Math.hypot(dx, dy, dz);
-        if (centroidDist > CENTROID_MAX_MM) pass = false;
-      }
-
-      if (pass && hint.normal) {
-        const uv = k.uvBounds(fh);
-        const uMid = (uv.uMin + uv.uMax) / 2;
-        const vMid = (uv.vMin + uv.vMax) / 2;
-        const n = k.surfaceNormal(fh, uMid, vMid);
-        // Cosine of the angle between hint.normal and the face normal.
-        const dot = n.x * hint.normal[0] + n.y * hint.normal[1] + n.z * hint.normal[2];
-        // Both vectors are unit-length; clamp for numerical safety.
-        const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
-        if (angle > NORMAL_MAX_RAD) pass = false;
-      }
-
-      if (pass && hint.area !== undefined) {
-        const area = k.getSurfaceArea(fh);
-        if (hint.area > 0) {
-          const ratio = area / hint.area;
-          if (ratio < AREA_RATIO_MIN || ratio > AREA_RATIO_MAX) pass = false;
+    let chosen = -1;
+    try {
+      const found = targetHash === undefined
+        ? -1
+        : candidates.findIndex((h) => k.hashCode(h, HASH_UPPER_BOUND) === targetHash);
+      const described = new Map<number, RepairHint>();
+      chosen = chooseByHint(candidates.length, found, hint, (i) => {
+        let d = described.get(i);
+        if (d === undefined) {
+          d = this.safeDescribe(() => describe(candidates[i]!));
+          described.set(i, d);
         }
-      }
-
-      if (pass) {
-        scored.push({ idx: i, centroidDist });
-        if (centroidDist < bestScore) {
-          bestScore = centroidDist;
-          bestIdx = i;
-        }
-      }
+        return d;
+      });
+      return chosen >= 0 ? candidates[chosen] : undefined;
+    } finally {
+      candidates.forEach((h, i) => { if (i !== chosen) k.release(h); });
     }
+  }
 
-    let winner: ShapeHandle | undefined;
-    for (let i = 0; i < candidates.length; i++) {
-      const fh = candidates[i]!;
-      if (i === bestIdx) {
-        winner = fh;
-      } else {
-        k.release(fh);
-      }
+  /** A measure that fails (degenerate geometry) describes nothing, which matches no hint field. */
+  private safeDescribe(describe: () => RepairHint): RepairHint {
+    try {
+      return describe();
+    } catch {
+      return {};
     }
-    void scored; // reserved for richer scoring in a future refinement
-    return winner;
+  }
+
+  /** `{ repairHint }` for a topology-map entry, or nothing when it cannot be measured. */
+  private hintField(describe: () => RepairHint): { repairHint?: RepairHint } {
+    const hint = this.safeDescribe(describe);
+    return Object.keys(hint).length > 0 ? { repairHint: hint } : {};
+  }
+
+  /**
+   * The {@link RepairHint} measures of a face: centre and diagonal of its
+   * bounding box, and the normal when the face is planar. The loose box
+   * (analytic extents, control hulls) is deterministic and costs microseconds,
+   * where a surface centre of mass and area cost an integration each: tens
+   * of milliseconds per rebuild on a plate with a hundred holes. A curved
+   * face's normal at its parameter midpoint depends on where OCCT put the
+   * seam, so it is not recorded.
+   */
+  private describeFace(fh: ShapeHandle): RepairHint {
+    const k = this.getKernel();
+    const bb = k.getBoundingBox(fh, { precise: false });
+    const hint: RepairHint = {
+      center: [(bb.xmin + bb.xmax) / 2, (bb.ymin + bb.ymax) / 2, (bb.zmin + bb.zmax) / 2],
+      size: Math.hypot(bb.xmax - bb.xmin, bb.ymax - bb.ymin, bb.zmax - bb.zmin),
+    };
+    if (k.surfaceType(fh) === 'plane') {
+      const uv = k.uvBounds(fh);
+      const n = k.surfaceNormal(fh, (uv.uMin + uv.uMax) / 2, (uv.vMin + uv.vMax) / 2);
+      hint.normal = [n.x, n.y, n.z];
+    }
+    return hint;
+  }
+
+  /**
+   * The {@link RepairHint} measures of an edge: linear centre of mass and
+   * length, and the direction when the edge is a straight line.
+   */
+  private describeEdge(eh: ShapeHandle): RepairHint {
+    const k = this.getKernel();
+    const com = k.getLinearCenterOfMass(eh);
+    const hint: RepairHint = { center: [com.x, com.y, com.z], length: Math.abs(k.getLength(eh)) };
+    if (k.curveType(eh) === 'line') {
+      const { first, last } = k.curveParameters(eh);
+      const t = k.curveTangent(eh, (first + last) / 2);
+      const len = Math.hypot(t.x, t.y, t.z);
+      if (len > 0) hint.direction = [t.x / len, t.y / len, t.z / len];
+    }
+    return hint;
   }
 
   async getFacePlane(face: KernelFace): Promise<{
@@ -1558,7 +1553,7 @@ export class OcctKernel implements CadKernel {
     const k = this.getKernel();
     const fh = this.getFaceShape(face);
 
-    // Origin: surface centroid (already used by pickFaceByHint:938).
+    // Origin: surface centroid.
     const com = k.getSurfaceCenterOfMass(fh);
     // Normal: surface normal sampled at the UV midpoint. For a planar
     // face the normal is constant over the UV domain so the midpoint
@@ -1594,67 +1589,10 @@ export class OcctKernel implements CadKernel {
     repairHint?: RepairHint,
   ): Promise<KernelEdge | null> {
     const k = this.getKernel();
-    const shape = this.getBodyShape(body);
     const targetHash = this.tracker.resolveStableEdgeId(body.handle, stableEdgeId);
-    const edgeShapes = k.getSubShapes(shape, 'edge');
-    let matched: ShapeHandle | undefined;
-
-    if (targetHash !== undefined) {
-      for (let i = 0; i < edgeShapes.length; i++) {
-        const eh = edgeShapes[i]!;
-        if (matched === undefined && k.hashCode(eh, HASH_UPPER_BOUND) === targetHash) {
-          matched = eh;
-        } else {
-          k.release(eh);
-        }
-      }
-    } else if (repairHint) {
-      matched = this.pickEdgeByHint(edgeShapes, repairHint);
-    } else {
-      for (const eh of edgeShapes) k.release(eh);
-    }
-
-    if (matched === undefined) return null;
-    return this.storeEdge(matched, body.handle);
-  }
-
-  /**
-   * Score-and-pick an edge by {@link RepairHint}. Currently uses only the
-   * `centroid` field — interpreted as the edge midpoint via OCCT's linear
-   * center-of-mass. `normal` and `area` are face-scoped concepts; edge
-   * tangent/length matching can be added when needed.
-   */
-  private pickEdgeByHint(candidates: ShapeHandle[], hint: RepairHint): ShapeHandle | undefined {
-    const k = this.getKernel();
-    const MIDPOINT_MAX_MM = 10;
-    let bestIdx = -1;
-    let bestDist = MIDPOINT_MAX_MM;
-
-    if (hint.centroid) {
-      for (let i = 0; i < candidates.length; i++) {
-        const eh = candidates[i]!;
-        const com = k.getLinearCenterOfMass(eh);
-        const dx = com.x - hint.centroid[0];
-        const dy = com.y - hint.centroid[1];
-        const dz = com.z - hint.centroid[2];
-        const dist = Math.hypot(dx, dy, dz);
-        if (dist < bestDist) {
-          bestDist = dist;
-          bestIdx = i;
-        }
-      }
-    }
-
-    let winner: ShapeHandle | undefined;
-    for (let i = 0; i < candidates.length; i++) {
-      const eh = candidates[i]!;
-      if (i === bestIdx) {
-        winner = eh;
-      } else {
-        k.release(eh);
-      }
-    }
-    return winner;
+    const edgeShapes = k.getSubShapes(this.getBodyShape(body), 'edge');
+    const matched = this.chooseSubShape(edgeShapes, targetHash, repairHint, (eh) => this.describeEdge(eh));
+    return matched === undefined ? null : this.storeEdge(matched, body.handle);
   }
 
   async getBoundingBox(body: KernelBody): Promise<BoundingBox3D> {

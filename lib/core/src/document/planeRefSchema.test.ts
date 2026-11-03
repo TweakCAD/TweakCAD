@@ -28,7 +28,7 @@ describe('PlaneRefSchema', () => {
       type: 'stableTopology',
       bodyRef: { partId: 'p1', bodyId: 'body_a' },
       stableFaceId: 'face_002',
-      repairHint: { centroid: [10, 0, 5], normal: [0, 1, 0], area: 42 },
+      repairHint: { center: [10, 0, 5], normal: [0, 1, 0], size: 42 },
     };
     expect(PlaneRefSchema.safeParse(ref).success).toBe(true);
   });

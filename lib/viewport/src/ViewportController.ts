@@ -5,7 +5,7 @@
  */
 
 import * as THREE from 'three';
-import type { DisplayMesh, TopologyMap, Selection, ConstructionPlaneDisplay } from '@tweakcad/core/src/document/schema.ts';
+import type { DisplayMesh, TopologyMap, Selection, ConstructionPlaneDisplay, RepairHint } from '@tweakcad/core/src/document/schema.ts';
 import type { BodyId, FaceId, EdgeId, FeatureId, StableFaceId } from '@tweakcad/core/src/ids.ts';
 import { MeshRegistry, SECTION_STENCIL_RENDER_ORDER } from './MeshRegistry.ts';
 import type { MeshEntry } from './MeshRegistry.ts';
@@ -831,6 +831,7 @@ export class ViewportController {
     bodyId: BodyId;
     faceId: FaceId;
     stableFaceId: StableFaceId | undefined;
+    repairHint: RepairHint | undefined;
     distance: number;
     plane: MeshFacePlane | null;
   } | null {
@@ -862,6 +863,7 @@ export class ViewportController {
       bodyId: best.entry.bodyId,
       faceId: face.faceId,
       stableFaceId: face.stableFaceId,
+      repairHint: face.repairHint,
       distance: best.dist,
       plane,
     };

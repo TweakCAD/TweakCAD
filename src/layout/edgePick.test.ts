@@ -75,4 +75,20 @@ describe('appendEdgeRefs', () => {
     const current = [ref('s0'), ref('s1')];
     expect(appendEdgeRefs(current, [ref('s1')])).toBe(current);
   });
+
+  it('treats the same edge picked again after a rebuild as already picked, whatever its hint', () => {
+    const before = { ...ref('s0'), repairHint: { center: [5, 0, 5], length: 10 } } as EdgeRef;
+    const after = { ...ref('s0'), repairHint: { center: [5, 0, 8], length: 10 } } as EdgeRef;
+    const current = [before];
+    expect(appendEdgeRefs(current, [after])).toBe(current);
+  });
+});
+
+describe('repair hints on picked edges', () => {
+  it('copies each edge\'s hint from the topology map into its ref', () => {
+    const hint = { center: [5, 0, 5], length: 10, direction: [1, 0, 0] };
+    const topo = { ...BOX, edges: BOX.edges.map(e => (e.edgeId === 'e0' ? { ...e, repairHint: hint } : e)) } as TopologyMap;
+    expect(resolveEdgePick(edgeSel('e0'), [topo], { tangentChain: false }).refs)
+      .toEqual([{ ...ref('s0'), repairHint: hint }]);
+  });
 });

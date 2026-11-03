@@ -167,16 +167,16 @@ describe('OcctKernel — topology naming (TN-d, resolveFaceRef)', () => {
 });
 
 describe('OcctKernel — topology naming (TN-e, RepairHint fallback)', () => {
-  it('resolveFaceRef with a bogus ID + valid hint finds the face by centroid/normal/area', async () => {
+  it('resolveFaceRef with a bogus ID + valid hint finds the face by centre/normal/size', async () => {
     const k = await newKernel();
     // 10×10×10 box at origin. The +Z (top) face has:
-    //   centroid (5, 5, 10), normal (0, 0, 1), area 100.
+    //   box centre (5, 5, 10), normal (0, 0, 1), box diagonal 10√2.
     const r = await k.makeBox({ origin: [0, 0, 0], width: 10, height: 10, depth: 10 });
     if (!r.ok) throw new Error('precondition failed');
     const resolved = await k.resolveFaceRef(r.value, 'sf_unknown' as never, {
-      centroid: [5, 5, 10],
+      center: [5, 5, 10],
       normal: [0, 0, 1],
-      area: 100,
+      size: Math.hypot(10, 10),
     });
     expect(resolved).not.toBeNull();
     expect(resolved?.bodyHandle).toBe(r.value.handle);
@@ -186,25 +186,25 @@ describe('OcctKernel — topology naming (TN-e, RepairHint fallback)', () => {
     const k = await newKernel();
     const r = await k.makeBox({ origin: [0, 0, 0], width: 10, height: 10, depth: 10 });
     if (!r.ok) throw new Error('precondition failed');
-    // Centroid far outside the box.
+    // Centre far outside the box.
     const resolved = await k.resolveFaceRef(r.value, 'sf_unknown' as never, {
-      centroid: [500, 500, 500],
+      center: [500, 500, 500],
       normal: [0, 0, 1],
-      area: 100,
+      size: Math.hypot(10, 10),
     });
     expect(resolved).toBeNull();
   });
 
-  it('hint area mismatch rejects an otherwise-matching candidate', async () => {
+  it('hint size mismatch rejects an otherwise-matching candidate', async () => {
     const k = await newKernel();
     const r = await k.makeBox({ origin: [0, 0, 0], width: 10, height: 10, depth: 10 });
     if (!r.ok) throw new Error('precondition failed');
-    // Hint matches centroid + normal of the +Z face but expects area 5000
-    // (50× actual). Should fail the area-ratio threshold.
+    // Hint matches centre + normal of the +Z face but expects a box 50×
+    // the size. Should fail the size-ratio threshold.
     const resolved = await k.resolveFaceRef(r.value, 'sf_unknown' as never, {
-      centroid: [5, 5, 10],
+      center: [5, 5, 10],
       normal: [0, 0, 1],
-      area: 5000,
+      size: 50 * Math.hypot(10, 10),
     });
     expect(resolved).toBeNull();
   });
@@ -282,7 +282,7 @@ describe('OcctKernel — topology naming (TN-f, edges)', () => {
     const k = await newKernel();
     const r = await k.makeBox({ origin: [0, 0, 0], width: 10, height: 10, depth: 10 });
     if (!r.ok) throw new Error('precondition failed');
-    const resolved = await k.resolveEdgeRef(r.value, 'se_unknown' as never, { centroid: hint });
+    const resolved = await k.resolveEdgeRef(r.value, 'se_unknown' as never, { center: hint });
     if (!resolved) return null;
     const internals = k as unknown as {
       edges: Map<string, unknown>;
