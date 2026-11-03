@@ -1090,11 +1090,14 @@ export type ComponentFeatureInputs = {
   parameterOverrides: Record<string, Expression>;
   /**
    * Which row of the component's configurations table is active for
-   * THIS instance. `null` (or missing) = use the component's own
-   * `configurations.active` value, which itself can be `null` to mean
-   * "no overrides — use parameter defaults". Per-instance config wins
-   * over the component-internal active row so two screws can be
-   * different sizes from the same embedded component.
+   * THIS instance:
+   *  - a row id: that row, whatever the component's own active row is;
+   *  - `null`: no row — the component's parameter defaults (the dialog's
+   *    "(use defaults)");
+   *  - missing: inherit the component's own `configurations.active`
+   *    (which may itself be `null`, meaning defaults).
+   * Per-instance config wins over the component-internal active row so
+   * two screws can be different sizes from the same embedded component.
    */
   configurationId?: string | null;
   /**

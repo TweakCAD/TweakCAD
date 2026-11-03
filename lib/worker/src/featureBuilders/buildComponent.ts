@@ -113,7 +113,7 @@ export async function buildComponent(
     def.source,
     sourcePart,
     inputs.parameterOverrides ?? {},
-    inputs.configurationId ?? null,
+    inputs.configurationId,
   );
 
   // Recursively build the sub-timeline. The recursive call uses its
@@ -175,19 +175,21 @@ function applyInstanceOverrides(
   source: CadProject,
   part: CadPart,
   perInstance: Record<string, string>,
-  perInstanceConfigId: string | null,
+  perInstanceConfigId: string | null | undefined,
 ): { source: CadProject; part: CadPart } {
   let partParams: ParameterTable = part.parameters;
   let projectParams: ParameterTable = source.parameters;
 
-  // 1) active configuration row's overrides. Per-instance configurationId
-  //    overrides the embedded part's `configurations.active`; pass `null`
-  //    explicitly to mean "ignore any active config the component picked".
+  // 1) active configuration row's overrides. A per-instance row id wins over
+  //    the embedded part's `configurations.active`; `null` means the
+  //    parameter defaults, ignoring the component's active row; absent means
+  //    inherit that active row. `null` used to inherit too, so the dialog's
+  //    "(use defaults)" — which saves `null` — built the active preset.
   const configTable = part.configurations;
   if (configTable) {
-    const activeId = perInstanceConfigId !== null
-      ? perInstanceConfigId
-      : configTable.active;
+    const activeId = perInstanceConfigId === undefined
+      ? configTable.active
+      : perInstanceConfigId;
     if (activeId !== null) {
       const row = configTable.rows.find(r => r.id === activeId);
       if (row) {
