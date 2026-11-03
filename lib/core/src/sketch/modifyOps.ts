@@ -12,7 +12,9 @@
  *
  * **Modify-vs-create semantics:** modify operations DELETE one or more
  * geometries and ADD their replacement pieces atomically (one undo
- * entry via the bus). The deleted points get garbage-collected if no
+ * entry via the bus). Trim gives its first surviving piece the trimmed
+ * geometry's id, so whatever names that entity (a profile, the faces an
+ * extrude sweeps from it) still finds it; the other pieces are new. The deleted points get garbage-collected if no
  * surviving geometry references them, and constraints that named the
  * deleted geometry are cascaded by `reapDanglingReferences` — the op
  * returns solver-ready state, the handler doesn't clean up after it.
@@ -72,8 +74,9 @@ function addPointMut(
 function addGeometryMut(
   geometries: Map<SketchGeometryId, SketchGeometry>,
   geom: SketchGeometryInput,
+  reuseId?: SketchGeometryId,
 ): SketchGeometryId {
-  const id = sketchGeometryId(generateId('geo'));
+  const id = reuseId ?? sketchGeometryId(generateId('geo'));
   geometries.set(id, { ...geom, id } as SketchGeometry);
   return id;
 }
@@ -105,6 +108,16 @@ function gcPoints(
   }
 }
 
+/** `id` on the first call, then `undefined` (a fresh id) on every later one. */
+function firstUse(id: SketchGeometryId): () => SketchGeometryId | undefined {
+  let unused = true;
+  return () => {
+    if (!unused) return undefined;
+    unused = false;
+    return id;
+  };
+}
+
 function geomPointIds(geom: SketchGeometry): SketchPointId[] {
   switch (geom.type) {
     case 'line':    return [geom.startId, geom.endId];
@@ -129,6 +142,11 @@ function geomPointIds(geom: SketchGeometry): SketchPointId[] {
  * - Circle: 2+ intersections → arc going CCW from prevCW to nextCCW
  *   (the side NOT under the cursor). 0–1 intersections → whole-delete.
  *
+ * The first surviving piece in order along the curve (the one holding the
+ * original start point, when one does) keeps `targetId`; a trimmed circle's
+ * arc keeps the circle's. Constraints on the trimmed geometry are dropped
+ * either way, since they describe the shape before the trim.
+ *
  * Returns the new state. Returns null if the target is gone or the
  * cursor can't be projected onto the curve.
  */
@@ -141,8 +159,11 @@ export function trimAt(
   // The per-kind helpers below delete geometry across ten early-return
   // paths and none of them touch `state.constraints`. Cascading once
   // here, off the before/after diff, is what keeps a constraint from
-  // outliving the geometry it names.
-  return trimmed === null ? null : reapDanglingReferences(state, trimmed);
+  // outliving the geometry it names. A piece that kept `targetId` is
+  // passed as replaced so its old constraints go too.
+  if (trimmed === null) return null;
+  const kept = trimmed.geometries.has(targetId) ? new Set([targetId]) : undefined;
+  return reapDanglingReferences(state, trimmed, kept);
 }
 
 function trimGeometry(
@@ -209,14 +230,15 @@ function trimLine(
 
   const c = target.construction;
   next.geometries.delete(targetId);
+  const takeId = firstUse(targetId);
   if (leftT > 1e-6) {
     const newEnd = addPointMut(next.points, leftPt.x, leftPt.y);
-    addGeometryMut(next.geometries, { type: 'line', startId: target.startId, endId: newEnd, construction: c });
+    addGeometryMut(next.geometries, { type: 'line', startId: target.startId, endId: newEnd, construction: c }, takeId());
     removedRefs.delete(target.startId); // surviving piece keeps the start ref
   }
   if (rightT < 1 - 1e-6) {
     const newStart = addPointMut(next.points, rightPt.x, rightPt.y);
-    addGeometryMut(next.geometries, { type: 'line', startId: newStart, endId: target.endId, construction: c });
+    addGeometryMut(next.geometries, { type: 'line', startId: newStart, endId: target.endId, construction: c }, takeId());
     removedRefs.delete(target.endId);
   }
   gcPoints(next.points, next.geometries, state.constraints as never, removedRefs);
@@ -286,14 +308,15 @@ function trimArc(
 
   const c = target.construction;
   next.geometries.delete(targetId);
+  const takeId = firstUse(targetId);
   if (leftT > 1e-6) {
     const newEnd = addPointMut(next.points, leftPt.x, leftPt.y);
-    addGeometryMut(next.geometries, { type: 'arc', centerId: target.centerId, startId: target.startId, endId: newEnd, radius: r, construction: c });
+    addGeometryMut(next.geometries, { type: 'arc', centerId: target.centerId, startId: target.startId, endId: newEnd, radius: r, construction: c }, takeId());
     removedRefs.delete(target.startId);
   }
   if (rightT < sweep - 1e-6) {
     const newStart = addPointMut(next.points, rightPt.x, rightPt.y);
-    addGeometryMut(next.geometries, { type: 'arc', centerId: target.centerId, startId: newStart, endId: target.endId, radius: r, construction: c });
+    addGeometryMut(next.geometries, { type: 'arc', centerId: target.centerId, startId: newStart, endId: target.endId, radius: r, construction: c }, takeId());
     removedRefs.delete(target.endId);
   }
   // The arc's center is also referenced by the surviving sub-arcs (if any).
@@ -358,7 +381,7 @@ function trimCircle(
     startId, endId,
     radius: r,
     construction: c,
-  });
+  }, targetId);
   removedRefs.delete(target.centerId); // surviving arc keeps the center
   gcPoints(next.points, next.geometries, state.constraints as never, removedRefs);
   return { ...state, points: next.points, geometries: next.geometries };
