@@ -979,3 +979,60 @@ describe('SketchSetConstruction', () => {
     expect(res.ok).toBe(false);
   });
 });
+
+describe('SketchApplyConstraint — a sketch that already has an unsatisfied constraint', () => {
+  // An import, an edited dimension or a hand-edited file can leave a sketch
+  // holding a constraint the solver cannot satisfy. Every later add used to
+  // be rejected as "would break another already-satisfied constraint",
+  // because the handler assumed nothing was unsatisfied before the add.
+  function conflictedSketch() {
+    const { bus, store, partId } = newHarness();
+    const sketchId = createSketch(bus, store, partId);
+    bus.dispatch({ type: 'SketchDrawLine', sketchId, from: [0, 0], to: [10, 0] });
+    bus.dispatch({ type: 'SketchDrawLine', sketchId, from: [0, 20], to: [10, 23] });
+    const geometries = getSketchInputs(store, partId, sketchId).editorModel!.geometries as Array<{
+      id: string; startId: string; endId: string;
+    }>;
+    const pinned = geometries[0]!;
+    const free = geometries[1]!;
+    // Pin the first line's ends 10 mm apart, then demand 20 between them.
+    store.mutate('Conflict', (draft) => {
+      const sketch = draft.parts[partId]!.timeline.find((f) => f.id === sketchId)!;
+      const model = (sketch.inputs as unknown as SketchFeatureInputs).editorModel as { constraints: unknown[] };
+      model.constraints.push(
+        { id: 'c_fix_a', type: 'fixed', pointId: pinned.startId, x: 0, y: 0 },
+        { id: 'c_fix_b', type: 'fixed', pointId: pinned.endId, x: 10, y: 0 },
+        { id: 'c_too_long', type: 'distance', pointA: pinned.startId, pointB: pinned.endId, value: 20 },
+      );
+    });
+    return { bus, store, partId, sketchId, free };
+  }
+
+  it('accepts an unrelated constraint', () => {
+    const { bus, store, partId, sketchId, free } = conflictedSketch();
+
+    const result = bus.dispatch({
+      type: 'SketchApplyConstraint',
+      sketchId,
+      constraint: { type: 'horizontal', geometryId: free.id as never },
+    });
+
+    expect(result.ok ? 'ok' : result.error.message).toBe('ok');
+    const types = (userEditorState(getSketchInputs(store, partId, sketchId)).constraints as Array<{ type: string }>)
+      .map((c) => c.type);
+    expect(types).toContain('horizontal');
+  });
+
+  it('still rejects a constraint that cannot be satisfied', () => {
+    const { bus, sketchId, free } = conflictedSketch();
+    bus.dispatch({ type: 'SketchApplyConstraint', sketchId, constraint: { type: 'horizontal', geometryId: free.id as never } });
+
+    const result = bus.dispatch({
+      type: 'SketchApplyConstraint',
+      sketchId,
+      constraint: { type: 'vertical', geometryId: free.id as never },
+    });
+
+    expect(result.ok).toBe(false);
+  });
+});

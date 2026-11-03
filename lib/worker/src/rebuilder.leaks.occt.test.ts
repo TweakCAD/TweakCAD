@@ -34,7 +34,7 @@ async function rebuildCounts(part: CadPart, project: CadProject, rounds = 4): Pr
   await kernel.init();
   const counts: number[] = [];
   for (let i = 0; i < rounds; i++) {
-    sweepPreviousRebuild(kernel);
+    sweepPreviousRebuild(kernel, String(part.id));
     const result = await incrementalRebuild(part, project, kernel, 0);
     const failed = result.featureResults.filter((r) => r.status !== 'success');
     if (failed.length > 0) throw new Error(`fixture did not build: ${JSON.stringify(failed)}`);

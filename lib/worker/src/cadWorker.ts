@@ -14,7 +14,7 @@ import type { CadPart, CadProject, DisplayMesh, TopologyMap, FeatureBuildResult,
 import type { PartId } from '@tweakcad/core/src/ids.ts';
 import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
 import { OcctKernel } from '@tweakcad/kernel/src/occtKernel.ts';
-import { incrementalRebuild, sweepPreviousRebuild, releaseRebuildBodies } from './rebuilder.ts';
+import { incrementalRebuild, sweepPreviousRebuild, sweepRemovedParts, releaseRebuildBodies } from './rebuilder.ts';
 import type { KernelBody } from '@tweakcad/kernel/src/types.ts';
 import type { MeasureTarget, MeasureResult } from './protocol.ts';
 
@@ -84,14 +84,26 @@ async function ensureKernel(): Promise<CadKernel> {
 }
 
 /**
- * Bodies the last rebuild left alive, by id.
+ * Each part's bodies from its last rebuild, by part id then body id.
  *
- * The rebuilder already keeps these handles until the next `buildPart`
- * sweeps them; this adds the id → handle mapping that measurement needs,
- * since the main thread only ever knows body ids. Replaced wholesale per
- * rebuild, so it can never name a handle the sweep has freed.
+ * The rebuilder keeps these handles until the next `buildPart` of the same
+ * part sweeps them; this adds the id → handle mapping that measurement needs,
+ * since the main thread only ever knows body ids. A part's entry is replaced
+ * whenever that part rebuilds, and dropped when it leaves the document, so it
+ * never names a handle a sweep has freed. Per part because the viewport shows
+ * every part at once: one map, replaced per rebuild, made every part but the
+ * last one built unmeasurable.
  */
-const lastRebuildBodies = new Map<string, KernelBody>();
+const lastRebuildBodies = new Map<string, Map<string, KernelBody>>();
+
+/** The handle of a body from any part's last rebuild, if it still exists. */
+function liveBody(bodyId: string): KernelBody | undefined {
+  for (const bodies of lastRebuildBodies.values()) {
+    const handle = bodies.get(bodyId);
+    if (handle) return handle;
+  }
+  return undefined;
+}
 
 // ---- Worker API ----
 
@@ -117,16 +129,25 @@ const api = {
     fromIndex?: number,
   ): Promise<WorkerRebuildResult> {
     const k = await ensureKernel();
-    // Free the bodies the LAST rebuild left behind before building new ones.
+    // Free the bodies THIS PART's last rebuild left behind before building new
+    // ones, and those of parts that have left the document. Other parts'
+    // bodies stay: they are still on screen and can still be measured.
     // Done here rather than inside `incrementalRebuild` because the export
     // paths call that too, and an export must not free bodies belonging to an
     // export still assembling its blob. This worker only ever serves rebuilds,
-    // so by the time a new one starts the previous result is finished with.
-    sweepPreviousRebuild(k);
+    // so by the time a part rebuilds its previous result is finished with.
+    const livePartIds = Object.keys(project.parts);
+    sweepPreviousRebuild(k, String(part.id));
+    sweepRemovedParts(k, livePartIds);
+    for (const partId of lastRebuildBodies.keys()) {
+      if (!livePartIds.includes(partId)) lastRebuildBodies.delete(partId);
+    }
     const result = await incrementalRebuild(part, project, k, fromIndex);
 
-    lastRebuildBodies.clear();
-    for (const b of result.bodies) lastRebuildBodies.set(String(b.bodyId), b.handle);
+    lastRebuildBodies.set(
+      String(part.id),
+      new Map(result.bodies.map((b) => [String(b.bodyId), b.handle])),
+    );
 
     // Strip non-serializable kernel handles from the result.
     // The worker retains ownership of the WASM shape handles.
@@ -242,10 +263,10 @@ const api = {
   },
 
   /**
-   * Measure something in the last rebuild.
+   * Measure something in the current geometry of any part.
    *
-   * Reads the bodies that rebuild left alive — the same ones `buildPart`
-   * sweeps when the next one starts — so measuring costs a kernel query
+   * Reads the bodies each part's last rebuild left alive — the ones
+   * `buildPart` sweeps when that part next rebuilds — so measuring costs a kernel query
    * rather than a rebuild. A target whose body is no longer there returns
    * null rather than throwing: selection can outlive the geometry it points
    * at, and "nothing to measure" is a normal state for a panel to be in.
@@ -257,7 +278,7 @@ const api = {
    */
   async measure(target: MeasureTarget): Promise<MeasureResult | null> {
     const k = await ensureKernel();
-    const body = lastRebuildBodies.get(target.bodyId);
+    const body = liveBody(target.bodyId);
     if (!body) return null;
 
     if (target.kind === 'body') {

@@ -45,12 +45,16 @@ type CachedRebuildState = {
 let cachedState: CachedRebuildState | null = null;
 
 /**
- * Bodies that survived to the end of the previous rebuild, per kernel.
+ * Bodies that survived to the end of the previous rebuild, per kernel and
+ * per part.
  *
  * A rebuild's final bodies stay alive after it returns — the caller
- * tessellates and exports from them. They only become garbage when the NEXT
- * rebuild supersedes them, which is why they're swept at the start of one
- * rather than the end of this one: nothing in flight can be freed.
+ * tessellates, measures and exports from them. They only become garbage when
+ * the NEXT rebuild of the same part supersedes them, which is why they're
+ * swept at the start of one rather than the end of this one: nothing in
+ * flight can be freed. Per part because one worker rebuilds every part: a
+ * single list let rebuilding part B free part A's bodies, so A — still on
+ * screen — could no longer be measured.
  *
  * Safe because a rebuild is always from scratch. `findIncrementalStartIndex`
  * is stubbed to 0, so cached bodies are never reused; no worker API accepts a
@@ -61,25 +65,47 @@ let cachedState: CachedRebuildState | null = null;
  *
  * Keyed weakly so a discarded kernel doesn't pin its handle list.
  */
-const previousFinalBodies = new WeakMap<CadKernel, KernelBody[]>();
+const previousFinalBodies = new WeakMap<CadKernel, Map<string, KernelBody[]>>();
 
-/**
- * Release the previous rebuild's surviving bodies on this kernel.
- *
- * Call immediately before starting a fresh rebuild. Deliberately NOT called
- * from inside `incrementalRebuild`: the export paths call that too, and an
- * export must not free the bodies of an export still assembling its blob.
- */
-export function sweepPreviousRebuild(kernel: CadKernel): void {
-  const stale = previousFinalBodies.get(kernel);
-  if (!stale) return;
-  previousFinalBodies.delete(kernel);
+function releaseRetired(kernel: CadKernel, stale: readonly KernelBody[]): void {
   for (const handle of stale) {
     try {
       kernel.dispose(handle);
     } catch (e) {
       console.warn('[Rebuilder] Failed to release a retired body:', e);
     }
+  }
+}
+
+/**
+ * Release the previous rebuild's surviving bodies of `partId` on this kernel.
+ * Other parts' bodies are untouched.
+ *
+ * Call immediately before starting a fresh rebuild of that part. Deliberately
+ * NOT called from inside `incrementalRebuild`: the export paths call that too,
+ * and an export must not free the bodies of an export still assembling its
+ * blob.
+ */
+export function sweepPreviousRebuild(kernel: CadKernel, partId: string): void {
+  const byPart = previousFinalBodies.get(kernel);
+  const stale = byPart?.get(partId);
+  if (!byPart || !stale) return;
+  byPart.delete(partId);
+  releaseRetired(kernel, stale);
+}
+
+/**
+ * Release the surviving bodies of every part not in `livePartIds` — parts
+ * that left the document, whose bodies no later rebuild would ever sweep.
+ */
+export function sweepRemovedParts(kernel: CadKernel, livePartIds: readonly string[]): void {
+  const byPart = previousFinalBodies.get(kernel);
+  if (!byPart) return;
+  const live = new Set(livePartIds);
+  for (const [partId, stale] of byPart) {
+    if (live.has(partId)) continue;
+    byPart.delete(partId);
+    releaseRetired(kernel, stale);
   }
 }
 
@@ -507,10 +533,15 @@ export async function incrementalRebuild(
 
   const hasFailures = featureResults.some(r => r.status === 'failed');
 
-  // Hand these to the next rebuild on this kernel to free — see
+  // Hand these to the next rebuild of this part on this kernel to free — see
   // `previousFinalBodies`. Recorded unconditionally, but only ever acted on by
-  // a caller that opts in via `sweepPreviousRebuild`.
-  previousFinalBodies.set(kernel, bodyEntries.map(e => e.handle));
+  // a caller that opts in via `sweepPreviousRebuild` / `sweepRemovedParts`.
+  let byPart = previousFinalBodies.get(kernel);
+  if (!byPart) {
+    byPart = new Map();
+    previousFinalBodies.set(kernel, byPart);
+  }
+  byPart.set(String(part.id), bodyEntries.map(e => e.handle));
 
   return {
     partId: part.id,
