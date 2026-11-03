@@ -18,7 +18,7 @@ import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
 import type { KernelBody } from '@tweakcad/kernel/src/types.ts';
 import { FINE_TESSELLATION } from '@tweakcad/kernel/src/types.ts';
 import type { RebuildResult } from './protocol.ts';
-import { dispatchFeatureBuilder } from './subTimelineRunner.ts';
+import { dispatchFeatureBuilder, releaseOrphanedBodies } from './subTimelineRunner.ts';
 
 // --- Incremental rebuild state (cached between rebuilds) ---
 
@@ -357,30 +357,8 @@ export async function incrementalRebuild(
 
       effects.set(feature.id, { consumed, created });
 
-      // Free the shapes this feature orphaned. A builder that consumes a body
-      // (fillet, chamfer, a join/cut extrude) deletes it from `context.bodies`
-      // — or rebinds the same id to a new handle — but never releases the old
-      // shape, so it stays in the WASM heap for the worker's lifetime. On a
-      // large mesh that is tens of MB per rebuild.
-      //
-      // A handle is orphaned when its id is gone from the context, or still
-      // present but now pointing at a different handle. Either way nothing can
-      // reach it: downstream features resolve bodies by id, and the builder has
-      // already consumed it to produce its replacement (including any stable-id
-      // propagation, which happens inside the kernel call).
-      for (const [bid, before] of handlesBefore) {
-        const after = context.bodies.get(bid);
-        if (after === before) continue;
-        try {
-          // `BuildContext.bodies` stores handles opaquely; every producer puts
-          // a KernelBody in, the same cast the tessellation loop below makes.
-          kernel.dispose(before as KernelBody);
-        } catch (e) {
-          // Never let cleanup fail a rebuild — a missed free is a leak, a
-          // thrown one loses the user's geometry.
-          console.warn(`[Rebuilder] Failed to release orphaned body ${String(bid)}:`, e);
-        }
-      }
+      // Free the shapes this feature orphaned (see `releaseOrphanedBodies`).
+      releaseOrphanedBodies(kernel, handlesBefore, context);
       // Stamp each newly-created body with its producing feature so
       // downstream features that reference it can be cascade-blocked
       // if this feature later fails or is suppressed.

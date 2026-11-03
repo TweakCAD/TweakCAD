@@ -38,6 +38,7 @@ import type { BuildContext, BuildResult } from '@tweakcad/core/src/features/cont
 import { resolveProfile } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import type { SketchRegion } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import { regionToKernelProfile } from './buildExtrude.ts';
+import { releaseShapes } from './releaseShapes.ts';
 
 export async function buildSweep(
   node: FeatureNode,
@@ -64,17 +65,19 @@ export async function buildSweep(
   );
 
   // 2. Resolve path face (its outer wire becomes the sweep spine).
-  const pathFace = await resolveProfileRefToFace(
-    inputs.path,
-    context,
-    kernel,
-    'path',
-  );
+  let pathFace: KernelFace;
+  try {
+    pathFace = await resolveProfileRefToFace(inputs.path, context, kernel, 'path');
+  } catch (error) {
+    releaseShapes(kernel, [profileFace]);
+    throw error;
+  }
 
   // 3. Kernel call. `node.id` is forwarded as the topology-tracker
   // origin so the swept body's stable IDs stay deterministic across
   // rebuilds.
   const sweepResult = await kernel.sweep(profileFace, pathFace, `sweep_${node.id}`);
+  releaseShapes(kernel, [profileFace, pathFace]); // the sketch faces are spent
   if (!sweepResult.ok) {
     throw new Error(`Sweep failed: ${sweepResult.error.message}`);
   }

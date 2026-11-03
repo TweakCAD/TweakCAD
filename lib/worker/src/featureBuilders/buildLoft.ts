@@ -31,6 +31,7 @@ import {
   sketchToWorld,
 } from './wireProfile.ts';
 import { DEFAULT_PLANES } from './resolvePlane.ts';
+import { releaseShapes } from './releaseShapes.ts';
 
 const MIN_PROFILES = 2;
 const MAX_PROFILES = 16;
@@ -54,29 +55,36 @@ export async function buildLoft(
   // Resolve every profile up-front; bail with a clear diagnostic if any one
   // can't be turned into a closed region.
   const faces: KernelFace[] = [];
-  for (let i = 0; i < profiles.length; i++) {
-    const ref = profiles[i]!;
-    const resolved = resolveOneProfile(ref, context);
-    if (resolved.status !== 'resolved' || !resolved.region) {
-      throw new Error(
-        `Loft profile #${i + 1} (sketch ${ref.sketchId}) failed to resolve: ${resolved.error ?? 'unknown'}`,
-      );
+  let bodyResult: Awaited<ReturnType<CadKernel['loft']>>;
+  try {
+    for (let i = 0; i < profiles.length; i++) {
+      const ref = profiles[i]!;
+      const resolved = resolveOneProfile(ref, context);
+      if (resolved.status !== 'resolved' || !resolved.region) {
+        throw new Error(
+          `Loft profile #${i + 1} (sketch ${ref.sketchId}) failed to resolve: ${resolved.error ?? 'unknown'}`,
+        );
+      }
+      const kernelProfile = regionToKernelProfile(resolved.region, ref.sketchId, context);
+      const faceResult = await kernel.createSketchFace(kernelProfile);
+      if (!faceResult.ok) {
+        throw new Error(`Loft profile #${i + 1}: face creation failed: ${faceResult.error.message}`);
+      }
+      faces.push(faceResult.value);
     }
-    const kernelProfile = regionToKernelProfile(resolved.region, ref.sketchId, context);
-    const faceResult = await kernel.createSketchFace(kernelProfile);
-    if (!faceResult.ok) {
-      throw new Error(`Loft profile #${i + 1}: face creation failed: ${faceResult.error.message}`);
-    }
-    faces.push(faceResult.value);
+
+    const opts: { ruled?: boolean; closed?: boolean } = {};
+    if (inputs.ruled !== undefined) opts.ruled = inputs.ruled;
+    if (inputs.closed !== undefined) opts.closed = inputs.closed;
+
+    // Pass node.id as origin so stable face/edge IDs are deterministic
+    // per feature — user-captured FaceRef/EdgeRef survive rebuilds.
+    bodyResult = await kernel.loft(faces, opts, node.id);
+  } finally {
+    // The section faces are spent whether the loft worked or a later
+    // profile failed to resolve.
+    releaseShapes(kernel, faces);
   }
-
-  const opts: { ruled?: boolean; closed?: boolean } = {};
-  if (inputs.ruled !== undefined) opts.ruled = inputs.ruled;
-  if (inputs.closed !== undefined) opts.closed = inputs.closed;
-
-  // Pass node.id as origin so stable face/edge IDs are deterministic
-  // per feature — user-captured FaceRef/EdgeRef survive rebuilds.
-  const bodyResult = await kernel.loft(faces, opts, node.id);
   if (!bodyResult.ok) {
     throw new Error(`Loft failed: ${bodyResult.error.message}`);
   }

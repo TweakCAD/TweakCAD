@@ -12,15 +12,39 @@
  * These tests pin the two halves of the fix with MockKernel: shapes a feature
  * orphans are released during the rebuild, and the previous rebuild's
  * survivors are released when the next one starts.
+ *
+ * Each builds a part that has bodies, and asserts it did: these tests used to
+ * rebuild an empty timeline, so their per-body checks ran zero times and the
+ * throwing-dispose case had nothing to dispose.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { incrementalRebuild, sweepPreviousRebuild, releaseRebuildBodies, clearRebuildCache } from './rebuilder.ts';
 import { MockKernel } from '@tweakcad/kernel/src/mockKernel.ts';
 import { newProjectWithPart } from '@tweakcad/core/src/document/factory.ts';
-import type { CadPart, CadProject } from '@tweakcad/core/src/document/schema.ts';
+import type { CadPart, CadProject, FeatureNode } from '@tweakcad/core/src/document/schema.ts';
 
 function firstPart(project: CadProject): CadPart {
   return Object.values(project.parts)[0]!;
+}
+
+function box(id: string, operation: 'newBody' | 'cut' = 'newBody'): FeatureNode {
+  return {
+    id, type: 'primitive', name: id, version: 1, enabled: true, visible: true,
+    inputs: {
+      shape: { kind: 'box', width: '10', height: '10', depth: '10' },
+      transform: { position: [0, 0, 0], rotation: [0, 0, 0, 1] },
+      operation,
+    },
+    dependsOn: [],
+    createdAt: '2026-11-02T00:00:00.000Z', updatedAt: '2026-11-02T00:00:00.000Z',
+  } as unknown as FeatureNode;
+}
+
+/** A part with two separate bodies. */
+function twoBodies(): CadProject {
+  const project = newProjectWithPart('P', 'Part 1');
+  firstPart(project).timeline = [box('a'), box('b')];
+  return project;
 }
 
 /** Track every handle the kernel is asked to release. */
@@ -35,10 +59,11 @@ describe('rebuild-cycle disposal', () => {
     clearRebuildCache();
     const kernel = new MockKernel();
     await kernel.init();
-    const project = newProjectWithPart('P', 'Part 1');
+    const project = twoBodies();
     const freed = spyDispose(kernel);
 
     const result = await incrementalRebuild(firstPart(project), project, kernel, 0);
+    expect(result.bodies).toHaveLength(2);
     // Whatever this rebuild produced must still be usable by the caller —
     // it is about to be tessellated and possibly exported.
     for (const b of result.bodies) {
@@ -50,10 +75,11 @@ describe('rebuild-cycle disposal', () => {
     clearRebuildCache();
     const kernel = new MockKernel();
     await kernel.init();
-    const project = newProjectWithPart('P', 'Part 1');
+    const project = twoBodies();
 
     const first = await incrementalRebuild(firstPart(project), project, kernel, 0);
     const survivors = first.bodies.map(b => (b.handle as { handle: string }).handle);
+    expect(survivors).toHaveLength(2);
 
     const freed = spyDispose(kernel);
     sweepPreviousRebuild(kernel);
@@ -64,12 +90,13 @@ describe('rebuild-cycle disposal', () => {
     clearRebuildCache();
     const kernel = new MockKernel();
     await kernel.init();
-    const project = newProjectWithPart('P', 'Part 1');
+    const project = twoBodies();
     await incrementalRebuild(firstPart(project), project, kernel, 0);
 
     const freed = spyDispose(kernel);
     sweepPreviousRebuild(kernel);
     const afterFirst = freed.length;
+    expect(afterFirst).toBe(2);
     sweepPreviousRebuild(kernel);
     expect(freed).toHaveLength(afterFirst);
   });
@@ -86,12 +113,30 @@ describe('rebuild-cycle disposal', () => {
     clearRebuildCache();
     const kernel = new MockKernel();
     await kernel.init();
-    const project = newProjectWithPart('P', 'Part 1');
+    const project = twoBodies();
     await incrementalRebuild(firstPart(project), project, kernel, 0);
 
-    vi.spyOn(kernel, 'dispose').mockImplementation(() => { throw new Error('already released'); });
+    const dispose = vi.spyOn(kernel, 'dispose').mockImplementation(() => { throw new Error('already released'); });
     // A missed free is a leak; a thrown one would lose the user's geometry.
     expect(() => sweepPreviousRebuild(kernel)).not.toThrow();
+    expect(dispose).toHaveBeenCalledTimes(2);
+  });
+
+  it('releases a body a later feature consumed, during the rebuild', async () => {
+    clearRebuildCache();
+    const kernel = new MockKernel();
+    await kernel.init();
+    const project = newProjectWithPart('P', 'Part 1');
+    firstPart(project).timeline = [box('a'), box('cutter', 'cut')];
+    const freed = spyDispose(kernel);
+
+    const result = await incrementalRebuild(firstPart(project), project, kernel, 0);
+
+    // The cut replaced body a's handle with its result; the old one and the
+    // cutting tool are freed, the result is kept.
+    expect(result.bodies).toHaveLength(1);
+    expect(freed).toHaveLength(2);
+    expect(freed).not.toContain((result.bodies[0]!.handle as { handle: string }).handle);
   });
 
   it('releaseRebuildBodies frees exactly the bodies it is handed', async () => {

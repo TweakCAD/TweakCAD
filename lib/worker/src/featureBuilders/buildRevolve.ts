@@ -7,6 +7,7 @@
  * of a half-disc yields a hemisphere.
  */
 
+import { releaseShapes } from './releaseShapes.ts';
 import type {
   FeatureNode,
   RevolveFeatureInputs,
@@ -80,6 +81,7 @@ export async function buildRevolve(
   // Pass node.id as origin so stable face/edge IDs are deterministic
   // per feature — user-captured FaceRef/EdgeRef survive rebuilds.
   const bodyResult = await kernel.revolve(faceResult.value, axis, angleRad, false, node.id);
+  releaseShapes(kernel, [faceResult.value]); // the sketch face is spent
   if (!bodyResult.ok) {
     throw new Error(`Failed to revolve face: ${bodyResult.error.message}`);
   }

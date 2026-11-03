@@ -50,6 +50,7 @@ import type { KernelBody } from '@tweakcad/kernel/src/types.ts';
 import type { BuildContext, BuildResult } from '@tweakcad/core/src/features/contracts.ts';
 import { runSubTimeline } from '../subTimelineRunner.ts';
 import { carryBodyId } from './bodyIdentity.ts';
+import { releaseShapes } from './releaseShapes.ts';
 
 export async function buildComponent(
   node: FeatureNode,
@@ -147,10 +148,15 @@ export async function buildComponent(
   if (mode === 'newBody' || context.bodies.size === 0) {
     return wrapBodies(placedBodies, node.id);
   }
-  if (mode === 'cut') {
-    return cutFromHosts(placedBodies, context, kernel);
+  try {
+    return mode === 'cut'
+      ? await cutFromHosts(placedBodies, context, kernel)
+      : await joinWithHosts(placedBodies, context, kernel, node.id);
+  } finally {
+    // Cut out of or fused into the hosts, the component's own bodies are
+    // spent — and on a failed boolean they are not published either.
+    releaseShapes(kernel, placedBodies);
   }
-  return joinWithHosts(placedBodies, context, kernel, node.id);
 }
 
 /**
@@ -293,12 +299,20 @@ async function placeBodies(
 ): Promise<KernelBody[]> {
   if (isIdentityTransform(transform) || !transform) return bodies;
   const placed: KernelBody[] = [];
-  for (const body of bodies) {
-    const result = await kernel.transform(body, transform);
-    if (!result.ok) {
-      throw new Error(`Failed to place component: ${result.error.message}`);
+  try {
+    for (const body of bodies) {
+      const result = await kernel.transform(body, transform);
+      if (!result.ok) {
+        throw new Error(`Failed to place component: ${result.error.message}`);
+      }
+      placed.push(result.value);
     }
-    placed.push(result.value);
+  } catch (error) {
+    releaseShapes(kernel, placed);
+    throw error;
+  } finally {
+    // `transform` derives new bodies; the copies at the origin are spent.
+    releaseShapes(kernel, bodies);
   }
   return placed;
 }
@@ -342,13 +356,7 @@ async function cutFromHosts(
     }
   } catch (error) {
     // Free the cuts already made; the hosts are still in the context.
-    for (const { handle } of builtBodies) {
-      try {
-        kernel.dispose(handle);
-      } catch (e) {
-        console.warn('[buildComponent] Failed to release an unused cut result:', e);
-      }
-    }
+    releaseShapes(kernel, builtBodies.map(b => b.handle));
     throw error;
   }
   for (const [hostId] of hostEntries) context.bodies.delete(hostId);

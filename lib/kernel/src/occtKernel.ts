@@ -167,6 +167,14 @@ export class OcctKernel implements CadKernel {
   /** External string handle → upstream arena ShapeHandle (edges). */
   private edges = new Map<string, ShapeHandle>();
   /**
+   * Body handle → the face / edge handles resolved on it. They are views of
+   * that body's topology and useless once it is gone, so `dispose(body)`
+   * releases them too. Nothing else did: every fillet, chamfer, shell,
+   * sketch-on-face plane and measurement left its resolved sub-shapes in the
+   * arena for the worker's lifetime.
+   */
+  private subShapesOf = new Map<string, Set<string>>();
+  /**
    * Per-body cache of the last tessellation, keyed by sub-shape hashCode.
    * Cleared on dispose.
    *
@@ -422,13 +430,30 @@ export class OcctKernel implements CadKernel {
   private storeFace(shape: ShapeHandle, bodyHandle: string): KernelFace {
     const handle = nextHandle('face');
     this.faces.set(handle, shape);
+    this.trackSubShape(bodyHandle, handle);
     return { handle, bodyHandle };
   }
 
   private storeEdge(shape: ShapeHandle, bodyHandle: string): KernelEdge {
     const handle = nextHandle('edge');
     this.edges.set(handle, shape);
+    this.trackSubShape(bodyHandle, handle);
     return { handle, bodyHandle };
+  }
+
+  /**
+   * Record that `handle` was resolved on `bodyHandle`. A face with no body —
+   * a sketch face from `createSketchFace` — is owned by the caller, which
+   * disposes it once the solid it was made into exists.
+   */
+  private trackSubShape(bodyHandle: string, handle: string): void {
+    if (!bodyHandle) return;
+    let owned = this.subShapesOf.get(bodyHandle);
+    if (!owned) {
+      owned = new Set();
+      this.subShapesOf.set(bodyHandle, owned);
+    }
+    owned.add(handle);
   }
 
   private getFaceShape(face: KernelFace): ShapeHandle {
@@ -1946,6 +1971,13 @@ export class OcctKernel implements CadKernel {
         this.topologyCache.delete(id);
         this.tracker.forgetBody(id);
       }
+    }
+    if (id.startsWith('body_')) {
+      // The faces and edges resolved on this body go with it. One already
+      // disposed on its own is simply no longer in its map.
+      const owned = this.subShapesOf.get(id);
+      this.subShapesOf.delete(id);
+      for (const sub of owned ?? []) this.dispose({ handle: sub, bodyHandle: id });
     }
   }
 }

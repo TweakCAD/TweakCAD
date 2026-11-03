@@ -18,6 +18,7 @@
  * `plateWidth` tracks the parameter table like any other feature.
  */
 
+import { releaseShapes } from './releaseShapes.ts';
 import type {
   FeatureNode,
   PrimitiveFeatureInputs,
@@ -232,6 +233,8 @@ async function place(
 ): Promise<KernelBody> {
   if (isIdentity(transform) || !transform) return body;
   const result = await kernel.transform(body, transform);
+  // `transform` returns a new body; the one at the origin is not used again.
+  releaseShapes(kernel, [body]);
   if (!result.ok) throw new Error(`Failed to place primitive: ${result.error.message}`);
   return result.value;
 }
