@@ -18,9 +18,9 @@
  * throwing-dispose case had nothing to dispose.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { incrementalRebuild, sweepPreviousRebuild, releaseRebuildBodies, clearRebuildCache } from './rebuilder.ts';
+import { incrementalRebuild, sweepPreviousRebuild, sweepRemovedParts, releaseRebuildBodies, clearRebuildCache } from './rebuilder.ts';
 import { MockKernel } from '@tweakcad/kernel/src/mockKernel.ts';
-import { newProjectWithPart } from '@tweakcad/core/src/document/factory.ts';
+import { createPart, newProjectWithPart } from '@tweakcad/core/src/document/factory.ts';
 import type { CadPart, CadProject, FeatureNode } from '@tweakcad/core/src/document/schema.ts';
 
 function firstPart(project: CadProject): CadPart {
@@ -82,7 +82,7 @@ describe('rebuild-cycle disposal', () => {
     expect(survivors).toHaveLength(2);
 
     const freed = spyDispose(kernel);
-    sweepPreviousRebuild(kernel);
+    sweepPreviousRebuild(kernel, String(firstPart(project).id));
     for (const h of survivors) expect(freed).toContain(h);
   });
 
@@ -94,10 +94,10 @@ describe('rebuild-cycle disposal', () => {
     await incrementalRebuild(firstPart(project), project, kernel, 0);
 
     const freed = spyDispose(kernel);
-    sweepPreviousRebuild(kernel);
+    sweepPreviousRebuild(kernel, String(firstPart(project).id));
     const afterFirst = freed.length;
     expect(afterFirst).toBe(2);
-    sweepPreviousRebuild(kernel);
+    sweepPreviousRebuild(kernel, String(firstPart(project).id));
     expect(freed).toHaveLength(afterFirst);
   });
 
@@ -105,7 +105,7 @@ describe('rebuild-cycle disposal', () => {
     const kernel = new MockKernel();
     await kernel.init();
     const freed = spyDispose(kernel);
-    sweepPreviousRebuild(kernel);
+    sweepPreviousRebuild(kernel, 'part_never_built');
     expect(freed).toHaveLength(0);
   });
 
@@ -118,7 +118,7 @@ describe('rebuild-cycle disposal', () => {
 
     const dispose = vi.spyOn(kernel, 'dispose').mockImplementation(() => { throw new Error('already released'); });
     // A missed free is a leak; a thrown one would lose the user's geometry.
-    expect(() => sweepPreviousRebuild(kernel)).not.toThrow();
+    expect(() => sweepPreviousRebuild(kernel, String(firstPart(project).id))).not.toThrow();
     expect(dispose).toHaveBeenCalledTimes(2);
   });
 
@@ -148,5 +148,48 @@ describe('rebuild-cycle disposal', () => {
       { handle: { handle: 'body_b' } as never },
     ]);
     expect(freed).toEqual(['body_a', 'body_b']);
+  });
+});
+
+describe('rebuild-cycle disposal across parts', () => {
+  // One worker rebuilds every part, and the viewport shows them all at once.
+  // Rebuilding part B used to free part A's bodies, so A — still on screen —
+  // could no longer be measured.
+  async function twoParts() {
+    clearRebuildCache();
+    const kernel = new MockKernel();
+    await kernel.init();
+    const project = twoBodies();
+    const a = firstPart(project);
+    const b = createPart('B');
+    b.timeline = [box('c')];
+    project.parts[b.id] = b;
+    const builtA = await incrementalRebuild(a, project, kernel, 0);
+    const handlesA = builtA.bodies.map(x => (x.handle as { handle: string }).handle);
+    expect(handlesA).toHaveLength(2);
+    return { kernel, project, a, b, handlesA };
+  }
+
+  it("rebuilding one part leaves the other part's bodies alive", async () => {
+    const { kernel, project, b, handlesA } = await twoParts();
+    const freed = spyDispose(kernel);
+
+    sweepPreviousRebuild(kernel, String(b.id));
+    sweepRemovedParts(kernel, Object.keys(project.parts));
+    await incrementalRebuild(b, project, kernel, 0);
+
+    for (const h of handlesA) expect(freed).not.toContain(h);
+  });
+
+  it('frees the bodies of a part that left the document', async () => {
+    const { kernel, project, a, b, handlesA } = await twoParts();
+    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- id-keyed record
+    delete (project.parts as Record<string, unknown>)[String(a.id)];
+    const freed = spyDispose(kernel);
+
+    sweepPreviousRebuild(kernel, String(b.id));
+    sweepRemovedParts(kernel, Object.keys(project.parts));
+
+    for (const h of handlesA) expect(freed).toContain(h);
   });
 });

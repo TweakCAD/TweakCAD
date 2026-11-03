@@ -187,6 +187,9 @@ export type AddFailure = { failed: true; reason: string } | { failed: false; rea
  *     is the solver's degenerate "escape" from "satisfy tangent by
  *     collapsing the line".
  */
+/** The rejection reason for a previously-satisfied constraint becoming unsatisfied. */
+const BREAKS_ANOTHER = 'would break another already-satisfied constraint';
+
 export function checkAddFailure(
   candidateId: SketchConstraintId,
   result: SolveResult,
@@ -199,7 +202,7 @@ export function checkAddFailure(
   for (const cid of result.diagnostic.unsatisfied) {
     if (cid === candidateId) continue;
     if (!prevUnsatisfied.has(cid)) {
-      return { failed: true, reason: 'would break another already-satisfied constraint' };
+      return { failed: true, reason: BREAKS_ANOTHER };
     }
   }
   for (const [, g] of beforeState.geometries) {
@@ -260,18 +263,19 @@ export type ApplyConstraintPipelineResult =
  * pipeline.
  *
  * `prevUnsatisfied` is the set of constraint IDs that the solver
- * already considered unsatisfied BEFORE this add. The store maintains
- * this incrementally; the document handler should pass an empty set
- * (the document only persists committed state — if the MCP client is the
- * sole writer, anything in `constraints` was previously satisfied. If
- * the document came from an editor where unsatisfied constraints could
- * sneak in, the handler can do a baseline solve and pass the result.)
+ * already considered unsatisfied BEFORE this add, so they don't count as
+ * broken by it. Left out, it is worked out only when needed: if the add is
+ * rejected for breaking another constraint, the sketch is solved as it
+ * stands, and the add is checked again against what was already
+ * unsatisfied. Assuming an empty set instead meant that one constraint left
+ * unsatisfied — by an import, an edited dimension, a hand-edited file —
+ * got every later add in that sketch rejected as breaking it.
  */
 export function applyConstraintWithSolver(
   state: EditorState,
   constraintInput: SketchConstraintInput,
   solver: ISketchSolver,
-  prevUnsatisfied: ReadonlySet<SketchConstraintId> = new Set(),
+  prevUnsatisfied?: ReadonlySet<SketchConstraintId>,
 ): ApplyConstraintPipelineResult {
   // 1. Dedupe — caller-supplied id (if any) is honored; otherwise we
   //    don't yet allocate one (no allocation if it turns out to be a dup).
@@ -298,7 +302,14 @@ export function applyConstraintWithSolver(
     tentativeState.constraints,
     new Set(),
   );
-  let failure = checkAddFailure(candidateId, solveResult, state, prevUnsatisfied);
+  let baseline: ReadonlySet<SketchConstraintId> = prevUnsatisfied ?? new Set();
+  let failure = checkAddFailure(candidateId, solveResult, state, baseline);
+  if (failure.failed && failure.reason === BREAKS_ANOTHER && prevUnsatisfied === undefined) {
+    // Was the "broken" constraint already unsatisfied before this add?
+    baseline = solver.solve(state.points, state.geometries, state.constraints, new Set())
+      .diagnostic.unsatisfied;
+    failure = checkAddFailure(candidateId, solveResult, state, baseline);
+  }
   let usedPerturbation = false;
 
   // 4. Two-pass auto-resize.
@@ -311,7 +322,7 @@ export function applyConstraintWithSolver(
         tentativeState.constraints,
         new Set(),
       );
-      const f2 = checkAddFailure(candidateId, r2, state, prevUnsatisfied);
+      const f2 = checkAddFailure(candidateId, r2, state, baseline);
       if (!f2.failed) {
         solveResult = r2;
         failure = f2;

@@ -275,15 +275,36 @@ describe('OcctKernel — topology naming (TN-f, edges)', () => {
     expect(resolved?.bodyHandle).toBe(r.value.handle);
   });
 
-  it('resolveEdgeRef falls back to nearest-midpoint when the stable ID misses', async () => {
+  // A non-null result is not enough: on a 10 mm box several edge midpoints
+  // sit inside the 10 mm gate around any hint, so "some edge" would pass even
+  // if the nearest one were not the one picked. Check the edge's own midpoint.
+  async function fallbackMidpoint(hint: [number, number, number]): Promise<[number, number, number] | null> {
     const k = await newKernel();
     const r = await k.makeBox({ origin: [0, 0, 0], width: 10, height: 10, depth: 10 });
     if (!r.ok) throw new Error('precondition failed');
-    // The edge along Y at x=10, z=0 has midpoint (10, 5, 0).
-    const resolved = await k.resolveEdgeRef(r.value, 'se_unknown' as never, {
-      centroid: [10, 5, 0],
-    });
-    expect(resolved).not.toBeNull();
+    const resolved = await k.resolveEdgeRef(r.value, 'se_unknown' as never, { centroid: hint });
+    if (!resolved) return null;
+    const internals = k as unknown as {
+      edges: Map<string, unknown>;
+      kernel: { getLinearCenterOfMass(shape: unknown): { x: number; y: number; z: number } };
+    };
+    const com = internals.kernel.getLinearCenterOfMass(internals.edges.get(resolved.handle));
+    return [com.x, com.y, com.z];
+  }
+
+  it.each([
+    // The edge along Y at x=10, z=0.
+    [[10, 5, 0], [10, 5, 0]],
+    // Slightly off the edge along X at y=10, z=10: still that edge, not a neighbour.
+    [[5, 9, 9.5], [5, 10, 10]],
+  ] as [number, number, number][][])('resolveEdgeRef falls back to the edge nearest %j', async (hint, expected) => {
+    const midpoint = await fallbackMidpoint(hint);
+    expect(midpoint).not.toBeNull();
+    midpoint!.forEach((v, i) => expect(v).toBeCloseTo(expected[i]!, 6));
+  });
+
+  it('resolveEdgeRef finds no edge when the hint is beyond the 10 mm gate', async () => {
+    expect(await fallbackMidpoint([40, 40, 40])).toBeNull();
   });
 });
 

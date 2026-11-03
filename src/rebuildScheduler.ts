@@ -29,6 +29,7 @@ import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
 import type {
   incrementalRebuild,
   sweepPreviousRebuild,
+  sweepRemovedParts,
   releaseRebuildBodies,
 } from '@tweakcad/worker/src/rebuilder.ts';
 
@@ -48,6 +49,7 @@ let mainThreadFallback: {
   kernel: CadKernel;
   rebuild: typeof incrementalRebuild;
   sweep: typeof sweepPreviousRebuild;
+  sweepRemoved: typeof sweepRemovedParts;
   release: typeof releaseRebuildBodies;
 } | null = null;
 
@@ -59,7 +61,7 @@ async function ensureMainThreadFallback(): Promise<typeof mainThreadFallback & o
   if (mainThreadFallback) return mainThreadFallback;
 
   console.warn('[RebuildScheduler] Initializing main-thread fallback...');
-  const [{ OcctKernel }, { MockKernel }, { incrementalRebuild, sweepPreviousRebuild, releaseRebuildBodies }] = await Promise.all([
+  const [{ OcctKernel }, { MockKernel }, { incrementalRebuild, sweepPreviousRebuild, sweepRemovedParts, releaseRebuildBodies }] = await Promise.all([
     import('@tweakcad/kernel/src/occtKernel.ts'),
     import('@tweakcad/kernel/src/mockKernel.ts'),
     import('@tweakcad/worker/src/rebuilder.ts'),
@@ -79,6 +81,7 @@ async function ensureMainThreadFallback(): Promise<typeof mainThreadFallback & o
     kernel,
     rebuild: incrementalRebuild,
     sweep: sweepPreviousRebuild,
+    sweepRemoved: sweepRemovedParts,
     release: releaseRebuildBodies,
   };
   return mainThreadFallback;
@@ -247,7 +250,8 @@ async function rebuildPart(
       // Main-thread fallback
       const fallback = await ensureMainThreadFallback();
       // The previous rebuild's bodies are finished with, as in the worker.
-      fallback.sweep(fallback.kernel);
+      fallback.sweep(fallback.kernel, String(partId));
+      fallback.sweepRemoved(fallback.kernel, Object.keys(project.parts));
       const fallbackResult = await fallback.rebuild(part, project, fallback.kernel, fromIndex);
       result = {
         partId: fallbackResult.partId,
@@ -463,7 +467,7 @@ export async function exportActivePart(
   // (the display already has its meshes; nothing on the main thread holds
   // those bodies), then free this export's own bodies once it is written.
   const fallback = await ensureMainThreadFallback();
-  fallback.sweep(fallback.kernel);
+  fallback.sweep(fallback.kernel, String(partId));
   const result = await fallback.rebuild(part, project, fallback.kernel, 0);
   try {
     const bodyHandles = result.bodies.map((b) => b.handle);
