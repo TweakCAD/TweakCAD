@@ -346,7 +346,9 @@ function makeParametricSource(): CadProject {
   part.configurations = {
     active: 'small',
     rows: [
-      { id: 'small', name: 'Small', overrides: { width: '20', height: '10' } },
+      // Differs from the defaults (20 × 10), so inheriting the active row and
+      // using the defaults build different boxes.
+      { id: 'small', name: 'Small', overrides: { width: '30', height: '15' } },
       { id: 'large', name: 'Large', overrides: { width: '60', height: '30' } },
     ],
   };
@@ -398,7 +400,7 @@ async function dimensionsFor(
 describe('buildComponent — per-instance configuration', () => {
   it("uses the component's own active row when the instance picks nothing", async () => {
     expect(await dimensionsFor({ configurationId: undefined }))
-      .toEqual({ width: 20, height: 10, depth: 20 });
+      .toEqual({ width: 30, height: 15, depth: 30 });
   });
 
   it('honours the configuration the instance picked', async () => {
@@ -411,6 +413,9 @@ describe('buildComponent — per-instance configuration', () => {
   });
 
   it('lets an explicit null mean "ignore the component\'s active row"', async () => {
+    // What the dialogs save for "(use defaults)". The active row is "small"
+    // (30 × 15); defaults are 20 × 10. This used to build "small", and the
+    // test passed anyway because "small" used to equal the defaults.
     expect(await dimensionsFor({ configurationId: null }))
       .toEqual({ width: 20, height: 10, depth: 20 });
   });
@@ -428,7 +433,7 @@ describe('buildComponent — per-instance configuration', () => {
       dimensionsFor({ configurationId: 'small' }),
       dimensionsFor({ configurationId: 'large' }),
     ]);
-    expect(small.width).toBe(20);
+    expect(small.width).toBe(30);
     expect(large.width).toBe(60);
   });
 });

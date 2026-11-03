@@ -1990,7 +1990,8 @@ export function Shell({
             inputs: {
               transform: inputs.transform,
               parameterOverrides: { ...inputs.parameterOverrides },
-              configurationId: inputs.configurationId ?? null,
+              // Copied as-is: absent (inherit) and `null` (defaults) differ.
+              ...(inputs.configurationId !== undefined ? { configurationId: inputs.configurationId } : {}),
               boolean: inputs.boolean,
             },
           });

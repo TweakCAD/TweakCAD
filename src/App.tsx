@@ -466,10 +466,11 @@ export function App() {
           embeddedAt: new Date().toISOString(),
           source: pick.source,
         },
+        // No `configurationId`: the instance inherits the component's own
+        // active row (`null` would mean "use the parameter defaults").
         inputs: {
           transform: { position: [0, 0, 0], rotation: [0, 0, 0, 1] },
           parameterOverrides: {},
-          configurationId: null,
           boolean: 'newBody',
         },
       });

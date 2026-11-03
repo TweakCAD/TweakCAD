@@ -62,13 +62,13 @@ type DraftState = {
   rotation: [string, string, string];
 };
 
-const DEFAULTS_ROW_ID = '__defaults__';
+export const DEFAULTS_ROW_ID = '__defaults__';
 
 /**
  * Build the dialog's initial draft from the live feature inputs. Called
  * on open AND on Revert; never reads its own state, so it's pure.
  */
-function makeDraftFrom(
+export function makeDraftFrom(
   inputs: ComponentFeatureInputs,
   componentPart: CadPart,
 ): DraftState {
@@ -78,13 +78,12 @@ function makeDraftFrom(
   for (const [name, expr] of Object.entries(inputs.parameterOverrides ?? {})) {
     overrides[name] = String(expr);
   }
-  // Per-instance configurationId wins over the embedded component's
-  // own active row; matches the rebuilder's merge order.
+  // Per-instance configurationId wins over the embedded component's own
+  // active row; `null` is "(use defaults)", absent inherits the active row.
+  // Matches the rebuilder's merge order.
   const perInstance = inputs.configurationId;
   const embeddedActive = componentPart.configurations?.active ?? null;
-  const effectiveId = perInstance !== undefined && perInstance !== null
-    ? perInstance
-    : embeddedActive;
+  const effectiveId = perInstance === undefined ? embeddedActive : perInstance;
   const transform = inputs.transform ?? identityTransform();
   return {
     overrides,
