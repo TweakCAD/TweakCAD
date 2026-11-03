@@ -1157,11 +1157,34 @@ export type AxisSpec =
   | { type: 'z' }
   | { type: 'custom'; origin: Vec3; direction: Vec3 };
 
+/**
+ * What a picked face or edge looked like when it was picked, stored next to
+ * its stable id. On rebuild the kernel checks the entity the id resolves to
+ * against it: when that entity has changed but another one is still exactly
+ * the hinted geometry, the id has come to name something else and the ref
+ * follows the untouched one; when the id is not found at all, the closest
+ * match stands in for it (`chooseByHint` in `lib/kernel/src/repairHint.ts`).
+ * Taken from the topology map at pick time, which computes it in the kernel
+ * with the same measures the check uses.
+ *
+ * Faces: `center` and `size` of the face's bounding box, and `normal`
+ * for planar faces only. Edges: `center` (linear centre of mass),
+ * `length`, and `direction` for straight edges only. A field present in
+ * the hint must be present on the candidate, so a planar face does not match
+ * a curved one and a line does not match an arc.
+ */
 export type RepairHint = {
   geometrySignature?: string;
-  centroid?: Vec3;
+  /** Where it is: a face's bounding-box centre, an edge's centre of mass. */
+  center?: Vec3;
+  /** Unit normal of a planar face. */
   normal?: Vec3;
-  area?: number;
+  /** Diagonal of a face's bounding box. */
+  size?: number;
+  /** Unit direction of a straight edge (sign ignored when matching). */
+  direction?: Vec3;
+  /** Edge length. */
+  length?: number;
 };
 
 // --- Selection ---
@@ -1272,6 +1295,8 @@ export type TopologyMap = {
      * builders consume it via FaceRef.stableTopology.
      */
     stableFaceId?: StableFaceId;
+    /** The face's {@link RepairHint}, copied into a FaceRef when it is picked. */
+    repairHint?: RepairHint;
   }[];
   edges: {
     edgeId: EdgeId;
@@ -1279,6 +1304,8 @@ export type TopologyMap = {
     adjacentFaces: [FaceId, FaceId];
     /** Stable edge identifier — see {@link StableEdgeId}. Optional during topology-naming rollout. */
     stableEdgeId?: StableEdgeId;
+    /** The edge's {@link RepairHint}, copied into an EdgeRef when it is picked. */
+    repairHint?: RepairHint;
   }[];
 };
 

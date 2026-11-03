@@ -295,13 +295,14 @@ export interface CadKernel {
    * on the given body.
    *
    * Strategy:
-   *  1. Direct lookup via the topology tracker (constant time).
-   *  2. If 1 misses and a `repairHint` is provided, fall back to scoring
-   *     every face on the body by centroid distance / normal angle / area
-   *     similarity. The best match within all thresholds wins; otherwise
-   *     return `null`.
+   *  1. Look the id up through the topology tracker.
+   *  2. With a `repairHint` (centre, size, normal — see `repairHint.ts`):
+   *     when the face found has changed but another face is still exactly
+   *     the hinted one, the id has been renumbered onto another face and the
+   *     untouched one wins. Otherwise the id's face stands. When the id was
+   *     not found, the closest face within the hint's tolerance stands in.
    *
-   * Returns `null` if neither path finds a match.
+   * Returns `null` when the id is not found and no face matches the hint.
    */
   resolveFaceRef(
     body: KernelBody,
@@ -311,8 +312,8 @@ export interface CadKernel {
 
   /**
    * Resolve a stable edge reference back to a runtime `KernelEdge` handle.
-   * Mirrors {@link resolveFaceRef} for edges. The hint's `centroid` is
-   * interpreted as the edge midpoint when used for fallback.
+   * Mirrors {@link resolveFaceRef} for edges, matching the hint on the
+   * edge's centroid, length and (for a straight edge) direction.
    */
   resolveEdgeRef(
     body: KernelBody,

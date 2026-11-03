@@ -9,6 +9,16 @@ import type { FeatureType as FeatureTypeName } from './schema.ts';
 // --- Primitives ---
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
+
+/** `RepairHint` in schema.ts. */
+const RepairHintSchema = z.object({
+  geometrySignature: z.string().optional(),
+  center: Vec3Schema.optional(),
+  normal: Vec3Schema.optional(),
+  size: z.number().optional(),
+  direction: Vec3Schema.optional(),
+  length: z.number().optional(),
+});
 const QuaternionSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]);
 const ExpressionSchema = z.string();
 const ExpressionPairSchema = z.tuple([z.string(), z.string()]);
@@ -51,12 +61,7 @@ const PlaneRefSchema: z.ZodType = z.discriminatedUnion('type', [
     type: z.literal('stableTopology'),
     bodyRef: z.object({ partId: z.string(), bodyId: z.string() }),
     stableFaceId: z.string(),
-    repairHint: z.object({
-      geometrySignature: z.string().optional(),
-      centroid: Vec3Schema.optional(),
-      normal: Vec3Schema.optional(),
-      area: z.number().optional(),
-    }).optional(),
+    repairHint: RepairHintSchema.optional(),
   }),
 ]);
 
@@ -257,12 +262,7 @@ const FaceRefSchema: z.ZodType = z.discriminatedUnion('type', [
     type: z.literal('stableTopology'),
     bodyRef: z.object({ partId: z.string(), bodyId: z.string() }),
     stableFaceId: z.string(),
-    repairHint: z.object({
-      geometrySignature: z.string().optional(),
-      centroid: Vec3Schema.optional(),
-      normal: Vec3Schema.optional(),
-      area: z.number().optional(),
-    }).optional(),
+    repairHint: RepairHintSchema.optional(),
   }),
 ]);
 
@@ -291,12 +291,7 @@ const EdgeRefSchema: z.ZodType = z.discriminatedUnion('type', [
     type: z.literal('stableTopology'),
     bodyRef: z.object({ partId: z.string(), bodyId: z.string() }),
     stableEdgeId: z.string(),
-    repairHint: z.object({
-      geometrySignature: z.string().optional(),
-      centroid: Vec3Schema.optional(),
-      normal: Vec3Schema.optional(),
-      area: z.number().optional(),
-    }).optional(),
+    repairHint: RepairHintSchema.optional(),
   }),
 ]);
 

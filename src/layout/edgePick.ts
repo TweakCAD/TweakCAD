@@ -8,6 +8,7 @@
 
 import type { EdgeRef, Selection, TopologyMap } from '@tweakcad/core/src/document/schema.ts';
 import { faceBoundaryEdges, tangentChain } from '@tweakcad/core/src/document/edgeQueries.ts';
+import { stableEdgeRef } from '@tweakcad/core/src/document/topologyRefs.ts';
 
 export type EdgePickResult = {
   /** Refs to add, in topology order (seed first for a chain). */
@@ -40,22 +41,29 @@ export function resolveEdgePick(
   const refs: EdgeRef[] = [];
   let missingStableIds = 0;
   for (const e of edges) {
-    if (!e.stableEdgeId) { missingStableIds++; continue; }
-    refs.push({
-      type: 'stableTopology',
-      bodyRef: { partId: sel.partId, bodyId: sel.bodyId },
-      stableEdgeId: e.stableEdgeId,
-    });
+    const ref = stableEdgeRef({ partId: sel.partId, bodyId: sel.bodyId }, e);
+    if (ref) refs.push(ref);
+    else missingStableIds++;
   }
   return { refs, missingStableIds };
 }
 
+/**
+ * Identity of a ref for de-duplication: the body and stable id, not the hint,
+ * which differs when the same edge is picked again after a rebuild moved it.
+ */
+function refKey(ref: EdgeRef): string {
+  return ref.type === 'stableTopology'
+    ? `${String(ref.bodyRef.partId)}|${String(ref.bodyRef.bodyId)}|${String(ref.stableEdgeId)}`
+    : JSON.stringify(ref);
+}
+
 /** Append `add` to `current`, skipping refs already present. Returns `current` when nothing is new. */
 export function appendEdgeRefs(current: EdgeRef[], add: readonly EdgeRef[]): EdgeRef[] {
-  const seen = new Set(current.map(e => JSON.stringify(e)));
+  const seen = new Set(current.map(refKey));
   const fresh: EdgeRef[] = [];
   for (const ref of add) {
-    const key = JSON.stringify(ref);
+    const key = refKey(ref);
     if (seen.has(key)) continue;
     seen.add(key);
     fresh.push(ref);

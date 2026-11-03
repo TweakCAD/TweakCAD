@@ -59,6 +59,7 @@ import type { FilletDialogResult, FilletDialogEdgeEntry } from '../components/Fi
 import { ChamferDialog } from '../components/ChamferDialog.tsx';
 import type { ChamferDialogResult, ChamferDialogEdgeEntry } from '../components/ChamferDialog.tsx';
 import { resolveEdgePick, appendEdgeRefs } from './edgePick.ts';
+import { stableFaceRef } from '@tweakcad/core/src/document/topologyRefs.ts';
 import { ConstructionPlaneDialog } from '../components/ConstructionPlaneDialog.tsx';
 import { SectionPanel, type SectionOrientation } from '../components/SectionPanel.tsx';
 import { MovePanel, type MoveTransform } from '../components/MovePanel.tsx';
@@ -1133,6 +1134,7 @@ export function Shell({
               type: 'stableTopology',
               bodyRef: { partId, bodyId: pick.bodyId },
               stableFaceId: pick.stableFaceId,
+              ...(pick.repairHint ? { repairHint: pick.repairHint } : {}),
             };
 
     // A pending DXF import dispatches `CreateSketchFromImport` (seeds the
@@ -1545,17 +1547,14 @@ export function Shell({
       if (prevSel?.type === 'face' && prevSel.bodyId === sel.bodyId && prevSel.faceId === sel.faceId) return;
       const topo = viewportStore.getState().topologyMaps.find(t => t.bodyId === sel.bodyId);
       const face = topo?.faces.find(f => f.faceId === sel.faceId);
-      if (!face?.stableFaceId) {
+      const planeRef = face ? stableFaceRef(sel, face) : null;
+      if (!planeRef) {
         consoleLog('warn', `Face has no stable id yet (body ${sel.bodyId}); pick it again after the rebuild`, 'extrude');
         return;
       }
       const picked: ExtrudePickedFace = {
-        label: `Face ${String(face.stableFaceId).slice(-6)}`,
-        planeRef: {
-          type: 'stableTopology',
-          bodyRef: { partId: sel.partId, bodyId: sel.bodyId },
-          stableFaceId: face.stableFaceId,
-        },
+        label: `Face ${String(planeRef.stableFaceId).slice(-6)}`,
+        planeRef,
       };
       setExtrudeState(prev => (slot === 'start'
         ? { ...prev, startFace: picked, faceSlot: null }
@@ -2614,16 +2613,11 @@ export function Shell({
       const topoMaps = viewportStore.getState().topologyMaps;
       const topo = topoMaps.find(t => t.bodyId === sel.bodyId);
       const face = topo?.faces.find(f => f.faceId === sel.faceId);
-      if (!face?.stableFaceId) {
+      const ref: FaceRef | null = face ? stableFaceRef(sel, face) : null;
+      if (!ref) {
         consoleLog('warn', `Face has no stable id yet (body ${sel.bodyId}); shell ref would not survive rebuild`, 'shell');
         return;
       }
-
-      const ref: FaceRef = {
-        type: 'stableTopology',
-        bodyRef: { partId: sel.partId, bodyId: sel.bodyId },
-        stableFaceId: face.stableFaceId,
-      };
 
       setShellState(prev => {
         // Reject cross-body picks. Shell hollows ONE body — picking a
@@ -2937,16 +2931,12 @@ export function Shell({
       const topoMaps = viewportStore.getState().topologyMaps;
       const topo = topoMaps.find(t => t.bodyId === sel.bodyId);
       const face = topo?.faces.find(f => f.faceId === sel.faceId);
-      if (!face?.stableFaceId) {
+      const faceRef: FaceRef | null = face ? stableFaceRef(sel, face) : null;
+      if (!faceRef || !face) {
         consoleLog('warn', `Face has no stable id yet (body ${sel.bodyId}); construction-plane ref would not survive rebuild`, 'plane');
         return;
       }
 
-      const faceRef: FaceRef = {
-        type: 'stableTopology',
-        bodyRef: { partId: sel.partId, bodyId: sel.bodyId },
-        stableFaceId: face.stableFaceId,
-      };
       const shortId = String(face.stableFaceId).slice(-6);
       const label = `Face ${shortId}`;
       setPlaneState(prev => ({ ...prev, pickedFace: { label, faceRef } }));
@@ -3149,16 +3139,12 @@ export function Shell({
       const topoMaps = viewportStore.getState().topologyMaps;
       const topo = topoMaps.find(t => t.bodyId === sel.bodyId);
       const face = topo?.faces.find(f => f.faceId === sel.faceId);
-      if (!face?.stableFaceId) {
+      const faceRef: FaceRef | null = face ? stableFaceRef(sel, face) : null;
+      if (!faceRef || !face) {
         consoleLog('warn', `Face has no stable id yet (body ${sel.bodyId}); hole ref would not survive rebuild`, 'hole');
         return;
       }
 
-      const faceRef: FaceRef = {
-        type: 'stableTopology',
-        bodyRef: { partId: sel.partId, bodyId: sel.bodyId },
-        stableFaceId: face.stableFaceId,
-      };
       const shortId = String(face.stableFaceId).slice(-6);
       const label = `Face ${shortId}`;
       setHoleState(prev => ({ ...prev, pickedFace: { label, faceRef } }));

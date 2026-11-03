@@ -58,6 +58,7 @@ import type {
   AxisSpec,
   FeatureNode,
   BuiltBody,
+  RepairHint,
   TopologyMap,
 } from '../document/schema.ts';
 import type { PartId, FeatureId, EntityId, BodyId } from '../ids.ts';
@@ -258,22 +259,56 @@ function diffNewFeatureId(
 // ---- Tool executors --------------------------------------------------------
 
 /**
+ * The repair hints the host's last build has for one body, by stable id, so
+ * a ref made from a tool call carries one just like a ref picked in the
+ * viewport (`RepairHint`). Empty when the host exposes no build artifacts.
+ */
+async function topologyHints(
+  host: ToolHost,
+  bodyId: string,
+): Promise<{ faces: Map<string, RepairHint>; edges: Map<string, RepairHint> }> {
+  const hints = { faces: new Map<string, RepairHint>(), edges: new Map<string, RepairHint>() };
+  if (!host.getTopology) return hints;
+  let topo: TopologyMap | null;
+  try {
+    topo = asTopology(await host.getTopology(bodyId));
+  } catch {
+    return hints;
+  }
+  for (const f of topo?.faces ?? []) {
+    if (f.stableFaceId && f.repairHint) hints.faces.set(String(f.stableFaceId), f.repairHint);
+  }
+  for (const e of topo?.edges ?? []) {
+    if (e.stableEdgeId && e.repairHint) hints.edges.set(String(e.stableEdgeId), e.repairHint);
+  }
+  return hints;
+}
+
+/** `{ repairHint }` when there is one, for spreading into a ref. */
+function hintField(hint: RepairHint | undefined): { repairHint?: RepairHint } {
+  return hint ? { repairHint: hint } : {};
+}
+
+/**
  * A `{ bodyId, stableFaceId }` tool argument → a face `PlaneRef` in
  * `partId`. The worker re-resolves the face on every rebuild and fails the
  * feature if it is gone or not planar.
  */
-function parseFaceArg(
+async function parseFaceArg(
   v: unknown,
   partId: PartId,
   name: string,
-): Result<PlaneRef, ToolExecutionError> {
+  host: ToolHost,
+): Promise<Result<PlaneRef, ToolExecutionError>> {
   if (!isRecord(v) || typeof v['bodyId'] !== 'string' || typeof v['stableFaceId'] !== 'string') {
     return err(invalidInput(`\`${name}\` must be { bodyId: string, stableFaceId: string } (ids from list_bodies / list_faces)`));
   }
+  const { faces } = await topologyHints(host, v['bodyId']);
   return ok({
     type: 'stableTopology',
     bodyRef: { partId, bodyId: v['bodyId'] as BodyId },
     stableFaceId: stableFaceId(v['stableFaceId']),
+    ...hintField(faces.get(v['stableFaceId'])),
   });
 }
 
@@ -303,7 +338,7 @@ export async function executeSketchCreate(
 
   let planeRef: PlaneRef;
   if (face !== undefined) {
-    const parsed = parseFaceArg(face, partId as PartId, 'face');
+    const parsed = await parseFaceArg(face, partId as PartId, 'face', host);
     if (!parsed.ok) return parsed;
     planeRef = parsed.value;
   } else {
@@ -798,13 +833,13 @@ export async function executeFeatureExtrude(
   if (!targets.ok) return targets;
   let toFace: PlaneRef | undefined;
   if (toFaceArg !== undefined) {
-    const parsed = parseFaceArg(toFaceArg, partId, 'toFace');
+    const parsed = await parseFaceArg(toFaceArg, partId, 'toFace', host);
     if (!parsed.ok) return parsed;
     toFace = parsed.value;
   }
   let startFrom: PlaneRef | undefined;
   if (startFaceArg !== undefined) {
-    const parsed = parseFaceArg(startFaceArg, partId, 'startFace');
+    const parsed = await parseFaceArg(startFaceArg, partId, 'startFace', host);
     if (!parsed.ok) return parsed;
     startFrom = parsed.value;
   }
@@ -936,10 +971,12 @@ export async function executeFeatureFillet(
   }
 
   const bodyRef: BodyRef = { partId: partIdArg as PartId, bodyId: bodyIdArg as BodyId };
+  const { edges: edgeHints } = await topologyHints(host, bodyIdArg);
   const edges: EdgeRef[] = (edgeIdsArg as string[]).map((id) => ({
     type: 'stableTopology' as const,
     bodyRef,
     stableEdgeId: stableEdgeId(id),
+    ...hintField(edgeHints.get(id)),
   }));
   const inputs: FilletFeatureInputs = {
     edges,
@@ -995,10 +1032,12 @@ export async function executeFeatureChamfer(
   }
 
   const bodyRef: BodyRef = { partId: partIdArg as PartId, bodyId: bodyIdArg as BodyId };
+  const { edges: edgeHints } = await topologyHints(host, bodyIdArg);
   const edges: EdgeRef[] = (edgeIdsArg as string[]).map((id) => ({
     type: 'stableTopology' as const,
     bodyRef,
     stableEdgeId: stableEdgeId(id),
+    ...hintField(edgeHints.get(id)),
   }));
   const inputs: ChamferFeatureInputs = {
     edges,
@@ -1064,10 +1103,12 @@ export async function executeFeatureHole(
   }
 
   const bodyRef: BodyRef = { partId: partIdArg as PartId, bodyId: bodyIdArg as BodyId };
+  const { faces: faceHints } = await topologyHints(host, bodyIdArg);
   const face: FaceRef = {
     type: 'stableTopology',
     bodyRef,
     stableFaceId: stableFaceId(faceIdArg),
+    ...hintField(faceHints.get(faceIdArg)),
   };
 
   const inputs: HoleFeatureInputs = {
@@ -1427,10 +1468,12 @@ export async function executeFeatureShell(
   }
 
   const bodyRef: BodyRef = { partId: partIdArg as PartId, bodyId: bodyIdArg as BodyId };
+  const { faces: faceHints } = await topologyHints(host, bodyIdArg);
   const removedFaces: FaceRef[] = (faceIdsArg as string[]).map((id) => ({
     type: 'stableTopology' as const,
     bodyRef,
     stableFaceId: stableFaceId(id),
+    ...hintField(faceHints.get(id)),
   }));
 
   const inputs: ShellFeatureInputs = {

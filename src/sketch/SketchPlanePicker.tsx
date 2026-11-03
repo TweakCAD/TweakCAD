@@ -18,7 +18,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import type { ViewportController } from '@tweakcad/viewport/src/ViewportController.ts';
-import type { ConstructionPlaneDisplay, Selection } from '@tweakcad/core/src/document/schema.ts';
+import type { ConstructionPlaneDisplay, RepairHint, Selection } from '@tweakcad/core/src/document/schema.ts';
 import type { BodyId, FaceId, FeatureId, PartId, StableFaceId } from '@tweakcad/core/src/ids.ts';
 import { sketchFrameOnPlane } from '@tweakcad/core/src/sketch/facePlane.ts';
 import type { FaceSketchFrame } from '@tweakcad/core/src/sketch/facePlane.ts';
@@ -41,7 +41,7 @@ export type SketchPlaneName = 'XY' | 'XZ' | 'YZ';
 export type SketchPlanePick =
   | { kind: 'default'; name: SketchPlaneName }
   | { kind: 'construction'; featureId: FeatureId; name: string }
-  | { kind: 'face'; bodyId: BodyId; stableFaceId: StableFaceId; frame: FaceSketchFrame };
+  | { kind: 'face'; bodyId: BodyId; stableFaceId: StableFaceId; repairHint?: RepairHint; frame: FaceSketchFrame };
 
 /** The body face under the cursor, as the picker tracks it. */
 type FaceHover = {
@@ -403,6 +403,7 @@ function pickTarget(
           kind: 'face' as const,
           bodyId: hit.bodyId,
           stableFaceId: hit.stableFaceId,
+          ...(hit.repairHint ? { repairHint: hit.repairHint } : {}),
           frame: sketchFrameOnPlane(hit.plane.normal, hit.plane.point),
         }
       : null;
