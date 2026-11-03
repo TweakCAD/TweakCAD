@@ -134,7 +134,8 @@ export type FeatureStatus =
   | { state: 'suppressed' };
 
 export type FeatureError = {
-  category: 'geometry' | 'reference' | 'parameter' | 'kernel';
+  /** `document`: the feature node itself is malformed (a field it must have is missing). */
+  category: 'geometry' | 'reference' | 'parameter' | 'kernel' | 'document';
   code: string;
   message: string;
   suggestion?: string;
