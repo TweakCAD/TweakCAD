@@ -263,7 +263,25 @@ export async function incrementalRebuild(
   // Walk the timeline from startIndex
   for (let i = startIndex; i < part.timeline.length; i++) {
     const feature = part.timeline[i];
-    if (!feature) continue;
+    // A timeline entry that is not an object at all is skipped, as the loader
+    // says it will be.
+    if (!feature || typeof feature !== 'object') continue;
+
+    // A node missing a field the walk reads fails on its own. The loader
+    // accepts such a node with a diagnostic (one bad feature must not cost
+    // the rest of the document), but `feature.dependsOn.find` below used to
+    // throw outside the per-feature try and abort the whole part's rebuild.
+    const malformed = malformedFeatureReason(feature);
+    if (malformed) {
+      failedIds.add(feature.id);
+      featureResults.push({
+        featureId: feature.id,
+        status: 'failed',
+        error: { category: 'document', code: 'MALFORMED_FEATURE', message: malformed },
+      });
+      diagnostics.push(`Feature malformed: ${feature.name} (${feature.id}) - ${malformed}`);
+      continue;
+    }
 
     // Suppressed features. Tracked in suppressedIds so downstream
     // features that reference them (via dependsOn OR via a BodyRef in
@@ -528,6 +546,23 @@ export async function incrementalRebuild(
     bodyToFeatureMap,
     diagnostics,
   };
+}
+
+/**
+ * Why a timeline node cannot be walked, or null if it can. Checks only the
+ * fields the walk itself reads before handing the node to its builder —
+ * whether the inputs make sense is the builder's call, and it fails the
+ * feature with its own message when they don't.
+ */
+function malformedFeatureReason(feature: FeatureNode): string | null {
+  const node = feature as unknown as Record<string, unknown>;
+  const missing: string[] = [];
+  if (typeof node['type'] !== 'string') missing.push('type');
+  if (typeof node['enabled'] !== 'boolean') missing.push('enabled');
+  if (!Array.isArray(node['dependsOn'])) missing.push('dependsOn');
+  if (typeof node['inputs'] !== 'object' || node['inputs'] === null) missing.push('inputs');
+  if (missing.length === 0) return null;
+  return `This feature is malformed and was not built: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} missing or invalid.`;
 }
 
 /**

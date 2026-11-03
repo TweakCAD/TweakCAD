@@ -196,9 +196,14 @@ export function loadCadDocument(input: unknown): Result<LoadedDocument, LoadErro
           partId,
           featureId,
           featureType,
+          // "May fail", not "will not rebuild": the node is kept and its
+          // builder still runs. A node missing a field the rebuild walk
+          // itself needs fails on its own (MALFORMED_FEATURE); one whose
+          // inputs are merely off-schema fails or not at its builder's call.
+          // The rest of the part builds either way.
           message:
             `Feature "${featureId}" (${featureType}) has unreadable inputs and ` +
-            `will not rebuild: ` +
+            `may fail to rebuild: ` +
             check.error.issues
               .slice(0, 3)
               .map(i => `${i.path.join('.')} ${i.message}`)
