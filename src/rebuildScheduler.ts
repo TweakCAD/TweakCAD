@@ -26,7 +26,11 @@ import type { MeasureTarget, MeasureResult } from '@tweakcad/worker/src/protocol
 import type { WorkerRebuildResult } from '@tweakcad/worker/src/cadWorker.ts';
 import type { AppState } from './appInit.ts';
 import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
-import type { incrementalRebuild } from '@tweakcad/worker/src/rebuilder.ts';
+import type {
+  incrementalRebuild,
+  sweepPreviousRebuild,
+  releaseRebuildBodies,
+} from '@tweakcad/worker/src/rebuilder.ts';
 
 // ---- State ----
 
@@ -35,10 +39,16 @@ let useWorker = true;
 /** Unsubscribes the dirty-feature listener `initRebuildScheduler` registered. */
 let stopListening: (() => void) | null = null;
 
-// Fallback: main-thread kernel + rebuilder (lazy loaded only if worker fails)
+// Fallback: main-thread kernel + rebuilder (lazy loaded only if worker fails).
+// It frees bodies the way the worker does — `sweep` before each rebuild,
+// `release` after an export. Without them every fallback rebuild kept its
+// bodies forever, and the usual reason to be in fallback mode at all is that
+// the worker ran out of memory.
 let mainThreadFallback: {
   kernel: CadKernel;
   rebuild: typeof incrementalRebuild;
+  sweep: typeof sweepPreviousRebuild;
+  release: typeof releaseRebuildBodies;
 } | null = null;
 
 /**
@@ -49,7 +59,7 @@ async function ensureMainThreadFallback(): Promise<typeof mainThreadFallback & o
   if (mainThreadFallback) return mainThreadFallback;
 
   console.warn('[RebuildScheduler] Initializing main-thread fallback...');
-  const [{ OcctKernel }, { MockKernel }, { incrementalRebuild }] = await Promise.all([
+  const [{ OcctKernel }, { MockKernel }, { incrementalRebuild, sweepPreviousRebuild, releaseRebuildBodies }] = await Promise.all([
     import('@tweakcad/kernel/src/occtKernel.ts'),
     import('@tweakcad/kernel/src/mockKernel.ts'),
     import('@tweakcad/worker/src/rebuilder.ts'),
@@ -65,7 +75,12 @@ async function ensureMainThreadFallback(): Promise<typeof mainThreadFallback & o
     await kernel.init();
   }
 
-  mainThreadFallback = { kernel, rebuild: incrementalRebuild };
+  mainThreadFallback = {
+    kernel,
+    rebuild: incrementalRebuild,
+    sweep: sweepPreviousRebuild,
+    release: releaseRebuildBodies,
+  };
   return mainThreadFallback;
 }
 
@@ -231,6 +246,8 @@ async function rebuildPart(
     } else {
       // Main-thread fallback
       const fallback = await ensureMainThreadFallback();
+      // The previous rebuild's bodies are finished with, as in the worker.
+      fallback.sweep(fallback.kernel);
       const fallbackResult = await fallback.rebuild(part, project, fallback.kernel, fromIndex);
       result = {
         partId: fallbackResult.partId,
@@ -440,16 +457,26 @@ export async function exportActivePart(
 
   // Main-thread fallback. We need to rebuild on the fallback kernel so
   // the body handles match what the kernel's export call expects.
+  //
+  // One kernel serves both display rebuilds and exports here, and a rebuild
+  // records its bodies as the ones the next sweep frees — so sweep first
+  // (the display already has its meshes; nothing on the main thread holds
+  // those bodies), then free this export's own bodies once it is written.
   const fallback = await ensureMainThreadFallback();
+  fallback.sweep(fallback.kernel);
   const result = await fallback.rebuild(part, project, fallback.kernel, 0);
-  const bodyHandles = result.bodies.map((b) => b.handle);
-  if (bodyHandles.length === 0) return new ArrayBuffer(0);
-  let blob: Blob;
-  if (format === 'stl') blob = await fallback.kernel.exportStl(bodyHandles);
-  else if (format === 'step') blob = await fallback.kernel.exportStep(bodyHandles);
-  else if (format === 'brep') blob = await fallback.kernel.exportBrep(bodyHandles);
-  else blob = await fallback.kernel.export3MF(bodyHandles, { name: part.name });
-  return blob.arrayBuffer();
+  try {
+    const bodyHandles = result.bodies.map((b) => b.handle);
+    if (bodyHandles.length === 0) return new ArrayBuffer(0);
+    let blob: Blob;
+    if (format === 'stl') blob = await fallback.kernel.exportStl(bodyHandles);
+    else if (format === 'step') blob = await fallback.kernel.exportStep(bodyHandles);
+    else if (format === 'brep') blob = await fallback.kernel.exportBrep(bodyHandles);
+    else blob = await fallback.kernel.export3MF(bodyHandles, { name: part.name });
+    return await blob.arrayBuffer();
+  } finally {
+    fallback.release(fallback.kernel, result.bodies);
+  }
 }
 
 /**

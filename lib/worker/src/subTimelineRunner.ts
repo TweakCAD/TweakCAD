@@ -28,6 +28,7 @@ import type {
 import { resolveAllParameters } from '@tweakcad/core/src/parameters/evaluator.ts';
 import { applyActiveConfiguration } from '@tweakcad/core/src/commands/handlers/configurationCommands.ts';
 import { emptyBuildContext } from '@tweakcad/core/src/features/contracts.ts';
+import { releaseShapes } from './featureBuilders/releaseShapes.ts';
 import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
 import type { KernelBody } from '@tweakcad/kernel/src/types.ts';
 import { buildSketch } from './featureBuilders/buildSketch.ts';
@@ -95,6 +96,7 @@ export async function runSubTimeline(
   for (const feature of part.timeline) {
     if (!feature.enabled) continue;
     try {
+      const handlesBefore = new Map(context.bodies);
       const result = await dispatchFeatureBuilder(feature, params, context, kernel, project, visited);
       for (const body of result.bodies) {
         context.bodies.set(body.bodyId, body.handle);
@@ -102,8 +104,14 @@ export async function runSubTimeline(
       if (result.outputs) {
         context.featureOutputs.set(feature.id, result.outputs);
       }
+      // Same sweep as the top-level rebuild: a body a later feature in the
+      // component consumed is not one of the component's bodies.
+      releaseOrphanedBodies(kernel, handlesBefore, context);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      // The component fails as a whole, so none of what it built so far is
+      // published.
+      releaseShapes(kernel, context.bodies.values() as Iterable<KernelBody>);
       return {
         bodies: [],
         error: `feature "${feature.name}" (${feature.type}) failed: ${message}`,
@@ -112,6 +120,36 @@ export async function runSubTimeline(
   }
 
   return { bodies: Array.from(context.bodies.values()) as KernelBody[] };
+}
+
+/**
+ * Free the bodies a feature orphaned, given the build context's id → handle
+ * map from before it ran.
+ *
+ * A builder that consumes a body (fillet, chamfer, a join/cut extrude)
+ * deletes it from `context.bodies` — or rebinds the same id to a new handle —
+ * but never releases the old shape, so it stays in the WASM heap for the
+ * worker's lifetime. On a large mesh that is tens of MB per rebuild.
+ *
+ * A handle is orphaned when its id is gone from the context, or still present
+ * but now pointing at a different handle. Either way nothing can reach it:
+ * downstream features resolve bodies by id, and the builder has already
+ * consumed it to produce its replacement (including any stable-id
+ * propagation, which happens inside the kernel call). Used by both the
+ * top-level rebuild and component sub-builds.
+ */
+export function releaseOrphanedBodies(
+  kernel: CadKernel,
+  before: ReadonlyMap<unknown, unknown>,
+  context: BuildContext,
+): void {
+  const orphaned: KernelBody[] = [];
+  for (const [bid, handle] of before) {
+    // `BuildContext.bodies` stores handles opaquely; every producer puts a
+    // KernelBody in.
+    if (context.bodies.get(bid as never) !== handle) orphaned.push(handle as KernelBody);
+  }
+  releaseShapes(kernel, orphaned);
 }
 
 /**

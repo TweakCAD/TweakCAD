@@ -82,9 +82,12 @@ describe('cutTouchingBodies — all or nothing', () => {
 
     expect(context.bodies.get(A)).toBe(a);
     expect(context.bodies.get(B)).toBe(b);
-    // The first cut's result is freed, not leaked; the originals are not.
-    expect(disposed).toHaveLength(1);
+    // The first cut's result and the spent tool are freed, not leaked; the
+    // candidates are not.
+    expect(disposed).toHaveLength(2);
+    expect(disposed).toContain(String(tool.handle));
     expect(disposed).not.toContain(String(a.handle));
+    expect(disposed).not.toContain(String(b.handle));
   });
 
   it('releases the result of a cut that removed nothing', async () => {
@@ -120,9 +123,11 @@ describe('cutTouchingBodies — all or nothing', () => {
     expect(out.map((o) => String(o.bodyId))).toEqual([String(A)]);
     expect(context.bodies.has(A)).toBe(false);
     expect(context.bodies.get(B)).toBe(b);
-    // B's unchanged cut result was freed rather than leaked.
-    expect(disposed).toHaveLength(1);
-    expect(cutResults).toContain(disposed[0]);
+    // B's unchanged cut result was freed rather than leaked, and so was the
+    // spent tool.
+    expect(disposed).toHaveLength(2);
+    expect(disposed).toContain(String(tool.handle));
+    expect(cutResults.filter((h) => disposed.includes(h))).toHaveLength(1);
   });
 });
 
@@ -157,7 +162,11 @@ describe('joinTouchingBodies — all or nothing', () => {
 
     expect(context.bodies.get(A)).toBe(a);
     expect(context.bodies.get(B)).toBe(b);
-    expect(disposed).toHaveLength(1); // the first group's fused result
+    // The first group's fused result and both tools; neither candidate.
+    expect(disposed).toHaveLength(3);
+    expect(disposed).toEqual(expect.arrayContaining([String(toolA.handle), String(toolB.handle)]));
+    expect(disposed).not.toContain(String(a.handle));
+    expect(disposed).not.toContain(String(b.handle));
   });
 });
 

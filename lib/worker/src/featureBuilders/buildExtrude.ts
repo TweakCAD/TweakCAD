@@ -8,11 +8,12 @@
  * 3. If any profile fails to resolve, the entire feature fails
  */
 
+import { releaseShapes } from './releaseShapes.ts';
 import type { FeatureNode, ExtrudeFeatureInputs, ProfileRef } from '@tweakcad/core/src/document/schema.ts';
 import type { ResolvedParams } from '@tweakcad/core/src/expressions.ts';
 import { evaluateExpression } from '@tweakcad/core/src/expressions.ts';
 import { mintBodyId } from './bodyIdentity.ts';
-import { selectTargetCandidates, joinTouchingBodies, cutTouchingBodies } from './bodyOperation.ts';
+import { selectTargetCandidates, joinTouchingBodies, cutTouchingBodies, releaseUnusedTools } from './bodyOperation.ts';
 import type { EmittedBody } from './bodyOperation.ts';
 import type { FeatureId, BodyId } from '@tweakcad/core/src/ids.ts';
 import type { Vec3 } from '@tweakcad/core/src/math.ts';
@@ -161,38 +162,47 @@ export async function buildExtrude(
   // where each profile emitted its own copy of "previous-state ∪ profile".
   const profileBodies: KernelBody[] = [];
   let profileIndex = 0;
-  for (const profile of holedProfiles) {
-    // Apply offset, then back-shift by half-distance for symmetric so
-    // the body straddles the sketch plane.
-    let shifted = profile;
-    if (startShift !== 0) shifted = offsetProfile(shifted, startShift);
-    if (isSymmetric) shifted = offsetProfile(shifted, -distance / 2);
+  try {
+    for (const profile of holedProfiles) {
+      // Apply offset, then back-shift by half-distance for symmetric so
+      // the body straddles the sketch plane.
+      let shifted = profile;
+      if (startShift !== 0) shifted = offsetProfile(shifted, startShift);
+      if (isSymmetric) shifted = offsetProfile(shifted, -distance / 2);
 
-    const faceResult = await kernel.createSketchFace(shifted);
-    if (!faceResult.ok) {
-      throw new Error(`Failed to create sketch face: ${faceResult.error.message}`);
+      const faceResult = await kernel.createSketchFace(shifted);
+      if (!faceResult.ok) {
+        throw new Error(`Failed to create sketch face: ${faceResult.error.message}`);
+      }
+
+      // Extrusion vector = shared extrudeAxis × magnitude. extrudeAxis
+      // already encodes direction (normal / reversed / custom / symmetric).
+      const vector: Vec3 = [
+        extrudeAxis[0] * distance,
+        extrudeAxis[1] * distance,
+        extrudeAxis[2] * distance,
+      ];
+
+      // `node.id` is forwarded as the topology-tracker origin so stable
+      // face/edge IDs are deterministic per feature. Multi-face extrudes
+      // use a per-face suffix so each face gets a unique tag.
+      const extrudeOrigin = holedProfiles.length > 1
+        ? `${node.id}_${profileIndex}`
+        : node.id;
+      const bodyResult = await kernel.extrudeFace(faceResult.value, vector, extrudeOrigin);
+      // The sketch face has done its job; it belongs to no body, so nothing
+      // else would ever free it.
+      releaseShapes(kernel, [faceResult.value]);
+      if (!bodyResult.ok) {
+        throw new Error(`Failed to extrude face: ${bodyResult.error.message}`);
+      }
+      profileBodies.push(bodyResult.value);
+      profileIndex++;
     }
-
-    // Extrusion vector = shared extrudeAxis × magnitude. extrudeAxis
-    // already encodes direction (normal / reversed / custom / symmetric).
-    const vector: Vec3 = [
-      extrudeAxis[0] * distance,
-      extrudeAxis[1] * distance,
-      extrudeAxis[2] * distance,
-    ];
-
-    // `node.id` is forwarded as the topology-tracker origin so stable
-    // face/edge IDs are deterministic per feature. Multi-face extrudes
-    // use a per-face suffix so each face gets a unique tag.
-    const extrudeOrigin = holedProfiles.length > 1
-      ? `${node.id}_${profileIndex}`
-      : node.id;
-    const bodyResult = await kernel.extrudeFace(faceResult.value, vector, extrudeOrigin);
-    if (!bodyResult.ok) {
-      throw new Error(`Failed to extrude face: ${bodyResult.error.message}`);
-    }
-    profileBodies.push(bodyResult.value);
-    profileIndex++;
+  } catch (error) {
+    // A later profile failed: the solids already made are not going anywhere.
+    releaseShapes(kernel, profileBodies);
+    throw error;
   }
 
   if (profileBodies.length === 0) {
@@ -232,6 +242,8 @@ export async function buildExtrude(
     allBodies = await cutTouchingBodies(operands);
   } else {
     allBodies = await newBodies(profileBodies);
+    // Several profiles fuse into one body; the separate solids are spent.
+    releaseUnusedTools(kernel, profileBodies, allBodies);
   }
 
   return {

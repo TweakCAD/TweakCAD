@@ -20,6 +20,7 @@ import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
 import type { KernelBody } from '@tweakcad/kernel/src/types.ts';
 import type { BuildContext } from '@tweakcad/core/src/features/contracts.ts';
 import { carryBodyId } from './bodyIdentity.ts';
+import { releaseShapes } from './releaseShapes.ts';
 
 /** Bodies closer than this (mm) count as touching. */
 const TOUCH_TOLERANCE_MM = 1e-6;
@@ -64,8 +65,29 @@ async function touches(kernel: CadKernel, a: KernelBody, b: KernelBody): Promise
  *
  * All or nothing: the consumed candidates leave the build context only once
  * every group has fused (see {@link commitConsumed}).
+ *
+ * The tools are this call's to free: a tool fused into a body is consumed,
+ * and only one `newBodies` publishes as-is survives (see
+ * {@link releaseUnusedTools}).
  */
 export async function joinTouchingBodies(opts: {
+  tools: KernelBody[];
+  candidates: [BodyId, KernelBody][];
+  context: BuildContext;
+  kernel: CadKernel;
+  explicitTargets: boolean;
+  newBodies: (tools: KernelBody[]) => Promise<EmittedBody[]>;
+}): Promise<EmittedBody[]> {
+  let emitted: EmittedBody[] = [];
+  try {
+    emitted = await joinBodies(opts);
+    return emitted;
+  } finally {
+    releaseUnusedTools(opts.kernel, opts.tools, emitted);
+  }
+}
+
+async function joinBodies(opts: {
   tools: KernelBody[];
   candidates: [BodyId, KernelBody][];
   context: BuildContext;
@@ -175,13 +197,26 @@ function commitConsumed(context: BuildContext, consumed: readonly BodyId[]): voi
 
 /** Free result shapes an operation produced but will not return. */
 function release(kernel: CadKernel, handles: readonly KernelBody[]): void {
-  for (const handle of handles) {
-    try {
-      kernel.dispose(handle);
-    } catch (e) {
-      console.warn('[bodyOperation] Failed to release an unused result:', e);
-    }
-  }
+  releaseShapes(kernel, handles);
+}
+
+/**
+ * Free the tool solids an operation did not publish as bodies.
+ *
+ * A tool is the solid a feature made to combine — an extruded profile, a
+ * placed primitive. Fused into a target or subtracted from one, it is
+ * consumed; merged with other tools into one new body, it is too. Only a tool
+ * published as-is (a join that touched nothing, under its own id) lives on.
+ * The tools never enter the build context, so the rebuilder's orphan sweep
+ * cannot see them, and every rebuild used to leave each one in the arena.
+ */
+export function releaseUnusedTools(
+  kernel: CadKernel,
+  tools: readonly KernelBody[],
+  emitted: readonly EmittedBody[],
+): void {
+  const kept = new Set(emitted.map(b => b.handle));
+  releaseShapes(kernel, tools.filter(t => !kept.has(t)));
 }
 
 /**
@@ -191,8 +226,25 @@ function release(kernel: CadKernel, handles: readonly KernelBody[]): void {
  *
  * All or nothing: the cut candidates leave the build context only once every
  * cut has succeeded (see {@link commitConsumed}).
+ *
+ * The tools are consumed either way and freed here (see
+ * {@link releaseUnusedTools}).
  */
 export async function cutTouchingBodies(opts: {
+  tools: KernelBody[];
+  candidates: [BodyId, KernelBody][];
+  context: BuildContext;
+  kernel: CadKernel;
+  explicitTargets: boolean;
+}): Promise<EmittedBody[]> {
+  try {
+    return await cutBodies(opts);
+  } finally {
+    releaseUnusedTools(opts.kernel, opts.tools, []);
+  }
+}
+
+async function cutBodies(opts: {
   tools: KernelBody[];
   candidates: [BodyId, KernelBody][];
   context: BuildContext;
