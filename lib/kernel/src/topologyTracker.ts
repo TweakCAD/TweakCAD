@@ -20,7 +20,9 @@
  * rebuild bridge between runtime handles and stable IDs. It is NOT itself
  * the stable ID — hashes change when geometry changes.
  *
- * Scope: faces only for now. Edge tracking mirrors this same shape.
+ * Edges follow the same shape: hash-match, then the edge history the
+ * `*WithHistory` ops report (`EvolutionData.edgeModified`), then a
+ * walk-index id.
  */
 
 import type { StableFaceId, StableEdgeId } from '@tweakcad/core/src/ids.ts';
@@ -86,9 +88,9 @@ function compareKeys(a: readonly number[], b: readonly number[]): number {
  * sub-shape at walk index `i`. When several sub-shapes share an ID (a face
  * split into pieces, or two ops minting the same walk-index ID), one keeps
  * it and the rest become `<id>:1`, `<id>:2`, … skipping any suffix another
- * sub-shape already carries. The keeper is the first inherited ID (not
- * marked `fresh`) — refs may already point at it — then the first by
- * `order`, then by walk index.
+ * sub-shape already carries. The keeper is the first by `rank` (compared
+ * lexicographically, ascending), then by walk index. Callers rank inherited
+ * IDs before minted ones, since refs may already point at them.
  *
  * Without this, the reverse lookup in `resolveStableFaceId` returns
  * whichever duplicate it meets first, so an ID reported for one face can
@@ -98,8 +100,7 @@ function makeUnique<T extends string>(
   hashes: number[],
   ids: T[],
   brand: (raw: string) => T,
-  fresh: boolean[],
-  order?: ElementOrderKey,
+  rank: ElementOrderKey,
 ): Map<number, T> {
   const groups = new Map<T, number[]>();
   ids.forEach((id, i) => {
@@ -112,7 +113,7 @@ function makeUnique<T extends string>(
   for (const [id, members] of groups) {
     if (members.length < 2) continue;
     const ranked = members
-      .map(i => ({ i, key: [fresh[i] ? 1 : 0, ...(order ? order(i) : [])] }))
+      .map(i => ({ i, key: rank(i) }))
       .sort((a, b) => compareKeys(a.key, b.key) || a.i - b.i)
       .map(m => m.i);
     let suffix = 1;
@@ -152,6 +153,11 @@ function* decodeRunLength(encoded: number[]): Generator<[number, number[]]> {
   }
 }
 
+/** Rank inherited IDs (`fresh[i]` false) before minted ones, then by `order`. */
+function freshThenOrder(fresh: boolean[], order?: ElementOrderKey): ElementOrderKey {
+  return i => [fresh[i] ? 1 : 0, ...(order ? order(i) : [])];
+}
+
 /**
  * Evolution payload accepted by {@link ShapeEvolutionTracker.recordEvolution}.
  * Structural mirror of `EvolutionData` from `occt-wasm`, but reshaped so the
@@ -177,6 +183,16 @@ export type EvolutionRecord = {
   generated: number[];
   /** Flat list of input face hashes that no longer exist in the result. */
   deleted: number[];
+};
+
+/**
+ * Edge history accepted by {@link ShapeEvolutionTracker.recordEdgeEvolution}:
+ * `EvolutionData.edgeModified` from occt-wasm, run-length encoded like
+ * {@link EvolutionRecord.modified} — each input edge followed by the result
+ * edges it became (one when trimmed, several when split).
+ */
+export type EdgeEvolutionRecord = {
+  modified: number[];
 };
 
 export class ShapeEvolutionTracker {
@@ -258,7 +274,7 @@ export class ShapeEvolutionTracker {
       resultFaceHashes,
       faceIds,
       stableFaceId,
-      inherited.map(id => id === undefined),
+      freshThenOrder(inherited.map(id => id === undefined)),
     );
     this.bodies.set(resultBodyHandle, {
       faceHashToStable,
@@ -294,8 +310,8 @@ export class ShapeEvolutionTracker {
    * `order` (the kernel passes largest area first) and suffixes the rest
    * `:1`, `:2`, … so every ID names exactly one face.
    *
-   * Edges are NOT touched here — `EvolutionData` is face-only on the
-   * occt-wasm facade. Callers follow up with {@link recordEdgeEvolution}.
+   * Edges are not touched here; callers follow up with
+   * {@link recordEdgeEvolution}.
    *
    * @param resultBodyHandle - kernel handle of the new result body.
    * @param inputBodyHandles - kernel handles of input bodies fed into op.
@@ -349,12 +365,11 @@ export class ShapeEvolutionTracker {
       resultFaceHashes,
       faceIds,
       stableFaceId,
-      resultFaceHashes.map(h => minted.has(h) || !assigned.has(h)),
-      order,
+      freshThenOrder(resultFaceHashes.map(h => minted.has(h) || !assigned.has(h)), order),
     );
 
-    // Edges are not in EvolutionData — keep the existing per-body edge
-    // map here; the caller follows up with recordEdgeEvolution().
+    // Keep the existing per-body edge map here; the caller follows up with
+    // recordEdgeEvolution().
     const existing = this.bodies.get(resultBodyHandle);
     this.bodies.set(resultBodyHandle, {
       faceHashToStable,
@@ -379,25 +394,71 @@ export class ShapeEvolutionTracker {
   }
 
   /**
-   * Propagate ONLY the edge hash-to-stable map for a result body, given
-   * inputs to copy from + the result body's edge hashes. Companion to
-   * {@link recordEvolution} since `EvolutionData` is face-only.
+   * Propagate stable edge IDs through an operation, companion to
+   * {@link recordEvolution}. Each result edge takes the first of:
+   * 1. **Hash-match** — its TShape survived the op, so it *is* that input
+   *    edge and keeps its ID.
+   * 2. **`edges.modified`** — OCCT says an input edge became this one: an
+   *    edge a boolean trimmed, or an edge of a transformed copy. It keeps
+   *    the input's ID, so it is not renamed by walk order when an unrelated
+   *    edit adds or removes edges elsewhere in the result.
+   * 3. **Walk index** — `se_<origin>_<n>`: edges the op created (a
+   *    boolean's section edges, a fillet's boundary edges).
    *
-   * Same hash-match logic as the face fallback in {@link propagateIds},
-   * carved into its own method so the kernel can call edges-only after
-   * the face-history pass.
+   * When several result edges end up with one ID (an edge split into
+   * pieces, or a copy fused back onto its source), the bare ID stays on the
+   * first by: survived over modified over minted, then the operand it came
+   * from (the first operand of a boolean keeps its names), then `order`.
+   *
+   * @param edges - edge history from the `*WithHistory` call; without it,
+   *   only hash-match applies.
+   * @param order - sort key per result walk index for those ties. The
+   *   kernel passes longest first, then by position.
    */
   recordEdgeEvolution(
     resultBodyHandle: string,
     inputBodyHandles: string[],
     resultEdgeHashes: number[],
     origin: string,
+    edges?: EdgeEvolutionRecord,
+    order?: ElementOrderKey,
   ): void {
+    const resultEdges = new Set(resultEdgeHashes);
+    const assigned = new Map<number, { id: StableEdgeId; how: number; input: number }>();
+    for (const h of resultEdgeHashes) {
+      const found = this.findInputEdge(inputBodyHandles, h);
+      if (found) assigned.set(h, { ...found, how: 0 });
+    }
+    for (const [inputHash, resultHashes] of decodeRunLength(edges?.modified ?? [])) {
+      const found = this.findInputEdge(inputBodyHandles, inputHash);
+      if (!found) continue;
+      for (const rh of resultHashes) {
+        if (resultEdges.has(rh) && !assigned.has(rh)) assigned.set(rh, { ...found, how: 1 });
+      }
+    }
+    const ids = resultEdgeHashes.map((h, i) => assigned.get(h)?.id ?? indexedEdgeStableId(origin, i));
+    const rank: ElementOrderKey = i => {
+      const hash = resultEdgeHashes[i];
+      const a = hash === undefined ? undefined : assigned.get(hash);
+      return [a?.how ?? 2, a?.input ?? 0, ...(order ? order(i) : [])];
+    };
     const existing = this.bodies.get(resultBodyHandle);
     this.bodies.set(resultBodyHandle, {
       faceHashToStable: existing?.faceHashToStable ?? new Map<number, StableFaceId>(),
-      edgeHashToStable: this.edgeIdsByHashMatch(inputBodyHandles, resultEdgeHashes, origin),
+      edgeHashToStable: makeUnique(resultEdgeHashes, ids, stableEdgeId, rank),
     });
+  }
+
+  /** The stable ID of an input edge, and which input body (by position) it is on. */
+  private findInputEdge(
+    inputBodyHandles: string[],
+    edgeHash: number,
+  ): { id: StableEdgeId; input: number } | undefined {
+    for (const [input, handle] of inputBodyHandles.entries()) {
+      const id = this.bodies.get(handle)?.edgeHashToStable.get(edgeHash);
+      if (id !== undefined) return { id, input };
+    }
+    return undefined;
   }
 
   /**
@@ -421,7 +482,7 @@ export class ShapeEvolutionTracker {
       resultEdgeHashes,
       inherited.map((id, i) => id ?? indexedEdgeStableId(origin, i)),
       stableEdgeId,
-      inherited.map(id => id === undefined),
+      freshThenOrder(inherited.map(id => id === undefined)),
     );
   }
 

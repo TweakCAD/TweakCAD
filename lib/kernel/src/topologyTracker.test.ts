@@ -334,9 +334,9 @@ describe('ShapeEvolutionTracker.recordEvolution', () => {
 
 describe('ShapeEvolutionTracker.recordEdgeEvolution', () => {
   /**
-   * Edge history isn't part of occt-wasm's EvolutionData (face-only).
-   * recordEdgeEvolution is the hash-match companion the kernel calls
-   * after recordEvolution so the result body's edge map gets populated.
+   * The kernel calls recordEdgeEvolution after recordEvolution so the
+   * result body's edge map gets populated: hash-match first, then the
+   * edge history (edgeModified), then walk-index IDs.
    */
   it('copies edge IDs from input bodies via hash-match', () => {
     const tracker = new ShapeEvolutionTracker();
@@ -379,5 +379,69 @@ describe('ShapeEvolutionTracker — edge IDs stay unique per body', () => {
     tracker.recordEdgeEvolution('step2', ['step1'], [88, 77], 'fuse');
     expect(tracker.getStableEdgeId('step2', 77)).toBe('se_fuse_0');
     expect(tracker.getStableEdgeId('step2', 88)).toBe('se_fuse_0:1');
+  });
+});
+
+describe('ShapeEvolutionTracker.recordEdgeEvolution with edge history', () => {
+  const noFaces = { modified: [], generated: [], deleted: [] };
+
+  function setup() {
+    const tracker = new ShapeEvolutionTracker();
+    tracker.registerFreshBody('a', [100], [10, 20, 30], 'a');
+    tracker.registerFreshBody('b', [200], [40, 50], 'b');
+    tracker.recordEvolution('result', ['a', 'b'], [100], noFaces, 'fuse');
+    return tracker;
+  }
+
+  it('gives an edge the op trimmed the ID of the edge it was', () => {
+    const tracker = setup();
+    // Input edge 20 (se_a_1) came out of the fuse as edge 21.
+    tracker.recordEdgeEvolution('result', ['a', 'b'], [10, 21, 99], 'fuse', { modified: [20, 1, 21] });
+
+    expect(tracker.getStableEdgeId('result', 10)).toBe('se_a_0');
+    expect(tracker.getStableEdgeId('result', 21)).toBe('se_a_1');
+    expect(tracker.getStableEdgeId('result', 99)).toBe('se_fuse_2');
+  });
+
+  it('keeps the bare ID on the first piece of a split edge by order, suffixing the rest', () => {
+    const tracker = setup();
+    const lengths: Record<number, number> = { 0: 5, 1: 25 };
+    tracker.recordEdgeEvolution('result', ['a', 'b'], [22, 23], 'fuse', { modified: [20, 2, 22, 23] }, i => [-lengths[i]!]);
+
+    expect(tracker.getStableEdgeId('result', 23)).toBe('se_a_1');
+    expect(tracker.getStableEdgeId('result', 22)).toBe('se_a_1:1');
+  });
+
+  it('keeps the bare ID on an edge that survived over one that was modified into the same ID', () => {
+    const tracker = setup();
+    // Edge 10 (se_a_0) survived unchanged. A copy whose edge 60 also
+    // carries se_a_0 was fused onto it, and its edge came out modified as 61.
+    tracker.registerFreshBody('copy', [300], [60], 'a');
+    // The copy is the first operand here, so only survival decides.
+    tracker.recordEdgeEvolution('result', ['copy', 'a'], [61, 10], 'fuse', { modified: [60, 1, 61] }, () => [0]);
+
+    expect(tracker.getStableEdgeId('result', 10)).toBe('se_a_0');
+    expect(tracker.getStableEdgeId('result', 61)).toBe('se_a_0:1');
+  });
+
+  it('keeps the bare ID on the first operand when both operands carry it', () => {
+    const tracker = new ShapeEvolutionTracker();
+    // A source and its translated copy both carry se_src_0 on their edge.
+    tracker.registerFreshBody('source', [100], [10], 'src');
+    tracker.registerFreshBody('copy', [200], [11], 'src');
+    tracker.recordEvolution('joined', ['source', 'copy'], [100], noFaces, 'fuse');
+    // The copy's edge sorts first by order; the operand still wins.
+    tracker.recordEdgeEvolution('joined', ['source', 'copy'], [11, 10], 'fuse', { modified: [] }, i => [i === 0 ? -1 : 1]);
+
+    expect(tracker.getStableEdgeId('joined', 10)).toBe('se_src_0');
+    expect(tracker.getStableEdgeId('joined', 11)).toBe('se_src_0:1');
+  });
+
+  it('ignores history for edges that are not in the result or were not tracked', () => {
+    const tracker = setup();
+    tracker.recordEdgeEvolution('result', ['a', 'b'], [21], 'fuse', { modified: [777, 1, 21, 20, 1, 888] });
+
+    expect(tracker.getStableEdgeId('result', 21)).toBe('se_fuse_0');
+    expect(tracker.getStableEdgeId('result', 888)).toBeUndefined();
   });
 });

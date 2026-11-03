@@ -317,8 +317,8 @@ export class OcctKernel implements CadKernel {
    * `*WithHistory` call. Uses the per-input-face → per-result-face
    * mapping in the {@link EvolutionData} payload to transfer stable
    * IDs precisely, then falls back to hash-match for any result face
-   * OCCT didn't report on. Edges propagate via the legacy hash-match
-   * path (history is face-only on the facade).
+   * OCCT didn't report on. Edges do the same with the payload's edge
+   * history (`edgeModified`), which OCCT reports for every input edge.
    */
   private storeBodyWithHistory(
     shape: ShapeHandle,
@@ -356,11 +356,21 @@ export class OcctKernel implements CadKernel {
         origin,
         faceOrder,
       );
+      // Edges sharing an ID (a split edge's pieces, a copy fused onto its
+      // source) are ranked longest first, then by midpoint.
+      const edgeOrder = (i: number): number[] => {
+        const e = resultEdges[i];
+        if (e === undefined) return [];
+        const c = k.getLinearCenterOfMass(e);
+        return [-round(Math.abs(k.getLength(e))), round(c.x), round(c.y), round(c.z)];
+      };
       this.tracker.recordEdgeEvolution(
         body.handle,
         inputBodies.map(b => b.handle),
         edgeHashes,
         origin,
+        { modified: evolution.edgeModified },
+        edgeOrder,
       );
     } finally {
       for (const f of resultFaces) k.release(f);
