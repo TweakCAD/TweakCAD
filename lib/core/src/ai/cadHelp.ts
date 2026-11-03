@@ -80,7 +80,7 @@ Get them from the appropriate \`get_*\` or \`list_*\` tool.
 | \`partId\` | \`get_document().parts\` keys |
 | \`featureId\` | \`query_features(partId)\` (compact) or \`get_document\` |
 | \`sketchId\` | Returned by \`sketch_create\` |
-| \`entityId\` (sketch shape) | Returned by \`sketch_draw_*\` |
+| \`entityId\` / \`entityIds\` (sketch curves) | Returned by \`sketch_draw_*\` — \`entityIds\` from rectangle, slot and polygon, which draw several curves |
 | \`bodyId\` | \`list_bodies(partId)\` |
 | \`faceId\` | \`list_faces(bodyId)\` |
 | \`edgeId\` | \`list_edges(bodyId)\` |
@@ -119,7 +119,7 @@ hallucinated ids get \`NOT_FOUND\` errors. Cheaper to \`list_*\` first.
 1. get_document → partId
 2. begin_transaction("Create plate")
 3. sketch_create(partId, "XY") → { sketchId }
-4. sketch_draw_rectangle(sketchId, [0,0], 60, 30) → { entityId }
+4. sketch_draw_rectangle(sketchId, [0,0], 60, 30) → { entityIds }
 5. feature_extrude(sketchId, 5)        // profiles auto-detected
 6. end_transaction
 7. wait_for_rebuild                    // <-- gate the read on worker settling
@@ -160,26 +160,17 @@ hallucinated ids get \`NOT_FOUND\` errors. Cheaper to \`list_*\` first.
 ### Pattern D: stadium-shaped slot cut through a plate
 
 A slot that goes all the way through (M-shape mounting slot, the
-classic case). \`sketch_draw_slot\` looks tempting but **doesn't
-form an extrudable region yet** — see "active landmines" above.
-Build it as a rectangle + 2 circles instead:
+classic case). \`sketch_draw_slot\` draws it as two lines and two
+arcs that close into one region:
 
 \`\`\`
 1. sketch_create(partId, "XY") → { sketchId: slotSketch }
-2. sketch_draw_rectangle(slotSketch, [-15, -3], 30, 6) // strip between caps
-3. sketch_draw_circle(slotSketch, [-15, 0], 3)        // left end-cap
-4. sketch_draw_circle(slotSketch, [+15, 0], 3)        // right end-cap
-5. list_sketch_regions(slotSketch)
-   → finds the merged stadium region (the planar graph walker
-     unions the rect with the two circles).
-6. feature_extrude(slotSketch, throughDistance, operation='cut',
+2. sketch_draw_slot(slotSketch, [-15, 0], [15, 0], 6) → { entityIds }
+3. list_sketch_regions(slotSketch) → the stadium region
+4. feature_extrude(slotSketch, throughDistance, operation='cut',
                    profiles=[stadiumRegion])
-7. wait_for_rebuild → get_diagnostics
+5. wait_for_rebuild → get_diagnostics
 \`\`\`
-
-If the kernel chokes with \`makeArcEdge: WebAssembly.Exception\`,
-your rectangle is exactly tangent to the circles. Nudge the
-rectangle by 1e-3 mm to break exact tangency.
 
 ### Pattern E: holes in a box's top face that follow its height
 
@@ -234,19 +225,6 @@ both follow their face on rebuild.
 
 These will bite. Read them.
 
-- **Arc entities are invisible to the region detector.** A sketch
-  containing a closed loop of lines + \`sketch_draw_arc\` returns 0
-  detected regions; \`feature_extrude\` will fail with "no closed
-  profile." Arcs round-trip through the document fine (the UI editor
-  sees them), but they don't yet form extrudable wires. Until the
-  planar graph walker grows arc support, use ALL-LINE profiles for
-  extrudes. Use arcs only for visual reference (\`construction: true\`).
-- **Slot entities are invisible to the region detector.** Same story.
-  \`sketch_draw_slot\` produces a stadium-shaped entity but it can't be
-  extruded. Workaround: build the slot manually as
-  \`sketch_draw_rectangle\` (between the end-cap centers) +
-  \`sketch_draw_circle\` × 2 (at the end-cap centers). The planar
-  graph walker merges them into one stadium region.
 - **\`list_faces\` doesn't return per-face metadata yet** — no kind /
   area / centroid / normal. The topology layer hasn't grown those
   fields. Pick faces by stableFaceId convention (extrude origin XY

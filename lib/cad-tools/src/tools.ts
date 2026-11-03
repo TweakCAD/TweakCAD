@@ -301,8 +301,8 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
       'sketch points within `tolerance` mm — this is how sequential lines ' +
       'share corners and form closed loops the extrude can consume. ' +
       'Returns `{ entityId }` (the line entity id). For an axis-aligned ' +
-      'rectangle, prefer sketch_draw_rectangle — it produces a single ' +
-      'rectangle entity in one call.',
+      'rectangle, prefer sketch_draw_rectangle — it draws all four edges, ' +
+      'already constrained, in one call.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -337,10 +337,12 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
   {
     name: 'sketch_draw_rectangle',
     description:
-      'Draw an axis-aligned rectangle in a sketch. Emits the 4 edges as a ' +
-      'single rectangle entity that extrude can use directly. `corner` is ' +
-      'the bottom-left (min X, min Y); negative width/height is normalized. ' +
-      'Returns `{ entityId }`.',
+      'Draw an axis-aligned rectangle in a sketch: four line entities held ' +
+      'together by coincident + horizontal + vertical constraints (there is ' +
+      'no composite rectangle entity). They close into one region extrude ' +
+      'can use directly. `corner` is the bottom-left (min X, min Y); ' +
+      'negative width/height is normalized. Returns `{ entityIds }` with the ' +
+      'four new line ids.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -392,14 +394,10 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
       'Draw a slot (stadium shape: two semicircular end-caps + a straight ' +
       'strip between them) from two end-cap centers + width. ' +
       'Total outer length = |center2 − center1| + width. ' +
-      'Returns `{ entityId }`. ' +
-      'CAVEAT: the region detector does NOT yet understand slot entities, ' +
-      'so a sketch containing only a slot will return 0 closed regions ' +
-      'and `feature_extrude` will fail. Until the detector grows slot ' +
-      "support, do NOT use this for extrudable profiles — build the slot " +
-      'manually with `sketch_draw_rectangle` + 2× `sketch_draw_circle` ' +
-      '(circles at the end-cap centers, rectangle between them). The ' +
-      "planar graph walker will merge them into one stadium region.",
+      'Decomposes into two line and two arc entities held together by ' +
+      'coincident, tangent, equal and parallel constraints (there is no ' +
+      'composite slot entity); they close into one region extrude can use ' +
+      'directly. Returns `{ entityIds }` with the four new ids.',
     inputSchema: {
       type: 'object',
       properties: {
