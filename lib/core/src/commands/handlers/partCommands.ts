@@ -5,6 +5,7 @@
 import type { Result } from '../../result.ts';
 import { ok, err } from '../../result.ts';
 import type { CadProject } from '../../document/schema.ts';
+import { BODY_COLOR_PATTERN } from '../../document/schema.ts';
 import { generateId, partId } from '../../ids.ts';
 import type { PartId } from '../../ids.ts';
 import type { CadCommand } from '../types.ts';
@@ -61,6 +62,42 @@ export const renamePartHandler: CommandHandler = {
       part.name = command.name;
       draft.metadata.updatedAt = new Date().toISOString();
     }
+  },
+};
+
+export const setBodyColorHandler: CommandHandler = {
+  validate(command: CadCommand, state: Readonly<CadProject>): Result<void, ValidationError> {
+    if (command.type !== 'SetBodyColor') {
+      return err({ code: 'WRONG_TYPE', message: 'Expected SetBodyColor command' });
+    }
+    if (!state.parts[command.partId as PartId]) {
+      return err({ code: 'NOT_FOUND', message: `Part not found: ${command.partId}` });
+    }
+    if (!command.bodyId) {
+      return err({ code: 'INVALID_BODY', message: 'Body id cannot be empty', field: 'bodyId' });
+    }
+    if (command.color !== null && !BODY_COLOR_PATTERN.test(command.color)) {
+      return err({ code: 'INVALID_COLOR', message: `Color must be #rrggbb in lower case: ${command.color}`, field: 'color' });
+    }
+    return ok(undefined);
+  },
+
+  execute(draft: CadProject, command: CadCommand): void {
+    if (command.type !== 'SetBodyColor') return;
+    const part = draft.parts[command.partId as PartId];
+    if (!part) return;
+    if (command.color === null) {
+      if (!part.bodyColors || !(command.bodyId in part.bodyColors)) return;
+      const rest = Object.fromEntries(
+        Object.entries(part.bodyColors).filter(([id]) => id !== command.bodyId),
+      );
+      if (Object.keys(rest).length === 0) delete part.bodyColors;
+      else part.bodyColors = rest;
+    } else {
+      part.bodyColors ??= {};
+      part.bodyColors[command.bodyId] = command.color;
+    }
+    draft.metadata.updatedAt = new Date().toISOString();
   },
 };
 

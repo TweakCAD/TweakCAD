@@ -6,12 +6,13 @@
 
 import * as THREE from 'three';
 import type { DisplayMesh, TopologyMap } from '@tweakcad/core/src/document/schema.ts';
+import { DEFAULT_BODY_COLOR } from '@tweakcad/core/src/document/schema.ts';
 import type { BodyId } from '@tweakcad/core/src/ids.ts';
 import type { FeatureDisplayMode } from './displayMode.ts';
 
 /** Default material for solid bodies */
 const DEFAULT_BODY_MATERIAL = new THREE.MeshPhongMaterial({
-  color: 0x6699cc,
+  color: DEFAULT_BODY_COLOR,
   specular: 0x222222,
   shininess: 30,
   flatShading: false,
@@ -22,6 +23,26 @@ const EDGE_LINE_MATERIAL = new THREE.LineBasicMaterial({
   color: 0x333333,
   linewidth: 1,
 });
+
+/** Edge lines of a highlighted (selected) body. */
+const SELECTED_EDGE_MATERIAL = new THREE.LineBasicMaterial({
+  color: 0x1a6fd1,
+  linewidth: 1,
+});
+
+/**
+ * A highlighted body glows in its own colour mixed halfway to white. That
+ * lightens it without shifting the hue, so a coloured body still reads as
+ * its colour while selected, and the white half lifts dark colours too
+ * (black glowing black would not change). The blue edges add the
+ * "selected" cue.
+ */
+const HIGHLIGHT_GLOW = 0.35;
+const WHITE = new THREE.Color(0xffffff);
+
+function setGlow(mat: THREE.MeshPhongMaterial): void {
+  mat.emissive.copy(mat.color).lerp(WHITE, 0.5);
+}
 
 /**
  * Section-cap stencil materials. While a section cut is active every body
@@ -61,6 +82,8 @@ export type MeshEntry = {
 export class MeshRegistry {
   private entries = new Map<BodyId, MeshEntry>();
   private scene: THREE.Scene;
+  /** Document body colours (`#rrggbb`), kept so a rebuild's new meshes get them too. */
+  private bodyColors: ReadonlyMap<string, string> = new Map();
 
   /** @param scene - The Three.js scene to add/remove meshes from */
   constructor(scene: THREE.Scene) {
@@ -90,7 +113,9 @@ export class MeshRegistry {
       geometry.setAttribute('normal', new THREE.BufferAttribute(displayMesh.normals, 3));
       geometry.setIndex(new THREE.BufferAttribute(displayMesh.indices, 1));
 
-      const mesh = new THREE.Mesh(geometry, DEFAULT_BODY_MATERIAL.clone());
+      const material = DEFAULT_BODY_MATERIAL.clone();
+      material.color.set(this.bodyColors.get(displayMesh.bodyId) ?? DEFAULT_BODY_COLOR);
+      const mesh = new THREE.Mesh(geometry, material);
       // Tag the Three.js object with its source bodyId so raycaster hits can
       // identify which body was struck without searching the registry.
       mesh.userData.bodyId = displayMesh.bodyId;
@@ -131,6 +156,19 @@ export class MeshRegistry {
   }
 
   /**
+   * Set every body's colour from the document. A body missing from
+   * `colors` gets the default. Kept for the meshes later rebuilds create.
+   */
+  setBodyColors(colors: ReadonlyMap<string, string>): void {
+    this.bodyColors = colors;
+    for (const [bodyId, entry] of this.entries) {
+      const mat = entry.mesh.material as THREE.MeshPhongMaterial;
+      mat.color.set(colors.get(bodyId) ?? DEFAULT_BODY_COLOR);
+      if (mat.emissiveIntensity > 0) setGlow(mat);
+    }
+  }
+
+  /**
    * Set opacity for a specific body.
    * @param bodyId - The body to adjust
    * @param opacity - Opacity value 0.0 to 1.0
@@ -149,19 +187,22 @@ export class MeshRegistry {
 
   /**
    * Highlight a body (selection). Pass null to clear all highlights.
-   * Highlighted bodies get a blue emissive tint.
+   * A highlighted body glows in its own colour and its edges turn blue,
+   * so its colour stays recognisable while it is selected.
    */
   highlightBodies(bodyIds: Set<BodyId> | null): void {
     for (const [bid, entry] of this.entries) {
       const mat = entry.mesh.material as THREE.MeshPhongMaterial;
-      if (bodyIds && bodyIds.has(bid)) {
-        mat.emissive.setHex(0x1a6fd1);
-        mat.emissiveIntensity = 0.3;
+      const on = bodyIds?.has(bid) ?? false;
+      if (on) {
+        setGlow(mat);
+        mat.emissiveIntensity = HIGHLIGHT_GLOW;
       } else {
         mat.emissive.setHex(0x000000);
         mat.emissiveIntensity = 0;
       }
       mat.needsUpdate = true;
+      if (entry.edges) entry.edges.material = on ? SELECTED_EDGE_MATERIAL : EDGE_LINE_MATERIAL;
     }
   }
 
@@ -242,7 +283,7 @@ export class MeshRegistry {
         delete entry.stencil;
       }
     }
-    for (const m of [EDGE_LINE_MATERIAL, STENCIL_BACK_MATERIAL, STENCIL_FRONT_MATERIAL]) {
+    for (const m of [EDGE_LINE_MATERIAL, SELECTED_EDGE_MATERIAL, STENCIL_BACK_MATERIAL, STENCIL_FRONT_MATERIAL]) {
       m.clippingPlanes = value;
       m.needsUpdate = true;
     }

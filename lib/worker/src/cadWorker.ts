@@ -11,6 +11,7 @@
 
 import * as Comlink from 'comlink';
 import type { CadPart, CadProject, DisplayMesh, TopologyMap, FeatureBuildResult, ConstructionPlaneDisplay, SketchPlaneDisplay } from '@tweakcad/core/src/document/schema.ts';
+import { bodyColorOf } from '@tweakcad/core/src/document/schema.ts';
 import type { PartId } from '@tweakcad/core/src/ids.ts';
 import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
 import { OcctKernel } from '@tweakcad/kernel/src/occtKernel.ts';
@@ -207,7 +208,7 @@ const api = {
     }
 
     try {
-      const blob = await k.exportStep(bodyHandles);
+      const blob = await k.exportStep(bodyHandles, { colors: result.bodies.map(b => bodyColorOf(part, b.bodyId)) });
       return await blob.arrayBuffer();
     } finally {
       releaseRebuildBodies(k, result.bodies);
@@ -255,7 +256,10 @@ const api = {
     }
 
     try {
-      const blob = await k.export3MF(bodyHandles, { name: part.name });
+      const blob = await k.export3MF(bodyHandles, {
+        name: part.name,
+        colors: result.bodies.map(b => bodyColorOf(part, b.bodyId)),
+      });
       return await blob.arrayBuffer();
     } finally {
       releaseRebuildBodies(k, result.bodies);

@@ -217,6 +217,12 @@ export type StlExportOptions = {
 export type StepExportOptions = {
   /** STEP schema id: 3=AP203, 5=AP214 (default), 6=AP242. */
   schema?: number;
+  /**
+   * Colour per body (`#rrggbb`), parallel to the bodies exported; undefined
+   * leaves that body uncoloured. When any is set the file is written through
+   * an XCAF document, one product per body, so the colours travel with it.
+   */
+  colors?: ReadonlyArray<string | undefined>;
 };
 
 /** 3MF export options. Mesh-based — bodies are tessellated then packaged. */
@@ -227,6 +233,12 @@ export type ThreeMfExportOptions = {
   unit?: 'micron' | 'millimeter' | 'centimeter' | 'meter' | 'inch' | 'foot';
   linearDeflection?: number;
   angularDeflection?: number;
+  /**
+   * Colour per body (`#rrggbb`), parallel to the bodies exported. When any
+   * is set, every triangle carries its body's colour (bodies without one
+   * get the default body colour); when none is, the file has no colour.
+   */
+  colors?: ReadonlyArray<string | undefined>;
 };
 
 /** Structured kernel error */

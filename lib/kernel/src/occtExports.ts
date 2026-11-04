@@ -13,13 +13,50 @@
  */
 
 import type { DisplayMesh } from '@tweakcad/core/src/document/schema.ts';
+import { DEFAULT_BODY_COLOR } from '@tweakcad/core/src/document/schema.ts';
 
 // ---------------------------------------------------------------------------
 // 3MF export — pure-JS, mesh-based.
 //
-// Stripped of the per-face material / color machinery (we don't expose
-// face groups yet).
+// Colour is per body, written with the materials extension: one
+// `m:colorgroup`, and `pid`/`p1` on every triangle as well as the object's
+// `pid`/`pindex`. Some slicers read colour from triangles only and ignore
+// `basematerials` and `pindex`, so per-triangle is the form that reaches
+// all of them. The extension is not listed as required, so a consumer that
+// does not know it still reads the geometry.
 // ---------------------------------------------------------------------------
+
+const MATERIAL_NS = 'http://schemas.microsoft.com/3dmanufacturing/material/2015/02';
+
+/**
+ * Per-triangle colour indices for the combined mesh, plus the distinct
+ * colours they index, in 3MF's `#RRGGBB` form. Null when no body has a
+ * colour, so an uncoloured export stays exactly as before.
+ */
+export function triangleColors(
+  meshes: DisplayMesh[],
+  colors: ReadonlyArray<string | undefined> | undefined,
+): { palette: string[]; perTriangle: Uint32Array } | null {
+  if (!colors?.some(c => c !== undefined)) return null;
+  const palette: string[] = [];
+  const indexOf = new Map<string, number>();
+  let triCount = 0;
+  for (const m of meshes) triCount += m.indices.length / 3;
+  const perTriangle = new Uint32Array(triCount);
+  let t = 0;
+  meshes.forEach((m, i) => {
+    const color = (colors[i] ?? DEFAULT_BODY_COLOR).toUpperCase();
+    let idx = indexOf.get(color);
+    if (idx === undefined) {
+      idx = palette.length;
+      palette.push(color);
+      indexOf.set(color, idx);
+    }
+    perTriangle.fill(idx, t, t + m.indices.length / 3);
+    t += m.indices.length / 3;
+  });
+  return { palette, perTriangle };
+}
 
 /** Concatenation of any number of DisplayMesh instances into one mesh. */
 export function combineMeshes(meshes: DisplayMesh[]): {
@@ -161,6 +198,7 @@ function build3MFModelXml(
   triangles: Uint32Array,
   name: string,
   unit: string,
+  colors: { palette: string[]; perTriangle: Uint32Array } | null,
 ): string {
   const vLines: string[] = [];
   for (let i = 0; i < vertices.length; i += 3) {
@@ -170,14 +208,26 @@ function build3MFModelXml(
   }
   const tLines: string[] = [];
   for (let i = 0; i < triangles.length; i += 3) {
+    const paint = colors ? ` pid="1" p1="${colors.perTriangle[i / 3] ?? 0}"` : '';
     tLines.push(
-      `        <triangle v1="${triangles[i] ?? 0}" v2="${triangles[i + 1] ?? 0}" v3="${triangles[i + 2] ?? 0}" />`,
+      `        <triangle v1="${triangles[i] ?? 0}" v2="${triangles[i + 1] ?? 0}" v3="${triangles[i + 2] ?? 0}"${paint} />`,
     );
   }
+  // Resource ids: the colour group is 1, the object 2 when colours are
+  // written; the object is 1 otherwise, as it always was.
+  const objectId = colors ? 2 : 1;
+  const ns = colors ? ` xmlns:m="${MATERIAL_NS}"` : '';
+  const group = colors
+    ? `    <m:colorgroup id="1">
+${colors.palette.map(c => `      <m:color color="${c}" />`).join('\n')}
+    </m:colorgroup>
+`
+    : '';
+  const objectPaint = colors ? ` pid="1" pindex="${colors.perTriangle[0] ?? 0}"` : '';
   return `<?xml version="1.0" encoding="UTF-8"?>
-<model unit="${unit}" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+<model unit="${unit}" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"${ns}>
   <resources>
-    <object id="1" name="${escapeXmlAttr(name)}" type="model">
+${group}    <object id="${objectId}" name="${escapeXmlAttr(name)}" type="model"${objectPaint}>
       <mesh>
       <vertices>
 ${vLines.join('\n')}
@@ -189,7 +239,7 @@ ${tLines.join('\n')}
     </object>
   </resources>
   <build>
-    <item objectid="1" />
+    <item objectid="${objectId}" />
   </build>
 </model>`;
 }
@@ -202,7 +252,7 @@ ${tLines.join('\n')}
  */
 export function build3MF(
   meshes: DisplayMesh[],
-  opts: { name?: string; unit?: string } = {},
+  opts: { name?: string; unit?: string; colors?: ReadonlyArray<string | undefined> } = {},
 ): ArrayBuffer {
   const { name = 'model', unit = 'millimeter' } = opts;
   const { vertices, triangles } = combineMeshes(meshes);
@@ -219,7 +269,7 @@ export function build3MF(
   <Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel" />
 </Relationships>`;
 
-  const model = build3MFModelXml(vertices, triangles, name, unit);
+  const model = build3MFModelXml(vertices, triangles, name, unit, triangleColors(meshes, opts.colors));
 
   function entry(path: string, content: string): ZipEntry {
     const nameBytes = encoder.encode(path);

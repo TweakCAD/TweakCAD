@@ -677,6 +677,9 @@ const CadPartSchema = z.object({
   timeline: z.array(FeatureNodeSchema),
   defaultPlanes: DefaultPlaneSetSchema,
   configurations: ConfigurationTableSchema.optional(),
+  // Strings only: a malformed colour is ignored where it is read
+  // (`bodyColorOf`), never a reason to refuse the document.
+  bodyColors: z.record(z.string(), z.string()).optional(),
 });
 
 // --- Assemblies ---

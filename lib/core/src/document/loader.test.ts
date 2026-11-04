@@ -78,6 +78,24 @@ describe('loadCadDocument — happy path', () => {
   });
 });
 
+describe('loadCadDocument — body colours', () => {
+  it('keeps body colours, and loads a malformed one rather than refusing the file', () => {
+    const doc = validDoc();
+    firstPart(doc).bodyColors = { body_a: '#ff0000', body_b: 'not a colour' };
+    const result = loadCadDocument(doc);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const part = Object.values(result.value.project.parts)[0]!;
+    expect(part.bodyColors).toEqual({ body_a: '#ff0000', body_b: 'not a colour' });
+  });
+
+  it('refuses a bodyColors that is not a map of strings', () => {
+    const doc = validDoc();
+    firstPart(doc).bodyColors = { body_a: 7 };
+    expect(loadCadDocument(doc).ok).toBe(false);
+  });
+});
+
 describe('loadCadDocument — forward compatibility', () => {
   it('preserves unknown top-level keys', () => {
     const doc = validDoc();
