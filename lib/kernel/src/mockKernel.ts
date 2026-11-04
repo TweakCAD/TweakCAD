@@ -156,10 +156,6 @@ export class MockKernel implements CadKernel {
     return ok({ handle: this.nextHandle(), source: 'mock' });
   }
 
-  async decomposeBody(body: KernelBody, _origin: string): Promise<KernelBody[]> {
-    return [body];
-  }
-
   /** Mock bodies have no geometry, so nothing ever splits. */
   async splitSolids(_body: KernelBody, _origin: string): Promise<KernelBody[] | null> {
     return null;

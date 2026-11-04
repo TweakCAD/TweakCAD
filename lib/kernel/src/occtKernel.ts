@@ -964,10 +964,6 @@ export class OcctKernel implements CadKernel {
     }
   }
 
-  async decomposeBody(body: KernelBody, origin: string): Promise<KernelBody[]> {
-    return this.decomposeToBodies(this.getBodyShape(body), origin);
-  }
-
   async splitSolids(body: KernelBody, origin: string): Promise<KernelBody[] | null> {
     const k = this.getKernel();
     const solids = k.getSubShapes(this.getBodyShape(body), 'solid');
@@ -1790,8 +1786,7 @@ export class OcctKernel implements CadKernel {
    * single solid (no wrapping compound) returns a one-element array.
    *
    * Each body gets fresh stable face/edge IDs derived from `origin`
-   * + a per-body index — same pattern Extrude uses for multi-profile
-   * outputs. The root shape is the caller's to release.
+   * + a per-body index. The root shape is the caller's to release.
    */
   private decomposeToBodies(root: ShapeHandle, origin: string): KernelBody[] {
     const k = this.getKernel();
