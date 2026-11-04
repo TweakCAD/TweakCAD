@@ -1476,22 +1476,31 @@ export function removeGeometry(
  *     including the constraints step 1 just dropped.
  *  3. Constraints left pointing at a point step 2 reaped.
  *
- * Returns `after` untouched when the operation removed no geometry, so
- * ops that only add or move geometry pay a map walk and nothing else.
+ * `replaced` names geometry the operation rebuilt under its old id (a
+ * trimmed line's surviving piece). It is kept, but the constraints on it
+ * go as if it had been removed: they were written against the old shape.
+ *
+ * Returns `after` untouched when the operation removed and replaced no
+ * geometry, so ops that only add or move geometry pay a map walk and
+ * nothing else.
  */
 export function reapDanglingReferences(
   before: EditorState,
   after: EditorState,
+  replaced: ReadonlySet<SketchGeometryId> = new Set(),
 ): EditorState {
   const removed: SketchGeometry[] = [];
   for (const [id, geom] of before.geometries) {
     if (!after.geometries.has(id)) removed.push(geom);
   }
-  if (removed.length === 0) return after;
+  if (removed.length === 0 && replaced.size === 0) return after;
 
   const constraints = new Map(after.constraints);
   for (const [cid, c] of constraints) {
-    if (removed.some((geom) => constraintReferencesGeometry(c, geom.id))) {
+    if (
+      removed.some((geom) => constraintReferencesGeometry(c, geom.id))
+      || [...replaced].some((id) => constraintReferencesGeometry(c, id))
+    ) {
       constraints.delete(cid);
     }
   }

@@ -20,7 +20,9 @@ import {
   addConstraint,
   drawLine,
   drawCircle,
+  drawArc,
   makeCounterIdFactory,
+  toSnapshot,
   type EditorState,
 } from './operations.ts';
 import {
@@ -31,6 +33,9 @@ import {
   mirrorSelection,
 } from './modifyOps.ts';
 import { getSolver } from './solver/index.ts';
+import { sketchBuildGeometry } from './derivedGeometry.ts';
+import { detectSketchRegions, regionToProfileRef, resolveProfile } from './profileRegions.ts';
+import { featureId } from '../ids.ts';
 import type {
   SketchArc,
   SketchGeometryId,
@@ -328,16 +333,18 @@ describe('filletBetweenLines — corner topology', () => {
 });
 
 describe('trimAt — constraint cascade', () => {
-  it('drops a geometry constraint on the line it split', () => {
+  it('drops a geometry constraint on the line it split, though the piece keeps its id', () => {
     const factory = makeCounterIdFactory();
     let s = emptyEditorState();
     const horiz = drawLine(s, [0, 0], [20, 0], { idFactory: factory }); s = horiz.state;
-    s = addConstraint(s, { type: 'horizontal', geometryId: horiz.lineId }, { idFactory: factory }).state;
+    const horizontal = addConstraint(s, { type: 'horizontal', geometryId: horiz.lineId }, { idFactory: factory });
+    s = horizontal.state;
     s = drawLine(s, [10, -5], [10, 5], { idFactory: factory }).state;
 
     const trimmed = trimAt(s, horiz.lineId, [15, 0]);
     expect(trimmed).not.toBeNull();
-    expect(trimmed!.geometries.has(horiz.lineId)).toBe(false);
+    expect(trimmed!.geometries.has(horiz.lineId)).toBe(true);
+    expect(trimmed!.constraints.has(horizontal.id)).toBe(false);
     expect(danglingRefs(trimmed!)).toEqual([]);
   });
 
@@ -362,7 +369,8 @@ describe('trimAt — constraint cascade', () => {
 
     const trimmed = trimAt(s, circle.circleId, [0, 5]);
     expect(trimmed).not.toBeNull();
-    expect(trimmed!.geometries.has(circle.circleId)).toBe(false);
+    expect(trimmed!.geometries.get(circle.circleId)?.type).toBe('arc');
+    expect([...trimmed!.constraints.values()].some(c => c.type === 'radius')).toBe(false);
     expect(danglingRefs(trimmed!)).toEqual([]);
   });
 
@@ -416,5 +424,80 @@ describe('trimAt — constraint cascade', () => {
     expect(trimmed!.geometries.has(lone.lineId)).toBe(false);
     expect(trimmed!.points.has(lone.startId)).toBe(false);
     expect(danglingRefs(trimmed!)).toEqual([]);
+  });
+});
+
+describe('trimAt — the trimmed geometry keeps its id', () => {
+  function crossed(from: [number, number], to: [number, number], crossAt: number[]) {
+    const factory = makeCounterIdFactory();
+    let s = emptyEditorState();
+    const line = drawLine(s, from, to, { idFactory: factory }); s = line.state;
+    for (const x of crossAt) s = drawLine(s, [x, -5], [x, 5], { idFactory: factory }).state;
+    return { s, lineId: line.lineId };
+  }
+
+  it('on the piece holding the start point when the middle is cut out', () => {
+    const { s, lineId } = crossed([0, 0], [30, 0], [10, 20]);
+    const trimmed = trimAt(s, lineId, [15, 0])!;
+
+    const { start, end } = lineEnds(trimmed, lineId);
+    expect([start.x, end.x]).toEqual([0, 10]);
+    const others = [...trimmed.geometries.values()].filter(g => g.type === 'line' && g.id !== lineId && lineEnds(trimmed, g.id).start.y === 0);
+    expect(others).toHaveLength(1);
+    expect([lineEnds(trimmed, others[0]!.id).start.x, lineEnds(trimmed, others[0]!.id).end.x]).toEqual([20, 30]);
+  });
+
+  it('on the only piece left when the start end is cut off', () => {
+    const { s, lineId } = crossed([0, 0], [30, 0], [10]);
+    const trimmed = trimAt(s, lineId, [5, 0])!;
+
+    const { start, end } = lineEnds(trimmed, lineId);
+    expect([start.x, end.x]).toEqual([10, 30]);
+  });
+
+  it('on the first piece of a trimmed arc', () => {
+    // Upper half circle from (5, 0) to (-5, 0), crossed at the top.
+    const factory = makeCounterIdFactory();
+    let s = emptyEditorState();
+    const arc = drawArc(s, { center: [0, 0], radius: 5, startAngle: 0, endAngle: Math.PI }, { idFactory: factory }); s = arc.state;
+    s = drawLine(s, [0, -10], [0, 10], { idFactory: factory }).state;
+
+    const trimmed = trimAt(s, arc.arcId, [-4, 3])!;
+    const kept = trimmed.geometries.get(arc.arcId) as SketchArc;
+    expect(kept.type).toBe('arc');
+    expect(arcSweep(trimmed, kept)).toBeCloseTo(Math.PI / 2, 6);
+    expect(trimmed.points.get(kept.startId)!.x).toBeCloseTo(5, 6);
+  });
+
+  it('on the arc a trimmed circle becomes', () => {
+    const factory = makeCounterIdFactory();
+    let s = emptyEditorState();
+    const circle = drawCircle(s, { center: [0, 0], radius: 5 }, { idFactory: factory }); s = circle.state;
+    s = drawLine(s, [-10, 0], [10, 0], { idFactory: factory }).state;
+
+    const toArc = trimAt(s, circle.circleId, [0, 5])!;
+    const arc = toArc.geometries.get(circle.circleId);
+    expect(arc?.type).toBe('arc');
+    expect(arcSweep(toArc, arc as SketchArc)).toBeCloseTo(Math.PI, 6);
+  });
+
+  it('so a profile drawn with it still resolves after a stub is trimmed off', () => {
+    // A 40 × 20 rectangle whose bottom line overshoots to x = 50. The
+    // region uses the bottom line up to the corner; trimming the stub
+    // past the corner leaves the region's outline as it was.
+    const factory = makeCounterIdFactory();
+    let s = emptyEditorState();
+    const bottom = drawLine(s, [0, 0], [50, 0], { idFactory: factory }); s = bottom.state;
+    s = drawLine(s, [40, 0], [40, 20], { idFactory: factory }).state;
+    s = drawLine(s, [40, 20], [0, 20], { idFactory: factory }).state;
+    s = drawLine(s, [0, 20], [0, 0], { idFactory: factory }).state;
+    const regionsOf = (state: EditorState) => detectSketchRegions(sketchBuildGeometry({ editorModel: toSnapshot(state) as never }));
+    const before = regionsOf(s);
+    expect(before).toHaveLength(1);
+    const ref = regionToProfileRef(featureId('sketch_1'), before[0]!, before);
+
+    const trimmed = trimAt(s, bottom.lineId, [45, 0])!;
+
+    expect(resolveProfile(ref, regionsOf(trimmed)).status).toBe('resolved');
   });
 });
