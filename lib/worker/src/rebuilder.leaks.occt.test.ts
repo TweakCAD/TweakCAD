@@ -11,12 +11,17 @@
  * Counts come from occt-wasm's own arena (`shapeCount`), so they cover every
  * shape handle, not only the ones the adapter tracks.
  */
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { OcctKernel } from '@tweakcad/kernel/src/occtKernel.ts';
-import type { CadPart, CadProject, FeatureNode } from '@tweakcad/core/src/document/schema.ts';
+import type { CadPart, CadProject, FeatureNode, SketchEditorSnapshot } from '@tweakcad/core/src/document/schema.ts';
+import { drawRectangle, emptyEditorState, makeCounterIdFactory, toSnapshot } from '@tweakcad/core/src/sketch/operations.ts';
+import { sketchBuildGeometry } from '@tweakcad/core/src/sketch/derivedGeometry.ts';
+import { detectSketchRegions, regionToProfileRef } from '@tweakcad/core/src/sketch/profileRegions.ts';
+import { featureId } from '@tweakcad/core/src/ids.ts';
+import { attachTestSolver } from '@tweakcad/testing/src/solver.ts';
 import { loadCadDocument } from '@tweakcad/core/src/document/loader.ts';
 import { emptyProject, createPart, newProjectWithPart } from '@tweakcad/core/src/document/factory.ts';
 import { clearRebuildCache, incrementalRebuild, sweepPreviousRebuild } from './rebuilder.ts';
@@ -172,6 +177,29 @@ describe('rebuild leaves no shapes behind — a cut that splits a body', () => {
       }),
     ]);
     // Two bodies: the two pieces.
+    expect(await rebuildCounts(part, project)).toEqual([2, 2, 2, 2]);
+  }, 60_000);
+});
+
+describe('rebuild leaves no shapes behind — an extrude of disjoint profiles', () => {
+  beforeAll(attachTestSolver, 30_000);
+
+  it('publishes one body per profile and frees the compound they were fused into', async () => {
+    const ids = makeCounterIdFactory();
+    let state = drawRectangle(emptyEditorState(), { corner: [0, 0], width: 10, height: 10 }, { idFactory: ids }).state;
+    state = drawRectangle(state, { corner: [20, 0], width: 10, height: 10 }, { idFactory: ids }).state;
+    const sketch = toSnapshot(state) as unknown as SketchEditorSnapshot;
+    const regions = detectSketchRegions(sketchBuildGeometry({ editorModel: sketch }));
+    const { part, project } = onePart([
+      node('sk', 'sketch', { plane: { type: 'defaultPlane', name: 'XY' }, editorModel: sketch }),
+      node('ext', 'extrude', {
+        profiles: regions.map(r => regionToProfileRef(featureId('sk'), r, regions)),
+        operation: 'newBody',
+        direction: { type: 'normal' },
+        extent: { type: 'distance', value: '10' },
+      }),
+    ]);
+    // Two bodies: one per rectangle.
     expect(await rebuildCounts(part, project)).toEqual([2, 2, 2, 2]);
   }, 60_000);
 });

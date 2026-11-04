@@ -108,18 +108,17 @@ async function ctxWithSketch(node: FeatureNode, kernel: MockKernel): Promise<Bui
 // --- Tests ----------------------------------------------------------------
 
 describe('buildExtrude — operation semantics (one extrude → 1..N bodies)', () => {
-  it('newBody with overlapping/touching profiles yields ONE body via decomposeBody', async () => {
+  it('newBody with overlapping/touching profiles yields the fused solid as ONE body', async () => {
     const kernel = new MockKernel();
     await kernel.init();
     const sketch = twoCircleSketch();
     const context = await ctxWithSketch(sketch, kernel);
 
-    // Simulate the "all profile-bodies fused into a single connected
-    // solid" case — decomposeBody returns a single-element array.
-    const decomposeSpy = vi.spyOn(kernel, 'decomposeBody').mockResolvedValue([
-      { handle: 'fused_solid', source: 'mock' } as KernelBody,
-    ]);
+    // All profile-bodies fused into a single connected solid: nothing to
+    // split (the mock's splitSolids returns null).
+    const splitSpy = vi.spyOn(kernel, 'splitSolids');
     const fuseSpy = vi.spyOn(kernel, 'booleanFuse');
+    const disposeSpy = vi.spyOn(kernel, 'dispose');
 
     const extrude = makeExtrudeNode({
       profiles: [
@@ -134,7 +133,10 @@ describe('buildExtrude — operation semantics (one extrude → 1..N bodies)', (
 
     expect(result.bodies).toHaveLength(1);
     expect(fuseSpy).toHaveBeenCalledTimes(1); // one fuse over both profiles
-    expect(decomposeSpy).toHaveBeenCalledTimes(1);
+    expect(splitSpy).toHaveBeenCalledTimes(1);
+    const fused = (await fuseSpy.mock.results[0]!.value) as { ok: true; value: KernelBody };
+    expect(result.bodies[0]!.handle).toBe(fused.value);
+    expect(disposeSpy).not.toHaveBeenCalledWith(fused.value);
   });
 
   it('newBody with disjoint profiles yields ONE body PER connected solid', async () => {
@@ -142,8 +144,10 @@ describe('buildExtrude — operation semantics (one extrude → 1..N bodies)', (
     await kernel.init();
     const context = await ctxWithSketch(twoCircleSketch(), kernel);
 
-    // Compound fuse result → decomposeBody splits into N independent bodies.
-    vi.spyOn(kernel, 'decomposeBody').mockResolvedValue([
+    // Compound fuse result → splitSolids splits it into N independent bodies.
+    const fuseSpy = vi.spyOn(kernel, 'booleanFuse');
+    const disposeSpy = vi.spyOn(kernel, 'dispose');
+    vi.spyOn(kernel, 'splitSolids').mockResolvedValue([
       { handle: 'solid_A', source: 'mock' } as KernelBody,
       { handle: 'solid_B', source: 'mock' } as KernelBody,
     ]);
@@ -166,6 +170,9 @@ describe('buildExtrude — operation semantics (one extrude → 1..N bodies)', (
       'body_ex_test_0',
       'body_ex_test_1',
     ]);
+    // The compound is replaced by its pieces and freed.
+    const fused = (await fuseSpy.mock.results[0]!.value) as { ok: true; value: KernelBody };
+    expect(disposeSpy).toHaveBeenCalledWith(fused.value);
   });
 
   it('join fuses the touched target + all profile-bodies into ONE body and consumes the target', async () => {

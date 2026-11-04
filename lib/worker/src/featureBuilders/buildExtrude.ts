@@ -224,8 +224,13 @@ export async function buildExtrude(
       }
       combined = fuseResult.value;
     }
-    const split = await kernel.decomposeBody(combined, node.id);
-    return split.map((handle, i) => ({ bodyId: mintBodyId(node.id, i), handle }));
+    // Disjoint profiles fuse into a compound: one body per solid. The pieces
+    // share the compound's faces and edges, so they keep the IDs the extrude
+    // and the fuse assigned.
+    const pieces = await kernel.splitSolids(combined, node.id);
+    if (!pieces) return [{ bodyId: mintBodyId(node.id, 0), handle: combined }];
+    if (combined !== tools[0]) releaseShapes(kernel, [combined]); // replaced by its pieces
+    return pieces.map((handle, i) => ({ bodyId: mintBodyId(node.id, i), handle }));
   };
 
   const operands = {
