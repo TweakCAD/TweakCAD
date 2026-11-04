@@ -27,6 +27,7 @@ import {
 } from '@tweakcad/core/src/sketch/operations.ts';
 import { sketchBuildGeometry } from '@tweakcad/core/src/sketch/derivedGeometry.ts';
 import { detectSketchRegions, regionToProfileRef } from '@tweakcad/core/src/sketch/profileRegions.ts';
+import { regionKey } from '@tweakcad/core/src/sketch/provenance.ts';
 import type { CadPart, SketchEditorSnapshot } from '@tweakcad/core/src/document/schema.ts';
 import { featureId, partId } from '@tweakcad/core/src/ids.ts';
 import { attachTestSolver } from '@tweakcad/testing/src/solver.ts';
@@ -410,7 +411,15 @@ describe('buildHole — on a shelled body with joined bosses (OCCT)', () => {
 
   const PART = partId('part_1');
   const BOX = 'body_extrude_1_0';
-  const RIM = 'sf_extrude_1_5';
+  const RECT = toSnapshot(
+    drawRectangle(emptyEditorState(), { corner: [-50, -25], width: 100, height: 50 }, { idFactory: makeCounterIdFactory() }).state,
+  ) as unknown as SketchEditorSnapshot;
+  /** The box's top face: the end cap of its extrude. */
+  const firstRegion = (editorModel: SketchEditorSnapshot) => {
+    const regions = detectSketchRegions(sketchBuildGeometry({ editorModel }));
+    return [regions[0]!, regions] as const;
+  };
+  const RIM = `sf_extrude_1~end(${regionKey(...firstRegion(RECT))})`;
 
   function feature(id: string, type: string, inputs: unknown, dependsOn: string[] = []): FeatureNode {
     return {
@@ -434,9 +443,7 @@ describe('buildHole — on a shelled body with joined bosses (OCCT)', () => {
 
   /** The enclosure timeline plus a hole on the rim at face-local `center`. */
   function enclosure(center: [number, number]): CadPart {
-    const rect = toSnapshot(
-      drawRectangle(emptyEditorState(), { corner: [-50, -25], width: 100, height: 50 }, { idFactory: makeCounterIdFactory() }).state,
-    ) as unknown as SketchEditorSnapshot;
+    const rect = RECT;
     let state = emptyEditorState();
     const ids = makeCounterIdFactory();
     for (const [x, y] of [[44.5, 19.5], [-44.5, 19.5], [44.5, -19.5], [-44.5, -19.5]] as const) {

@@ -74,6 +74,6 @@ describe('newBody extrude keeps the IDs its extrude assigned (OCCT)', () => {
     const [square] = await rebuild(blockWithPolygon(4));
     const [hexagon] = await rebuild(blockWithPolygon(6));
     expect(blockTop(hexagon!)).toBe(blockTop(square!));
-    expect(blockTop(square!)).toMatch(/^sf_extrude_ext_/);
+    expect(blockTop(square!)).toMatch(/^sf_extrude_ext~end\(/);
   }, 60_000);
 });

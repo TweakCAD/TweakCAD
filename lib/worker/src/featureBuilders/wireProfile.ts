@@ -13,6 +13,7 @@
 import type { Vec3 } from '@tweakcad/core/src/math.ts';
 import type { SketchRegion } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import { catmullRomSpline } from '@tweakcad/core/src/sketch/curveSampling.ts';
+import { segmentIdentity } from '@tweakcad/core/src/sketch/provenance.ts';
 import type { WireSegment } from '@tweakcad/kernel/src/types.ts';
 import type { ResolvedSketchPlaneData } from './buildSketch.ts';
 import { DEFAULT_PLANES } from './resolvePlane.ts';
@@ -49,6 +50,14 @@ export function regionHasCurveSegments(region: SketchRegion): boolean {
 }
 
 /**
+ * True iff every segment carries its own geometry, so the region can be built
+ * as a `'wire'` profile whose edges each name the segment they came from.
+ */
+export function regionHasSegmentGeometry(region: SketchRegion): boolean {
+  return region.segments.length > 0 && region.segments.every(s => s.start !== undefined && s.end !== undefined);
+}
+
+/**
  * Build the kernel-side `WireSegment[]` from a region's per-segment
  * geometry. Each `line` becomes a kernel line; each `arc` becomes a
  * three-point arc via the midpoint of its signed sweep; each
@@ -66,6 +75,7 @@ export function regionSegmentsToWire(
   const out: WireSegment[] = [];
   for (const seg of region.segments) {
     if (!seg.start || !seg.end) continue; // legacy segment with no geometry
+    const id = segmentIdentity(seg);
     if (seg.kind === 'spline' && seg.splinePoints !== undefined && seg.splinePoints.length >= 2) {
       // Sample the editor's Catmull-Rom curve through the control points
       // (already oriented in loop order) so the kernel B-spline follows
@@ -74,6 +84,7 @@ export function regionSegmentsToWire(
       out.push({
         kind: 'spline',
         points: sampled.map(p => sketchToWorld(p, plane)),
+        id,
       });
     } else if (seg.kind === 'bezier' && seg.bezierCp1 !== undefined && seg.bezierCp2 !== undefined) {
       // Cubic Bézier — poles are already oriented in loop order by the
@@ -85,6 +96,7 @@ export function regionSegmentsToWire(
         cp1: sketchToWorld(seg.bezierCp1, plane),
         cp2: sketchToWorld(seg.bezierCp2, plane),
         end: sketchToWorld(seg.end, plane),
+        id,
       });
     } else if (
       seg.kind === 'arc' &&
@@ -110,12 +122,14 @@ export function regionSegmentsToWire(
         start: sketchToWorld(seg.start, plane),
         mid: sketchToWorld(midLocal, plane),
         end: sketchToWorld(seg.end, plane),
+        id,
       });
     } else {
       out.push({
         kind: 'line',
         start: sketchToWorld(seg.start, plane),
         end: sketchToWorld(seg.end, plane),
+        id,
       });
     }
   }

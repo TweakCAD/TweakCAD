@@ -18,6 +18,7 @@ import type { CadKernel } from './interface.ts';
 import { build3MF, EXPORT_MIME } from './occtExports.ts';
 import { dedupePointsForInterpolation } from './splineDedup.ts';
 import { chooseByHint } from './repairHint.ts';
+import { sketchFaceProvenance, sketchSolidFaceNames, type SketchFaceProvenance } from './sketchProvenance.ts';
 import { FINE_TESSELLATION } from './types.ts';
 import type {
   KernelBody,
@@ -210,6 +211,9 @@ export class OcctKernel implements CadKernel {
    */
   private tracker = new ShapeEvolutionTracker();
 
+  /** What each sketch face from `createSketchFace` was built from, by face handle. */
+  private sketchFaces = new Map<string, SketchFaceProvenance>();
+
   async init(): Promise<void> {
     if (this.kernel) return;
     this.kernel = await UpstreamKernel.init();
@@ -237,7 +241,7 @@ export class OcctKernel implements CadKernel {
    * extrudeFace, revolve, loft, etc.). Walks the new body's faces and
    * edges, hashes each, and registers fresh stable IDs with the tracker.
    */
-  private assignFreshIds(body: KernelBody, origin: string): void {
+  private assignFreshIds(body: KernelBody, origin: string, faceNames?: readonly (string | undefined)[]): void {
     const k = this.getKernel();
     const shape = this.getBodyShape(body);
     const faces = k.getSubShapes(shape, 'face');
@@ -245,7 +249,7 @@ export class OcctKernel implements CadKernel {
     try {
       const faceHashes = faces.map(f => k.hashCode(f, HASH_UPPER_BOUND));
       const edgeHashes = edges.map(e => k.hashCode(e, HASH_UPPER_BOUND));
-      this.tracker.registerFreshBody(body.handle, faceHashes, edgeHashes, origin);
+      this.tracker.registerFreshBody(body.handle, faceHashes, edgeHashes, origin, faceNames);
     } finally {
       for (const f of faces) k.release(f);
       for (const e of edges) k.release(e);
@@ -291,6 +295,23 @@ export class OcctKernel implements CadKernel {
   private storeFreshBody(shape: ShapeHandle, source: string): KernelBody {
     const body = this.storeBody(shape, source);
     this.assignFreshIds(body, source);
+    return body;
+  }
+
+  /**
+   * Store a solid swept from a sketch face (extrude, revolve). When the face
+   * carries sketch provenance, its faces are named from the sketch
+   * (`sketchProvenance.ts`), and the walk-order IDs left over (edges, and
+   * any face it cannot name) are tagged with the region, so two profiles of
+   * one feature never share them.
+   */
+  private storeSketchSolid(shape: ShapeHandle, face: KernelFace, tag: string): KernelBody {
+    const provenance = this.sketchFaces.get(face.handle);
+    if (!provenance) return this.storeFreshBody(shape, tag);
+    const source = provenance.region !== undefined ? `${tag}~${provenance.region}` : tag;
+    const body = this.storeBody(shape, source);
+    const names = sketchSolidFaceNames(this.getKernel(), shape, this.getFaceShape(face), provenance, tag, HASH_UPPER_BOUND);
+    this.assignFreshIds(body, source, names);
     return body;
   }
 
@@ -502,7 +523,10 @@ export class OcctKernel implements CadKernel {
         faceShape = holed;
       }
 
-      return ok(this.storeFace(faceShape, ''));
+      const face = this.storeFace(faceShape, '');
+      const provenance = sketchFaceProvenance(k, faceShape, profile, HASH_UPPER_BOUND);
+      if (provenance) this.sketchFaces.set(face.handle, provenance);
+      return ok(face);
     } catch (e) {
       console.error('[OcctKernel] createSketchFace failed:', e);
       return err(
@@ -657,7 +681,7 @@ export class OcctKernel implements CadKernel {
       const k = this.getKernel();
       const faceShape = this.getFaceShape(face);
       const body = k.extrude(faceShape, vector[0], vector[1], vector[2]);
-      return ok(this.storeFreshBody(body, originTag('extrude', origin)));
+      return ok(this.storeSketchSolid(body, face, originTag('extrude', origin)));
     } catch (e) {
       console.error('[OcctKernel] extrudeFace failed:', e);
       return err(
@@ -695,7 +719,7 @@ export class OcctKernel implements CadKernel {
         },
         angleRad,
       );
-      return ok(this.storeFreshBody(body, originTag('revolve', origin)));
+      return ok(this.storeSketchSolid(body, face, originTag('revolve', origin)));
     } catch (e) {
       console.error('[OcctKernel] revolve failed:', e);
       return err(
@@ -1927,6 +1951,7 @@ export class OcctKernel implements CadKernel {
           ? this.edges
           : null;
     if (!map) return;
+    this.sketchFaces.delete(id);
     const shape = map.get(id);
     if (shape !== undefined) {
       try {

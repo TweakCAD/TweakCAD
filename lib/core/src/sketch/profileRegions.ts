@@ -28,6 +28,13 @@ import { catmullRomSpline, catmullRomClosed, sampleEllipse } from './curveSampli
  */
 export type SketchRegionSegment = {
   entityId: EntityId;
+  /**
+   * Which piece of its entity this segment is, when it is not the whole
+   * entity: `<entity>[<from>,<to>]`, named by what bounds it at each end
+   * (see `GraphEdge.identity` in `planarGraph.ts`). Read it through
+   * `segmentIdentity` (`provenance.ts`).
+   */
+  identity?: string;
   reversed: boolean;
   /** Native curve type. `undefined` falls back to line (legacy). */
   kind?: 'line' | 'arc' | 'bezier' | 'spline';
@@ -696,6 +703,7 @@ function planarFaceToRegion(face: PlanarFace, index: number): SketchRegion {
         start: [e.start[0], e.start[1]],
         end: [e.end[0], e.end[1]],
       };
+      if (e.identity !== String(e.entityId)) base.identity = e.identity;
       if (e.curveType === 'arc' && e.center !== undefined && e.radius !== undefined) {
         base.arcCenter = [e.center[0], e.center[1]];
         base.arcRadius = e.radius;

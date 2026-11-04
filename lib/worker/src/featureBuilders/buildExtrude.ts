@@ -30,10 +30,11 @@ import type {
 } from './buildSketch.ts';
 import { DEFAULT_PLANES, resolvePlaneRefAsync } from './resolvePlane.ts';
 import {
-  regionHasCurveSegments,
+  regionHasSegmentGeometry,
   regionSegmentsToWire,
   sketchToWorld,
 } from './wireProfile.ts';
+import { regionIdentity, regionKey, segmentIdentity } from '@tweakcad/core/src/sketch/provenance.ts';
 
 /**
  * Slop added to throughAll distances so OCCT booleans have clean exit
@@ -145,8 +146,10 @@ export async function buildExtrude(
     regionsBySketch.set(sid, list);
   }
   const holedProfiles: ResolvedProfile[] = [];
+  const regionSets = new Map<string, string>();
   for (const [sid, regions] of regionsBySketch) {
     for (const region of fillSelectedHoles(regions)) {
+      assertDistinctRegionKey(regionSets, region, sketchRegions(sid, context));
       const profile = regionToKernelProfile(region, sid, context);
       const holes = region.holes ?? [];
       if (holes.length > 0) {
@@ -161,7 +164,6 @@ export async function buildExtrude(
   // pre-extrude state) is what produced the "monster body" duplicates
   // where each profile emitted its own copy of "previous-state ∪ profile".
   const profileBodies: KernelBody[] = [];
-  let profileIndex = 0;
   try {
     for (const profile of holedProfiles) {
       // Apply offset, then back-shift by half-distance for symmetric so
@@ -183,13 +185,11 @@ export async function buildExtrude(
         extrudeAxis[2] * distance,
       ];
 
-      // `node.id` is forwarded as the topology-tracker origin so stable
-      // face/edge IDs are deterministic per feature. Multi-face extrudes
-      // use a per-face suffix so each face gets a unique tag.
-      const extrudeOrigin = holedProfiles.length > 1
-        ? `${node.id}_${profileIndex}`
-        : node.id;
-      const bodyResult = await kernel.extrudeFace(faceResult.value, vector, extrudeOrigin);
+      // `node.id` is the topology-tracker origin, so stable face/edge IDs
+      // are deterministic per feature. The kernel tells the profiles apart
+      // by the region each one is (`ResolvedProfile.region`), not by its
+      // place in the list.
+      const bodyResult = await kernel.extrudeFace(faceResult.value, vector, node.id);
       // The sketch face has done its job; it belongs to no body, so nothing
       // else would ever free it.
       releaseShapes(kernel, [faceResult.value]);
@@ -197,7 +197,6 @@ export async function buildExtrude(
         throw new Error(`Failed to extrude face: ${bodyResult.error.message}`);
       }
       profileBodies.push(bodyResult.value);
-      profileIndex++;
     }
   } catch (error) {
     // A later profile failed: the solids already made are not going anywhere.
@@ -321,6 +320,12 @@ export function regionToKernelProfile(
   const resolvedEntities = sketchOutputs?.data?.resolvedEntities as Record<string, ResolvedSketchEntityData> | undefined;
   const { normal, uAxis, vAxis } = plane ?? DEFAULT_PLANES.XZ;
 
+  const provenance = { region: regionKey(region, sketchRegions(sketchId, context)) };
+  const [only] = region.segments;
+  const boundary = region.segments.length === 1 && only !== undefined
+    ? { ...provenance, boundaryId: segmentIdentity(only) }
+    : provenance;
+
   if (region.type === 'circle') {
     const entityId = region.entityIds[0];
     const entity = entityId ? resolvedEntities?.[String(entityId)] : undefined;
@@ -334,6 +339,7 @@ export function regionToKernelProfile(
         origin: center,
         uAxis,
         vAxis,
+        ...boundary,
       };
     }
   }
@@ -348,7 +354,7 @@ export function regionToKernelProfile(
     const ring2d = sampleEllipse(region.center, major, minor, ELLIPSE_KERNEL_SAMPLES);
     const vertices = ring2d.map(p => sketchToWorld(p, plane));
     const center = sketchToWorld(region.center, plane);
-    return { type: 'closedSpline', vertices, center, normal, origin: center, uAxis, vAxis };
+    return { type: 'closedSpline', vertices, center, normal, origin: center, uAxis, vAxis, ...boundary };
   }
 
   if (region.type === 'closedSpline') {
@@ -367,7 +373,7 @@ export function regionToKernelProfile(
     }
     const vertices = ringSamples.map(p => sketchToWorld(p, plane));
     const center = sketchToWorld(region.center, plane);
-    return { type: 'closedSpline', vertices, center, normal, origin: center, uAxis, vAxis };
+    return { type: 'closedSpline', vertices, center, normal, origin: center, uAxis, vAxis, ...boundary };
   }
 
   if (region.type === 'polygon') {
@@ -376,11 +382,11 @@ export function regionToKernelProfile(
     // unreachable. Rectangles arrive as 4 lines and fall through to the
     // wire / general-polygon paths below.)
 
-    // If any segment carries a native curve (arc or Bézier), emit a
-    // `'wire'` profile so the kernel builds a real BREP curve edge per
-    // segment — not a 64-facet polygon. See `wireProfile.ts` for the
-    // shared implementation.
-    if (regionHasCurveSegments(region)) {
+    // Emit a `'wire'` profile: the kernel builds one BREP edge per
+    // segment (a real curve edge, not a 64-facet polygon, for an arc or
+    // Bézier), and each edge names the segment it came from. See
+    // `wireProfile.ts` for the shared implementation.
+    if (regionHasSegmentGeometry(region)) {
       const wireSegments = regionSegmentsToWire(region, plane);
       const center = sketchToWorld(region.center, plane);
       return {
@@ -391,6 +397,7 @@ export function regionToKernelProfile(
         origin: center,
         uAxis,
         vAxis,
+        ...provenance,
       };
     }
 
@@ -555,7 +562,34 @@ function dot(a: Vec3, b: Vec3): number {
   return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
-function offsetProfile(profile: ResolvedProfile, distance: number): ResolvedProfile {
+/** Every region detected in the sketch's output. */
+export function sketchRegions(sketchId: FeatureId, context: BuildContext): SketchRegion[] {
+  const regions = context.featureOutputs.get(sketchId)?.data?.resolvedRegions as Record<string, SketchRegion> | undefined;
+  return regions ? Object.values(regions) : [];
+}
+
+/**
+ * Two profiles of one feature must not share a region key unless they are
+ * the same region: the key names their caps. A shared key over different
+ * identities is a digest collision, and fails the build rather than naming
+ * two caps the same.
+ */
+function assertDistinctRegionKey(
+  seen: Map<string, string>,
+  region: SketchRegion,
+  regions: readonly SketchRegion[],
+): void {
+  const key = regionKey(region, regions);
+  const set = JSON.stringify(regionIdentity(region, regions));
+  const other = seen.get(key);
+  if (other !== undefined && other !== set) {
+    throw new Error(`Two profiles share the region key ${key}`);
+  }
+  seen.set(key, set);
+}
+
+/** Move a profile (and its holes and wire segments) along its normal. */
+export function offsetProfile(profile: ResolvedProfile, distance: number): ResolvedProfile {
   const normal = profile.normal;
   const offsetVector: Vec3 = [normal[0] * distance, normal[1] * distance, normal[2] * distance];
   const offsetVec = (value: Vec3 | undefined): Vec3 | undefined => value

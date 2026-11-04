@@ -34,7 +34,12 @@ export type KernelEdge = {
  * resolver in the worker is responsible for mapping sketch-local 2D to
  * world via the sketch plane.
  */
-export type WireSegment =
+export type WireSegment = WireSegmentGeometry & {
+  /** The sketch segment this edge is built from (`segmentIdentity`). */
+  id?: string;
+};
+
+export type WireSegmentGeometry =
   | { kind: 'line'; start: Vec3; end: Vec3 }
   /**
    * Three-point arc through start → mid → end. `mid` is any point on
@@ -106,6 +111,14 @@ export type ResolvedProfile = {
    * (see `profileNesting.ts`); an empty/absent list is a plain face.
    */
   holes?: ResolvedProfile[];
+  /**
+   * Sketch provenance. `region` is the region's identity (`regionKey`); a
+   * one-edge profile (`'circle'`, `'closedSpline'`) names that edge in
+   * `boundaryId`, and a `'wire'` profile names each edge on its segment. The
+   * kernel names the faces an extrude or revolve creates from these.
+   */
+  region?: string;
+  boundaryId?: string;
 };
 
 /** Resolved plane in 3D space */

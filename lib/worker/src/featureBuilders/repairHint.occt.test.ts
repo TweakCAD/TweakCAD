@@ -187,7 +187,10 @@ describe('repair hints (OCCT)', () => {
     const ref = wall ? stableFaceRef({ partId: PART, bodyId: before.body.bodyId }, wall) : null;
     expect(ref).not.toBeNull();
 
-    const after = await rebuild(kernel, holedBlock([[20, 10], [10, 0], [-10, 0]]));
+    // The new circle is drawn last, as an edit would add it: the circles
+    // already there keep their entity ids, and the wall is named after its
+    // circle.
+    const after = await rebuild(kernel, holedBlock([[10, 0], [-10, 0], [20, 10]]));
     const face = await kernel.resolveFaceRef(after.body.handle, ref!.stableFaceId, ref!.repairHint);
 
     expect(face).not.toBeNull();
