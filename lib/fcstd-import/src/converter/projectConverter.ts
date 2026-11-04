@@ -20,6 +20,7 @@
  */
 
 import { partId as makePartId, generateId } from '@tweakcad/core/src/ids.ts';
+import type { FeatureId, PartId } from '@tweakcad/core/src/ids.ts';
 import { CURRENT_SCHEMA_VERSION } from '@tweakcad/core/src/document/version.ts';
 import type {
   CadProject,
@@ -45,6 +46,22 @@ const APP_VERSION = '0.1.0-fcstd-import';
 export type ProjectConversionResult = {
   project: CadProject;
   diagnostics: Diagnostic[];
+  report: FcstdImportReport;
+};
+
+/**
+ * Which parts of the source document made it into the project. Everything a
+ * document holds that is absent here was dropped, with or without a diagnostic.
+ */
+export type FcstdImportReport = {
+  /** FreeCAD object name → the part it became. */
+  parts: Record<string, PartId>;
+  /** FreeCAD object name → the timeline feature it became. */
+  features: Record<string, FeatureId>;
+  /** FreeCAD constraint type name → how many were imported. */
+  constraintsImported: Record<string, number>;
+  /** FreeCAD geometry type → how many were imported. */
+  geometryImported: Record<string, number>;
 };
 
 /**
@@ -60,6 +77,12 @@ export function convertDocument(
   const createdAt = options.createdAt ?? new Date().toISOString();
   const diagnostics: Diagnostic[] = [];
   const parts: CadProject['parts'] = {};
+  const report: FcstdImportReport = {
+    parts: {},
+    features: {},
+    constraintsImported: {},
+    geometryImported: {},
+  };
 
   const bodies = doc.objectsOrder
     .filter((h) => h.type === 'PartDesign::Body')
@@ -77,7 +100,7 @@ export function convertDocument(
   }
 
   for (const body of bodies) {
-    const partResult = convertBody(body, doc, createdAt);
+    const partResult = convertBody(body, doc, createdAt, report);
     diagnostics.push(...partResult.diagnostics);
     const pid = makePartId(generateId('part'));
     const part: CadPart = {
@@ -92,6 +115,7 @@ export function convertDocument(
       },
     };
     parts[pid] = part;
+    report.parts[body.name] = pid;
   }
 
   const project: CadProject = {
@@ -109,7 +133,7 @@ export function convertDocument(
     assemblies: {},
   };
 
-  return { project, diagnostics };
+  return { project, diagnostics, report };
 }
 
 type BodyConversion = {
@@ -117,7 +141,12 @@ type BodyConversion = {
   diagnostics: Diagnostic[];
 };
 
-function convertBody(body: FcBodyObject, doc: FcDocument, createdAt: string): BodyConversion {
+function convertBody(
+  body: FcBodyObject,
+  doc: FcDocument,
+  createdAt: string,
+  report: FcstdImportReport,
+): BodyConversion {
   const timeline: FeatureNode[] = [];
   const diagnostics: Diagnostic[] = [];
   const sketchMappings = new Map<string, SketchEntityMapping>();
@@ -138,7 +167,7 @@ function convertBody(body: FcBodyObject, doc: FcDocument, createdAt: string): Bo
 
     switch (obj.kind) {
       case 'sketch':
-        handleSketch(obj, timeline, sketchMappings, diagnostics, createdAt);
+        handleSketch(obj, timeline, sketchMappings, diagnostics, createdAt, report);
         break;
       case 'pad':
         padCountInBody = handlePad(
@@ -148,10 +177,11 @@ function convertBody(body: FcBodyObject, doc: FcDocument, createdAt: string): Bo
           diagnostics,
           createdAt,
           padCountInBody,
+          report,
         );
         break;
       case 'pocket':
-        handlePocket(obj, timeline, sketchMappings, diagnostics, createdAt);
+        handlePocket(obj, timeline, sketchMappings, diagnostics, createdAt, report);
         break;
       case 'body':
       case 'generic':
@@ -175,9 +205,14 @@ function handleSketch(
   mappings: Map<string, SketchEntityMapping>,
   diagnostics: Diagnostic[],
   createdAt: string,
+  report: FcstdImportReport,
 ): void {
   const result = convertSketch(sketch, createdAt);
   timeline.push(result.feature);
+  report.features[sketch.name] = result.feature.id;
+  for (const [type, count] of Object.entries(result.importedGeometry)) {
+    report.geometryImported[type] = (report.geometryImported[type] ?? 0) + count;
+  }
   mappings.set(sketch.name, {
     sketchFeatureId: result.feature.id,
     wireEntityIds: result.wireEntityIds,
@@ -224,6 +259,7 @@ function handlePad(
   diagnostics: Diagnostic[],
   createdAt: string,
   padCountInBody: number,
+  report: FcstdImportReport,
 ): number {
   const mapping = pad.profileName ? mappings.get(pad.profileName) : undefined;
   if (!mapping) {
@@ -239,6 +275,7 @@ function handlePad(
   const operation: 'newBody' | 'join' = padCountInBody === 0 ? 'newBody' : 'join';
   const result = convertPad(pad, mapping.sketchFeatureId, mapping.wireEntityIds, operation, createdAt);
   timeline.push(result.feature);
+  report.features[pad.name] = result.feature.id;
   if (result.unsupportedTypeWarning) {
     diagnostics.push({
       id: generateId('diag'),
@@ -258,6 +295,7 @@ function handlePocket(
   mappings: Map<string, SketchEntityMapping>,
   diagnostics: Diagnostic[],
   createdAt: string,
+  report: FcstdImportReport,
 ): void {
   const mapping = pocket.profileName ? mappings.get(pocket.profileName) : undefined;
   if (!mapping) {
@@ -272,6 +310,7 @@ function handlePocket(
   }
   const result = convertPocket(pocket, mapping.sketchFeatureId, mapping.wireEntityIds, createdAt);
   timeline.push(result.feature);
+  report.features[pocket.name] = result.feature.id;
   if (result.unsupportedTypeWarning) {
     diagnostics.push({
       id: generateId('diag'),

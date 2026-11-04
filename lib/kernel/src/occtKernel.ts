@@ -92,6 +92,22 @@ function nextHandle(prefix: string): string {
  */
 const SWEEP_MIN_VOLUME = 1e-9;
 
+/** `#rrggbb` to the sRGB [0, 1] triple XCAF labels take. */
+function hexToColor3(hex: string): [number, number, number] {
+  const n = Number.parseInt(hex.slice(1), 16);
+  return [((n >> 16) & 0xff) / 255, ((n >> 8) & 0xff) / 255, (n & 0xff) / 255];
+}
+
+/**
+ * True for OCCT's text BREP. A text file opens with `CASCADE Topology V<n>,`
+ * after an optional `DBRep_DrawableShape` line; the binary one opens with
+ * `Open CASCADE Topology V<n> (c)`.
+ */
+function isTextBrep(bytes: Uint8Array): boolean {
+  const head = new TextDecoder('latin1').decode(bytes.subarray(0, 64));
+  return /^\s*(DBRep_DrawableShape\s+)?CASCADE Topology V\d+,/.test(head);
+}
+
 /**
  * Compose a topology-tracker origin string from a builtin op name and an
  * optional caller-supplied tag. Builders pass `node.id` as the tag so the
@@ -111,12 +127,6 @@ const SWEEP_MIN_VOLUME = 1e-9;
  * tessellate, etc.). Those bodies won't have stable IDs across kernel
  * sessions but that's fine: they're not referenced by feature inputs.
  */
-/** `#rrggbb` to the sRGB [0, 1] triple XCAF labels take. */
-function hexToColor3(hex: string): [number, number, number] {
-  const n = Number.parseInt(hex.slice(1), 16);
-  return [((n >> 16) & 0xff) / 255, ((n >> 8) & 0xff) / 255, (n & 0xff) / 255];
-}
-
 function originTag(op: string, callerTag: string | undefined): string {
   if (callerTag === undefined || callerTag.length === 0) return op;
   // Already prefixed (`extrude_<uid>` passed in for op='extrude') → don't double up.
@@ -1793,10 +1803,14 @@ export class OcctKernel implements CadKernel {
   async importBrep(data: ArrayBuffer, origin?: string): Promise<Result<KernelBody[], KernelError>> {
     try {
       const k = this.getKernel();
-      // occt-wasm's fromBREPBinary takes the raw BREP bytes. Same
-      // decomposition path as STEP — single-solid files come back as a
-      // 1-element body array; a compound is split per solid.
-      const root = k.fromBREPBinary(new Uint8Array(data));
+      // A .brep file is either of OCCT's two serialisations; the binary one
+      // is what `exportBrep` writes, the text one is what most other tools
+      // write. Same decomposition path as STEP — single-solid files come back
+      // as a 1-element body array; a compound is split per solid.
+      const bytes = new Uint8Array(data);
+      const root = isTextBrep(bytes)
+        ? k.fromBREP(new TextDecoder('latin1').decode(bytes))
+        : k.fromBREPBinary(bytes);
       try {
         return ok(this.decomposeToBodies(root, origin ?? 'brep-import'));
       } finally {

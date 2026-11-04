@@ -904,6 +904,24 @@ describe('OcctKernel — exports', () => {
     expect(Math.min(xSpan, ySpan, zSpan)).toBeGreaterThan(0);
   });
 
+  it('importBrep reads the text BREP other tools write', async () => {
+    const k = await newKernel();
+    const r = await k.makeBox({ origin: [0, 0, 0], width: 5, height: 6, depth: 7 });
+    if (!r.ok) throw new Error('precondition failed');
+    const raw = k as unknown as {
+      kernel: { toBREP(shape: unknown): string };
+      getBodyShape(body: unknown): unknown;
+    };
+    const text = raw.kernel.toBREP(raw.getBodyShape(r.value));
+    expect(text).toContain('CASCADE Topology V');
+
+    const imported = await k.importBrep(new TextEncoder().encode(text).buffer as ArrayBuffer, 'test-brep');
+    if (!imported.ok) throw new Error(`importBrep failed: ${imported.error.message}`);
+    expect(imported.value).toHaveLength(1);
+    const mass = await k.getMassProperties(imported.value[0]!);
+    expect(mass.volume).toBeCloseTo(210, 6);
+  });
+
   it('export3MF produces a ZIP archive containing a 3D model entry', async () => {
     const k = await newKernel();
     const r = await k.makeBox({ origin: [0, 0, 0], width: 5, height: 5, depth: 5 });

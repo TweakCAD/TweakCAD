@@ -44,6 +44,14 @@ export type SketchConversionResult = {
   wireEntityIds: EntityId[];
   /** Geometry indices in the FreeCAD GeometryList that were skipped (e.g. ellipses, splines). */
   skippedGeometry: { index: number; rawType: string }[];
+  /** FreeCAD geometry type → how many of that type were imported. */
+  importedGeometry: Record<string, number>;
+};
+
+const FC_GEOMETRY_TYPE: Record<Exclude<FcGeometry['kind'], 'unsupported'>, string> = {
+  lineSegment: 'Part::GeomLineSegment',
+  circle: 'Part::GeomCircle',
+  arcOfCircle: 'Part::GeomArcOfCircle',
 };
 
 /**
@@ -66,6 +74,7 @@ export function convertSketch(
   let state: EditorState = emptyEditorState();
   const wireEntityIds: EntityId[] = [];
   const skipped: { index: number; rawType: string }[] = [];
+  const importedGeometry: Record<string, number> = {};
 
   sketch.geometry.forEach((geom, idx) => {
     const drawn = drawFcGeometry(state, geom);
@@ -74,6 +83,10 @@ export function convertSketch(
       return;
     }
     state = drawn.state;
+    if (geom.kind !== 'unsupported') {
+      const type = FC_GEOMETRY_TYPE[geom.kind];
+      importedGeometry[type] = (importedGeometry[type] ?? 0) + 1;
+    }
     // `editorModelToBuildGeometry` keys each entity by its geometry id, so the
     // wire / order references use that same id.
     const eid = entityId(String(drawn.geometryId));
@@ -99,7 +112,7 @@ export function convertSketch(
     updatedAt: createdAt,
   };
 
-  return { feature, wireEntityIds, skippedGeometry: skipped };
+  return { feature, wireEntityIds, skippedGeometry: skipped, importedGeometry };
 }
 
 /**

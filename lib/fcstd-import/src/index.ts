@@ -18,6 +18,7 @@ import type { CadProject, Diagnostic } from '@tweakcad/core/src/document/schema.
 import { readFcstdArchive } from './parser/fcstdArchive.ts';
 import { parseDocumentXml } from './parser/documentParser.ts';
 import { convertDocument } from './converter/projectConverter.ts';
+import type { FcstdImportReport } from './converter/projectConverter.ts';
 
 export type ImportFcstdOptions = {
   /** Optional override for the imported project's `metadata.name`. */
@@ -29,6 +30,7 @@ export type ImportFcstdOptions = {
 export type ImportFcstdSuccess = {
   project: CadProject;
   diagnostics: Diagnostic[];
+  report: FcstdImportReport;
 };
 
 /**
@@ -50,7 +52,7 @@ export async function importFcstd(
   if (!parsed.ok) return parsed;
 
   const conversion = convertDocument(parsed.value, options);
-  return ok({ project: conversion.project, diagnostics: conversion.diagnostics });
+  return ok(conversion);
 }
 
 /**
@@ -69,7 +71,7 @@ export function importFcstdFromXml(
   const parsed = parseDocumentXml(documentXml);
   if (!parsed.ok) return parsed;
   const conversion = convertDocument(parsed.value, options);
-  return ok({ project: conversion.project, diagnostics: conversion.diagnostics });
+  return ok(conversion);
 }
 
 // --- Re-exports for advanced consumers ---
@@ -81,6 +83,7 @@ export { convertSketch } from './converter/sketchConverter.ts';
 export { convertPad, convertPocket } from './converter/extrudeConverter.ts';
 export { convertDocument } from './converter/projectConverter.ts';
 
+export type { FcstdImportReport };
 export type {
   FcDocument,
   FcObject,
