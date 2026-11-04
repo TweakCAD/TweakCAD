@@ -91,4 +91,26 @@ describe('build3MF', () => {
     const text = new TextDecoder().decode(new Uint8Array(buf));
     expect(text).toContain('a&amp;b&lt;c&gt;&quot;d');
   });
+
+  it('writes no colour markup when no body has a colour', () => {
+    const text = new TextDecoder().decode(new Uint8Array(
+      build3MF([unitTriangleMesh(), unitTriangleMesh(2)], { colors: [undefined, undefined] })));
+    expect(text).not.toContain('colorgroup');
+    expect(text).not.toContain('pid=');
+    expect(text).toContain('<item objectid="1" />');
+  });
+
+  it('colours each triangle by its body, the default colour for bodies without one', () => {
+    const text = new TextDecoder().decode(new Uint8Array(
+      build3MF([unitTriangleMesh(), unitTriangleMesh(2), unitTriangleMesh(4)], { colors: ['#e53935', undefined, '#e53935'] })));
+    expect(text).toContain('xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02"');
+    expect(text).toContain('<m:colorgroup id="1">');
+    expect(text).toContain('<m:color color="#E53935" />');
+    expect(text).toContain('<m:color color="#6699CC" />');
+    expect(text).toContain('<object id="2" name="model" type="model" pid="1" pindex="0">');
+    expect(text).toContain('<triangle v1="0" v2="1" v3="2" pid="1" p1="0" />');
+    expect(text).toContain('<triangle v1="3" v2="4" v3="5" pid="1" p1="1" />');
+    expect(text).toContain('<triangle v1="6" v2="7" v3="8" pid="1" p1="0" />');
+    expect(text).toContain('<item objectid="2" />');
+  });
 });

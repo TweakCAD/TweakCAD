@@ -19,6 +19,7 @@ import type { PartId, BodyId, FeatureId } from '@tweakcad/core/src/ids.ts';
 import type { DocumentStore } from '@tweakcad/core/src/store/documentStore.ts';
 import type { createViewportStore } from '@tweakcad/core/src/store/viewportStore.ts';
 import type { CadPart, CadProject, FeatureNode } from '@tweakcad/core/src/document/schema.ts';
+import { bodyColorOf } from '@tweakcad/core/src/document/schema.ts';
 import { consoleLog } from '@tweakcad/core/src/store/consoleStore.ts';
 import { WorkerPool } from '@tweakcad/worker/src/pool.ts';
 import { resolveActivePartId } from '@tweakcad/core/src/document/featureLookup.ts';
@@ -472,11 +473,12 @@ export async function exportActivePart(
   try {
     const bodyHandles = result.bodies.map((b) => b.handle);
     if (bodyHandles.length === 0) return new ArrayBuffer(0);
+    const colors = result.bodies.map((b) => bodyColorOf(part, b.bodyId));
     let blob: Blob;
     if (format === 'stl') blob = await fallback.kernel.exportStl(bodyHandles);
-    else if (format === 'step') blob = await fallback.kernel.exportStep(bodyHandles);
+    else if (format === 'step') blob = await fallback.kernel.exportStep(bodyHandles, { colors });
     else if (format === 'brep') blob = await fallback.kernel.exportBrep(bodyHandles);
-    else blob = await fallback.kernel.export3MF(bodyHandles, { name: part.name });
+    else blob = await fallback.kernel.export3MF(bodyHandles, { name: part.name, colors });
     return await blob.arrayBuffer();
   } finally {
     fallback.release(fallback.kernel, result.bodies);

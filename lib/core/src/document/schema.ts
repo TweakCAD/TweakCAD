@@ -59,7 +59,27 @@ export type CadPart = {
    * table at rebuild time.
    */
   configurations?: ConfigurationTable;
+  /**
+   * Display colour per body, `#rrggbb`, keyed by body id. A body with no
+   * entry shows the default appearance. Body ids survive edits (a cut or
+   * join keeps the host's id), so the colour follows the body through the
+   * timeline; an entry whose body no longer exists is ignored. 3MF and STEP
+   * exports write these colours; STL has no colour.
+   */
+  bodyColors?: Record<string, string>;
 };
+
+/** The colour a body without a `bodyColors` entry is shown and exported in. */
+export const DEFAULT_BODY_COLOR = '#6699cc';
+
+/** `#rrggbb`, the only colour form `CadPart.bodyColors` holds. */
+export const BODY_COLOR_PATTERN = /^#[0-9a-f]{6}$/;
+
+/** A stored body colour if it is well formed, else undefined. */
+export function bodyColorOf(part: Pick<CadPart, 'bodyColors'>, bodyId: string): string | undefined {
+  const c = part.bodyColors?.[bodyId];
+  return c !== undefined && BODY_COLOR_PATTERN.test(c) ? c : undefined;
+}
 
 // --- Configurations (parameter presets) ---
 

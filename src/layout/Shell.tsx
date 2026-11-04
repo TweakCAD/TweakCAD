@@ -6,7 +6,7 @@ import { ViewportController } from '@tweakcad/viewport/src/ViewportController.ts
 import { useDocumentState, useUndoRedo, useCommandBus } from '../hooks/useDocumentStore.ts';
 import { getAppState } from '../appInit.ts';
 import type { PartId, FeatureId, BodyId } from '@tweakcad/core/src/ids.ts';
-import type { ProfileRef, SketchFeatureInputs, SketchEntity, ExtrudeFeatureInputs, PlaneRef, ConstructionPlaneDisplay, SketchPlaneDisplay, PrimitiveFeatureInputs, PrimitiveKind, MoveFeatureInputs, EdgeRef, FaceRef, SketchEditorSnapshot, LoftFeatureInputs, HoleFeatureInputs } from '@tweakcad/core/src/document/schema.ts';
+import type { ProfileRef, SketchFeatureInputs, SketchEntity, ExtrudeFeatureInputs, PlaneRef, ConstructionPlaneDisplay, SketchPlaneDisplay, PrimitiveFeatureInputs, PrimitiveKind, MoveFeatureInputs, EdgeRef, FaceRef, SketchEditorSnapshot, LoftFeatureInputs, HoleFeatureInputs, CadProject } from '@tweakcad/core/src/document/schema.ts';
 import { regionToProfileRef } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import { sketchToDxf } from '@tweakcad/core/src/sketch/io/dxf.ts';
 import { dxfToEditorState } from '@tweakcad/core/src/sketch/io/dxfImport.ts';
@@ -118,6 +118,8 @@ import { registerThumbnailCapture } from '../storage/thumbnailCapture.ts';
 import { featureIconType } from '../icons/cadIcons.tsx';
 import { targetsExactly } from '@tweakcad/worker/src/featureBuilders/buildMove.ts';
 import type { SaasState } from '../storage/index.ts';
+import { bodyColorMap } from './bodyColors.ts';
+import { isEditableTarget } from '../components/toolShortcuts.ts';
 
 // Sketch ↔ document plumbing notes:
 //   - There is no composite `SketchRectangleEntity`/`SketchSlotEntity`;
@@ -403,8 +405,8 @@ export function Shell({
   //
   // The highlight useEffect lower down derives the Set<BodyId> the viewport
   // should tint from these two ids; setting/clearing always flows through
-  // the helpers (`setFeatureOnly`, `setBodyAndFeature`, `clearSelection`)
-  // to keep the two ids consistent.
+  // the helpers (`setFeatureOnly`, `setBodyAndFeature`) to keep the two ids
+  // consistent; `setFeatureOnly(null)` clears both.
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null);
   const [selectedBodyId, setSelectedBodyId] = useState<string | null>(null);
   const setFeatureOnly = useCallback((featureId: string | null) => {
@@ -3373,7 +3375,10 @@ export function Shell({
 
     viewportCtrl.setPickCallback(picked => {
       if (!picked) {
+        // A click on empty space deselects everything: the pick, and the
+        // body / feature rows the Browser and timeline highlight.
         selectionStore.getState().select(null);
+        setFeatureOnly(null);
         return;
       }
       // Construction-plane picks are emitted by the SketchPlanePicker
@@ -3635,6 +3640,24 @@ export function Shell({
     };
   }, [displayMeshes, sketchActive, hiddenBodies, activePartId]);
 
+  // Body colours come straight from the document, so a colour change needs
+  // no rebuild. Re-applied on fresh meshes too; MeshRegistry also keeps the
+  // map for meshes a later rebuild creates.
+  useEffect(() => {
+    const ctrl = ctrlRef.current;
+    if (!ctrl) return;
+    const { documentStore } = getAppState();
+    let lastParts: CadProject['parts'] | null = null;
+    const applyColors = () => {
+      const doc = documentStore.getState();
+      if (doc.parts === lastParts) return;
+      lastParts = doc.parts;
+      ctrl.setBodyColors(bodyColorMap(doc));
+    };
+    applyColors();
+    return documentStore.subscribe(applyColors);
+  }, [displayMeshes]);
+
   // Resize handler
   useEffect(() => {
     const obs = new ResizeObserver(entries => {
@@ -3703,6 +3726,12 @@ export function Shell({
         e.preventDefault();
         onFileNew?.();
       }
+      // Escape deselects, as a click on empty space does. Not in sketch
+      // mode (there it returns to the select tool) and not while typing.
+      if (e.key === 'Escape' && !mod && !sketchActive && !isEditableTarget(e.target)) {
+        getAppState().selectionStore.getState().select(null);
+        setFeatureOnly(null);
+      }
       // Backtick toggles console
       if (e.key === '`' && !mod) {
         consoleToggle();
@@ -3717,7 +3746,7 @@ export function Shell({
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [undo, redo, consoleToggle, onFileNew, onFileOpen, onFileSave, onFileSaveAs]);
+  }, [undo, redo, consoleToggle, onFileNew, onFileOpen, onFileSave, onFileSaveAs, sketchActive, setFeatureOnly]);
 
   // ViewCube callbacks
   const handleViewCubeClick = useCallback((theta: number, phi: number) => {
@@ -3830,6 +3859,7 @@ export function Shell({
     const allFeatures = parts.flatMap(p => p.timeline);
     const featureNames = new Map(allFeatures.map(f => [String(f.id), f.name]));
     const featureTypes = new Map(allFeatures.map(f => [String(f.id), f.type]));
+    const colors = bodyColorMap(project);
     return displayMeshes.map((mesh, idx) => {
       const sourceFeatureId = bodyToFeatureMap[mesh.bodyId] ?? '';
       const featureName = featureNames.get(String(sourceFeatureId)) ?? 'Unknown';
@@ -3840,9 +3870,10 @@ export function Shell({
         sourceFeatureType: featureTypes.get(String(sourceFeatureId)) ?? '',
         sourceFeatureName: featureName,
         visible: !hiddenBodies.has(mesh.bodyId),
+        ...(colors.has(mesh.bodyId) ? { color: colors.get(mesh.bodyId)! } : {}),
       };
     });
-  }, [displayMeshes, bodyToFeatureMap, parts, hiddenBodies]);
+  }, [displayMeshes, bodyToFeatureMap, parts, hiddenBodies, project]);
 
   // Find selected feature details for inspector
   const selectedFeature = selectedFeatureId
@@ -3946,6 +3977,15 @@ export function Shell({
               // stays highlighted in the timeline but the viewport tint
               // emphasises only the picked body.
               setBodyAndFeature(bodyId, sourceFeatureId);
+            }}
+            onBodyColor={(bodyId, sourceFeatureId, color) => {
+              const owner = findFeaturePartId(project, sourceFeatureId);
+              if (!owner) {
+                consoleLog('warn', 'This body has no part to hold its color', 'body');
+                return;
+              }
+              const res = getAppState().commandBus.dispatch({ type: 'SetBodyColor', partId: owner, bodyId, color });
+              if (!res.ok) consoleLog('error', res.error.message, 'body');
             }}
             onBodyVisibilityToggle={(bodyId, visible) => {
               // Single source of truth: update hiddenBodies and let the

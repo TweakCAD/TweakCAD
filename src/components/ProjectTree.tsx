@@ -55,6 +55,8 @@ import {
   FeatureWarningIcon,
   ExtrudeIcon,
 } from '../icons/cadIcons.tsx';
+import { DEFAULT_BODY_COLOR } from '@tweakcad/core/src/document/schema.ts';
+import { BODY_COLOR_SWATCHES } from '../layout/bodyColors.ts';
 
 // ---- Types ----
 
@@ -112,6 +114,8 @@ export interface TreeBody {
   sourceFeatureName: string;
   /** Whether the body is currently visible in the viewport */
   visible: boolean;
+  /** The body's document colour (`#rrggbb`); absent = default appearance. */
+  color?: string;
 }
 
 interface TreePart {
@@ -129,6 +133,9 @@ interface ContextMenuEvent {
   /** Whether the menu was opened on a body row or a feature/group node —
    *  picks Move (body) vs Move all (feature) for imported geometry. */
   target: 'body' | 'feature';
+  /** The body row the menu was opened on, for the colour swatches. */
+  bodyId?: string;
+  bodyColor?: string | undefined;
   x: number;
   y: number;
 }
@@ -157,6 +164,8 @@ interface ProjectTreeProps {
   onBodyClick?: ((bodyId: string, sourceFeatureId: string) => void) | undefined;
   /** Called when a body's eye icon is toggled */
   onBodyVisibilityToggle?: ((bodyId: string, visible: boolean) => void) | undefined;
+  /** Set (`#rrggbb`) or reset (null) a body's colour from its menu. */
+  onBodyColor?: ((bodyId: string, sourceFeatureId: string, color: string | null) => void) | undefined;
   /** Open the Parameters editor dialog. */
   onEditParameters?: (() => void) | undefined;
 }
@@ -231,6 +240,7 @@ export function ProjectTree({
   onVisibilityToggle,
   onBodyClick,
   onBodyVisibilityToggle,
+  onBodyColor,
   onEditParameters,
 }: ProjectTreeProps) {
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(
@@ -303,6 +313,13 @@ export function ProjectTree({
       setContextMenu(null);
     }
   }, [contextMenu, onContextAction]);
+
+  const handleBodyColor = useCallback((color: string | null) => {
+    if (contextMenu?.bodyId) {
+      onBodyColor?.(contextMenu.bodyId, contextMenu.featureId, color);
+      setContextMenu(null);
+    }
+  }, [contextMenu, onBodyColor]);
 
   const paramEntries = Object.entries(parameters);
 
@@ -541,6 +558,8 @@ export function ProjectTree({
                             featureType: body.sourceFeatureType,
                             featureEnabled: true,
                             target: 'body',
+                            bodyId: body.bodyId,
+                            bodyColor: body.color,
                             x: e.clientX,
                             y: e.clientY,
                           });
@@ -612,6 +631,9 @@ export function ProjectTree({
           featureEnabled={contextMenu.featureEnabled}
           target={contextMenu.target}
           onAction={handleContextAction}
+          {...(contextMenu.bodyId && onBodyColor
+            ? { bodyColor: contextMenu.bodyColor ?? null, onBodyColor: handleBodyColor }
+            : {})}
         />
       )}
     </div>
@@ -834,11 +856,11 @@ function BodyRow({ body, isSelected, onClick, onContextMenu, onVisibilityToggle,
       <span
         style={{
           ...styles.featureIconWrap,
-          background: '#ff980018',
-          color: '#ff9800',
+          background: `${body.color ?? '#ff9800'}18`,
+          color: body.color ?? '#ff9800',
         }}
       >
-        <Box size={12} />
+        <Box size={12} {...(body.color ? { fill: body.color, fillOpacity: 0.35 } : {})} />
       </span>
       <span style={styles.featureName}>{body.label}</span>
       <span
@@ -888,10 +910,13 @@ interface ContextMenuProps {
   /** 'body' row vs 'feature'/group node — Move vs Move all for imports. */
   target: 'body' | 'feature';
   onAction: (action: ContextMenuAction) => void;
+  /** Present on a body row: the body's colour (null = default) and the setter. */
+  bodyColor?: string | null;
+  onBodyColor?: (color: string | null) => void;
 }
 
 const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
-  function ContextMenu({ x, y, featureType, featureEnabled, target, onAction }, ref) {
+  function ContextMenu({ x, y, featureType, featureEnabled, target, onAction, bodyColor, onBodyColor }, ref) {
     const isSketch = featureType === 'sketch';
     const isComponent = featureType === 'component';
     const isImportedGeometry = featureType === 'importedGeometry';
@@ -1027,6 +1052,9 @@ const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
           top: y,
         }}
       >
+        {onBodyColor && (
+          <BodyColorPicker current={bodyColor ?? null} onPick={onBodyColor} />
+        )}
         {items.map((item) => (
           <div key={item.action}>
             {item.dividerBefore && <div style={styles.contextDivider} />}
@@ -1054,6 +1082,53 @@ const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
     );
   }
 );
+
+// ---- Body colour picker ----
+
+function BodyColorPicker({ current, onPick }: { current: string | null; onPick: (color: string | null) => void }) {
+  return (
+    <div style={styles.colorSection}>
+      <div style={styles.colorLabel}>Color</div>
+      <div style={styles.colorGrid} role="group" aria-label="Body color">
+        {BODY_COLOR_SWATCHES.map(({ color, name }) => (
+          <button
+            key={color}
+            type="button"
+            title={name}
+            aria-label={name}
+            aria-pressed={current === color}
+            onClick={() => onPick(color)}
+            style={{
+              ...styles.colorSwatch,
+              background: color,
+              outline: current === color ? '2px solid #1a6fd1' : 'none',
+            }}
+          />
+        ))}
+      </div>
+      <div style={styles.colorActions}>
+        <button
+          type="button"
+          style={styles.colorTextBtn}
+          onClick={() => onPick(null)}
+          disabled={current === null}
+        >
+          Default
+        </button>
+        <label style={styles.colorTextBtn} title="Custom color">
+          Custom…
+          <input
+            type="color"
+            value={current ?? DEFAULT_BODY_COLOR}
+            onChange={e => onPick(e.currentTarget.value.toLowerCase())}
+            style={styles.colorInput}
+          />
+        </label>
+      </div>
+      <div style={styles.contextDivider} />
+    </div>
+  );
+}
 
 // ---- Styles ----
 
@@ -1282,5 +1357,54 @@ const styles: Record<string, React.CSSProperties> = {
     height: 1,
     background: '#e8e8e8',
     margin: '3px 8px',
+  },
+  colorSection: {
+    padding: '4px 0 0',
+  },
+  colorLabel: {
+    fontSize: 10,
+    fontWeight: 600,
+    color: '#888',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    padding: '2px 10px 4px',
+  },
+  colorGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(6, 18px)',
+    gap: 5,
+    padding: '0 10px',
+  },
+  colorSwatch: {
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    border: '1px solid rgba(0,0,0,0.15)',
+    outlineOffset: 1,
+    padding: 0,
+    cursor: 'pointer',
+  },
+  colorActions: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    padding: '4px 6px 2px',
+  },
+  colorTextBtn: {
+    position: 'relative',
+    border: 'none',
+    background: 'transparent',
+    fontSize: 12,
+    color: '#444',
+    padding: '3px 4px',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  },
+  colorInput: {
+    position: 'absolute',
+    inset: 0,
+    opacity: 0,
+    cursor: 'pointer',
+    width: '100%',
+    height: '100%',
   },
 };

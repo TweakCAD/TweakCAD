@@ -14,6 +14,7 @@ import { createSketchStore } from '@tweakcad/core/src/store/sketchStore.ts';
 import {
   createPartHandler,
   renamePartHandler,
+  setBodyColorHandler,
   renameProjectHandler,
 } from '@tweakcad/core/src/commands/handlers/partCommands.ts';
 import {
@@ -116,6 +117,7 @@ export function initializeApp(): AppState {
   commandBus.register('RenameProject', renameProjectHandler);
   commandBus.register('CreatePart', createPartHandler);
   commandBus.register('RenamePart', renamePartHandler);
+  commandBus.register('SetBodyColor', setBodyColorHandler);
   commandBus.register('CreateSketch', createSketchHandler);
   commandBus.register('CreateSketchFromImport', createSketchFromImportHandler);
   commandBus.register('RemoveSketchEntity', removeSketchEntityHandler);

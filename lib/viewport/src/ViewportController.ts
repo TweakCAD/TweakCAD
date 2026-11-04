@@ -679,6 +679,15 @@ export class ViewportController {
   }
 
   /**
+   * Set body colours from the document (`#rrggbb` by body id; a missing
+   * body gets the default).
+   */
+  setBodyColors(colors: ReadonlyMap<string, string>): void {
+    this.requestRender();
+    this.meshRegistry.setBodyColors(colors);
+  }
+
+  /**
    * Test/debug accessor for the underlying mesh registry. Exposed so
    * dev-mode inspectors (preview-eval, console) can verify per-body
    * visibility / opacity state without reaching into private fields.
@@ -689,7 +698,7 @@ export class ViewportController {
   }
 
   /**
-   * Highlight selected bodies (blue emissive tint). Pass null to clear.
+   * Highlight selected bodies (own-colour glow, blue edges). Pass null to clear.
    */
   highlightBodies(bodyIds: Set<BodyId> | null): void {
     this.requestRender();

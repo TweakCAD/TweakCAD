@@ -111,6 +111,12 @@ const SWEEP_MIN_VOLUME = 1e-9;
  * tessellate, etc.). Those bodies won't have stable IDs across kernel
  * sessions but that's fine: they're not referenced by feature inputs.
  */
+/** `#rrggbb` to the sRGB [0, 1] triple XCAF labels take. */
+function hexToColor3(hex: string): [number, number, number] {
+  const n = Number.parseInt(hex.slice(1), 16);
+  return [((n >> 16) & 0xff) / 255, ((n >> 8) & 0xff) / 255, (n & 0xff) / 255];
+}
+
 function originTag(op: string, callerTag: string | undefined): string {
   if (callerTag === undefined || callerTag.length === 0) return op;
   // Already prefixed (`extrude_<uid>` passed in for op='extrude') → don't double up.
@@ -1838,9 +1844,23 @@ export class OcctKernel implements CadKernel {
     return bodies;
   }
 
-  async exportStep(bodies: KernelBody[], _options?: StepExportOptions): Promise<Blob> {
+  async exportStep(bodies: KernelBody[], options?: StepExportOptions): Promise<Blob> {
     if (bodies.length === 0) throw new Error('exportStep: no bodies provided');
     const k = this.getKernel();
+    if (options?.colors?.some(c => c !== undefined)) {
+      // An XCAF document carries colours into the file; one root part per
+      // body, coloured where the document gives it a colour.
+      const doc = k.createXCAFDocument();
+      try {
+        bodies.forEach((b, i) => {
+          const color = options.colors?.[i];
+          doc.addShape(this.getBodyShape(b), color !== undefined ? { color: hexToColor3(color) } : {});
+        });
+        return new Blob([doc.exportSTEP()], { type: EXPORT_MIME.step });
+      } finally {
+        doc.close();
+      }
+    }
     // occt-wasm's exportStep takes a single shape; wrap multi-body exports in
     // a transient compound. Schema is still not user-selectable as of
     // occt-wasm 4.4.0 — `exportStep(shape)` takes no options and picks AP214
@@ -1932,6 +1952,7 @@ export class OcctKernel implements CadKernel {
     const buf = build3MF(meshes, {
       name: options?.name ?? 'model',
       unit: options?.unit ?? 'millimeter',
+      ...(options?.colors ? { colors: options.colors } : {}),
     });
     return new Blob([buf], { type: EXPORT_MIME.threemf });
   }

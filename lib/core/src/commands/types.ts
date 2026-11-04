@@ -44,6 +44,7 @@ export type CadCommand =
   // Part commands
   | CreatePartCommand
   | RenamePartCommand
+  | SetBodyColorCommand
   // Sketch commands
   | CreateSketchCommand
   | CreateSketchFromImportCommand
@@ -130,6 +131,19 @@ export type RenamePartCommand = {
   type: 'RenamePart';
   partId: PartId;
   name: string;
+};
+
+/**
+ * Set or clear one body's display colour (`CadPart.bodyColors`).
+ * `color` is `#rrggbb`; null removes the entry, back to the default
+ * appearance. The body need not exist at validation time: an id from the
+ * last rebuild is enough, and a stale entry is harmless.
+ */
+export type SetBodyColorCommand = {
+  type: 'SetBodyColor';
+  partId: PartId;
+  bodyId: string;
+  color: string | null;
 };
 
 // --- Sketch Commands ---
@@ -834,6 +848,8 @@ export function commandLabel(command: CadCommand): string {
       return `Create Part "${command.name}"`;
     case 'RenamePart':
       return `Rename Part`;
+    case 'SetBodyColor':
+      return command.color === null ? 'Reset Body Color' : 'Set Body Color';
     case 'CreateSketch':
       return 'Create Sketch';
     case 'CreateSketchFromImport':
