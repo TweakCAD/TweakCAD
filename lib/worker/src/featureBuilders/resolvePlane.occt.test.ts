@@ -4,7 +4,8 @@
  * follow its face when an upstream dimension moves it.
  *
  * The base is a 60 × 40 rectangle on XZ (x −30..30, z −20..20) extruded
- * `height` up +Y, so its top face is `sf_extrude_box_5` at y = height.
+ * `height` up +Y, so its top face is its end cap, `sf_extrude_box~end(<region>)`,
+ * at y = height.
  */
 import { beforeAll, describe, expect, it } from 'vitest';
 import { OcctKernel } from '@tweakcad/kernel/src/occtKernel.ts';
@@ -20,6 +21,7 @@ import {
 } from '@tweakcad/core/src/sketch/operations.ts';
 import { sketchBuildGeometry } from '@tweakcad/core/src/sketch/derivedGeometry.ts';
 import { detectSketchRegions, regionToProfileRef } from '@tweakcad/core/src/sketch/profileRegions.ts';
+import { regionKey } from '@tweakcad/core/src/sketch/provenance.ts';
 import type { CadPart, FeatureNode, PlaneRef, SketchEditorSnapshot } from '@tweakcad/core/src/document/schema.ts';
 import { featureId, partId } from '@tweakcad/core/src/ids.ts';
 import { attachTestSolver } from '@tweakcad/testing/src/solver.ts';
@@ -27,7 +29,14 @@ import { incrementalRebuild } from '../rebuilder.ts';
 
 const PART = partId('part_1');
 const BOX = 'body_extrude_box_0';
-const TOP = 'sf_extrude_box_5';
+const TOP = cap('extrude_box', rectangle([-30, -20], 60, 40), 'end');
+const BOTTOM = cap('extrude_box', rectangle([-30, -20], 60, 40), 'start');
+
+/** The ID of the start or end cap an extrude of a one-region sketch makes. */
+function cap(extrudeId: string, editorModel: SketchEditorSnapshot, role: 'start' | 'end'): string {
+  const regions = detectSketchRegions(sketchBuildGeometry({ editorModel }));
+  return `sf_${extrudeId}~${role}(${regionKey(regions[0]!, regions)})`;
+}
 
 function feature(id: string, type: string, inputs: unknown): FeatureNode {
   return {
@@ -234,7 +243,7 @@ describe('face anchors (OCCT)', () => {
           profiles: profiles('sketch_post', post),
           operation: 'join',
           direction: { type: 'normal' },
-          extent: { type: 'toPlane', plane: face('sf_extrude_lid_4', 'body_extrude_lid_0') },
+          extent: { type: 'toPlane', plane: face(cap('extrude_lid', lid, 'start'), 'body_extrude_lid_0') },
         }),
         feature('sketch_bore', 'sketch', { plane: { type: 'defaultPlane', name: 'XZ' }, editorModel: bore }),
         feature('extrude_bore', 'extrude', {
@@ -265,7 +274,7 @@ describe('face anchors (OCCT)', () => {
         profiles: profiles('sketch_pad', pad),
         operation: 'join',
         direction: { type: 'normal' },
-        extent: { type: 'toPlane', plane: face('sf_extrude_box_4') },
+        extent: { type: 'toPlane', plane: face(BOTTOM) },
       }),
     ]));
     const pad2 = result.featureResults.find(r => r.featureId === 'extrude_pad');

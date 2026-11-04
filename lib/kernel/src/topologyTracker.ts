@@ -222,12 +222,16 @@ export class ShapeEvolutionTracker {
    * @param faceHashes - hashCode of every face on the body, in walk order.
    * @param edgeHashes - hashCode of every edge on the body, in walk order.
    * @param origin - short tag for the originating op, used in debug IDs.
+   * @param faceNames - an ID per face, in walk order, for faces named from
+   *   what produced them (`sketchProvenance.ts`); `undefined` entries, and
+   *   every face when absent, get the walk-order ID.
    */
   registerFreshBody(
     bodyHandle: string,
     faceHashes: number[],
     edgeHashes: number[],
     origin: string,
+    faceNames?: readonly (string | undefined)[],
   ): void {
     // Walk-index based ids: same op rebuilding the same geometry walks
     // its sub-shapes in the same order, so face/edge indices align across
@@ -236,7 +240,8 @@ export class ShapeEvolutionTracker {
     // survive OCCT's TShape regeneration between rebuilds.
     const faceHashToStable = new Map<number, StableFaceId>();
     for (let i = 0; i < faceHashes.length; i++) {
-      faceHashToStable.set(faceHashes[i]!, indexedFaceStableId(origin, i));
+      const name = faceNames?.[i];
+      faceHashToStable.set(faceHashes[i]!, name !== undefined ? stableFaceId(name) : indexedFaceStableId(origin, i));
     }
     const edgeHashToStable = new Map<number, StableEdgeId>();
     for (let i = 0; i < edgeHashes.length; i++) {

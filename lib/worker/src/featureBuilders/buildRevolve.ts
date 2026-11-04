@@ -20,17 +20,18 @@ import { mintBodyId } from './bodyIdentity.ts';
 import { selectTargetCandidates, joinTouchingBodies, cutTouchingBodies } from './bodyOperation.ts';
 import type { EmittedBody } from './bodyOperation.ts';
 import type { FeatureId, BodyId } from '@tweakcad/core/src/ids.ts';
-import type { Vec3 } from '@tweakcad/core/src/math.ts';
 import type { CadKernel } from '@tweakcad/kernel/src/interface.ts';
 import type { ResolvedProfile, ResolvedAxis } from '@tweakcad/kernel/src/types.ts';
 import type { BuildContext, BuildResult } from '@tweakcad/core/src/features/contracts.ts';
 import { resolveProfile } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import type { SketchRegion } from '@tweakcad/core/src/sketch/profileRegions.ts';
 import {
-  regionHasCurveSegments,
+  regionHasSegmentGeometry,
   regionSegmentsToWire,
   sketchToWorld,
 } from './wireProfile.ts';
+import { offsetProfile, sketchRegions } from './buildExtrude.ts';
+import { regionKey, segmentIdentity } from '@tweakcad/core/src/sketch/provenance.ts';
 import { DEFAULT_PLANES } from './resolvePlane.ts';
 import type {
   ResolvedSketchEntityData,
@@ -172,6 +173,7 @@ function regionToKernelProfile(
     | Record<string, ResolvedSketchEntityData>
     | undefined;
   const { normal, uAxis, vAxis } = plane ?? DEFAULT_PLANES.XZ;
+  const provenance = { region: regionKey(region, sketchRegions(sketchId, context)) };
 
   if (region.type === 'circle') {
     const entityId = region.entityIds[0];
@@ -186,6 +188,8 @@ function regionToKernelProfile(
         origin: center,
         uAxis,
         vAxis,
+        ...provenance,
+        ...(region.segments[0] ? { boundaryId: segmentIdentity(region.segments[0]) } : {}),
       };
     }
   }
@@ -196,11 +200,11 @@ function regionToKernelProfile(
     // unreachable. Rectangles arrive as 4 lines and fall through to the
     // wire / general-polygon paths below.)
 
-    // Curve-bearing regions (arc / Bézier): emit a wire profile so
-    // revolve sweeps real curve edges (not polygonalized facets) around
-    // the axis. Same shared helper used by buildExtrude / buildLoft —
-    // see wireProfile.ts.
-    if (regionHasCurveSegments(region)) {
+    // Emit a wire profile: revolve sweeps one real edge per segment (a
+    // curve edge, not polygonalized facets, for an arc or Bézier), and
+    // each edge names the segment it came from. Same shared helper used by
+    // buildExtrude / buildLoft — see wireProfile.ts.
+    if (regionHasSegmentGeometry(region)) {
       const wireSegments = regionSegmentsToWire(region, plane);
       const center = sketchToWorld(region.center, plane);
       return {
@@ -211,6 +215,7 @@ function regionToKernelProfile(
         origin: center,
         uAxis,
         vAxis,
+        ...provenance,
       };
     }
 
@@ -233,25 +238,3 @@ function regionToKernelProfile(
   throw new Error(`Unable to convert region to revolve profile: ${region.type}`);
 }
 
-function offsetProfile(profile: ResolvedProfile, distance: number): ResolvedProfile {
-  const n = profile.normal;
-  const off: Vec3 = [n[0] * distance, n[1] * distance, n[2] * distance];
-  const offsetVec = (v: Vec3 | undefined): Vec3 | undefined => v
-    ? [v[0] + off[0], v[1] + off[1], v[2] + off[2]]
-    : undefined;
-
-  const result: ResolvedProfile = {
-    ...profile,
-    origin: offsetVec(profile.origin) ?? profile.origin,
-  };
-  const c = offsetVec(profile.center);
-  if (c) result.center = c;
-  if (profile.vertices) {
-    result.vertices = profile.vertices.map(v => [
-      v[0] + off[0],
-      v[1] + off[1],
-      v[2] + off[2],
-    ] as Vec3);
-  }
-  return result;
-}

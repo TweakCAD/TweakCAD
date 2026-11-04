@@ -35,6 +35,16 @@ type GraphEdge = {
   /** Unwrapped: `endAngle - startAngle` is the signed sweep in face
    *  traversal order (positive CCW), not wrapped to ±π. */
   endAngle?: number;
+  /**
+   * What this piece of its entity is, independent of where it sits along
+   * the entity and of which way the face walks it: the entity id alone for
+   * the whole entity, else `<entity>[<from>,<to>]` with the bound at each
+   * end in the entity's own direction (start to end for a line, CCW for a
+   * circle). A bound is `<` / `>` for the entity's own start / end, or the
+   * ids of the entities that cross or touch it there (`+`-joined), with
+   * `#k` when those cross it more than once (k-th along the entity).
+   */
+  identity: string;
 };
 
 export type PlanarFace = {
@@ -201,6 +211,99 @@ function entitiesToSegments(entities: Record<EntityId, SketchEntity>): RawSegmen
   return segments;
 }
 
+// --- Segment identity ---
+
+/**
+ * Names the bounds of each piece an entity is split into (see
+ * {@link GraphEdge.identity}). A vertex on an entity is bounded by the
+ * entity's own endpoint when it is one (a line's start or end, even where
+ * another line meets it at a corner), else by the other entities through
+ * it. When the same entities bound it at several vertices, each gets `#k`
+ * in order along the entity, so the two arcs of a circle cut by one line
+ * are told apart.
+ */
+function segmentBounds(
+  subEdges: readonly { entityId: EntityId; from: number; to: number }[],
+  vertices: readonly Point2[],
+  lineEnds: ReadonlyMap<EntityId, { start: Point2; end: Point2 }>,
+  circles: ReadonlyMap<EntityId, { center: Point2; radius: number }>,
+) {
+  const through = new Map<number, Set<EntityId>>();
+  const onEntity = new Map<EntityId, Set<number>>();
+  for (const sub of subEdges) {
+    for (const v of [sub.from, sub.to]) {
+      let ids = through.get(v);
+      if (!ids) through.set(v, ids = new Set());
+      ids.add(sub.entityId);
+      let vs = onEntity.get(sub.entityId);
+      if (!vs) onEntity.set(sub.entityId, vs = new Set());
+      vs.add(v);
+    }
+  }
+
+  /** Position of vertex `v` along the entity, in its own direction. */
+  const param = (entityId: EntityId, v: number): number => {
+    const p = vertices[v];
+    if (!p) return 0;
+    const line = lineEnds.get(entityId);
+    if (line) {
+      return (p[0] - line.start[0]) * (line.end[0] - line.start[0])
+        + (p[1] - line.start[1]) * (line.end[1] - line.start[1]);
+    }
+    const circle = circles.get(entityId);
+    if (!circle) return 0;
+    const a = Math.atan2(p[1] - circle.center[1], p[0] - circle.center[0]);
+    return a < 0 ? a + 2 * Math.PI : a;
+  };
+
+  const rawTag = (entityId: EntityId, v: number): string => {
+    const line = lineEnds.get(entityId);
+    const p = vertices[v];
+    if (line && p && ptEqual(p, line.start)) return '<';
+    if (line && p && ptEqual(p, line.end)) return '>';
+    return [...(through.get(v) ?? [])].filter(id => id !== entityId).map(String).sort().join('+');
+  };
+
+  const tags = new Map<EntityId, Map<number, string>>();
+  const tagsOf = (entityId: EntityId): Map<number, string> => {
+    const known = tags.get(entityId);
+    if (known) return known;
+    const byTag = new Map<string, number[]>();
+    for (const v of onEntity.get(entityId) ?? []) {
+      const tag = rawTag(entityId, v);
+      if (tag === '') continue; // a sample point inside a circle
+      const list = byTag.get(tag) ?? [];
+      list.push(v);
+      byTag.set(tag, list);
+    }
+    const out = new Map<number, string>();
+    for (const [tag, vs] of byTag) {
+      const [only] = vs;
+      if (vs.length === 1 && only !== undefined) {
+        out.set(only, tag);
+        continue;
+      }
+      vs.sort((a, b) => param(entityId, a) - param(entityId, b));
+      vs.forEach((v, k) => out.set(v, `${tag}#${k}`));
+    }
+    tags.set(entityId, out);
+    return out;
+  };
+
+  /** The identity of the piece of `entityId` between vertices `a` and `b`;
+   *  `forward` when `a` comes first in the entity's own direction. */
+  const identity = (entityId: EntityId, a: number, b: number, forward: boolean): string => {
+    const t = tagsOf(entityId);
+    const [from, to] = forward ? [a, b] : [b, a];
+    const fromTag = t.get(from) ?? '?';
+    const toTag = t.get(to) ?? '?';
+    if (fromTag === '<' && toTag === '>') return String(entityId);
+    return `${String(entityId)}[${fromTag},${toTag}]`;
+  };
+
+  return { param, identity };
+}
+
 // --- Build the planar graph ---
 
 type HalfEdge = {
@@ -330,6 +433,12 @@ export function detectIntersectionRegions(entities: Record<EntityId, SketchEntit
 
   if (subEdges.length < 3 || vertices.length < 3) return [];
 
+  const lineEnds = new Map<EntityId, { start: Point2; end: Point2 }>();
+  for (const seg of rawSegments) {
+    if (seg.type === 'line') lineEnds.set(seg.entityId, { start: seg.start, end: seg.end });
+  }
+  const bounds = segmentBounds(subEdges, vertices, lineEnds, circleEntities);
+
   // Step 3: Build half-edge data structure
   const halfEdges: HalfEdge[] = [];
   const edgePairMap = new Map<string, number>(); // "from,to" -> half-edge index
@@ -446,6 +555,7 @@ export function detectIntersectionRegions(entities: Record<EntityId, SketchEntit
     // line-typed face edges → the downstream extrude pipeline would
     // build 64 strip faces instead of one cylindrical face. See
     // `wireProfile.ts` for the kernel-side consumer.
+
     const consolidated: GraphEdge[] = [];
     let i = 0;
     while (i < faceEdges.length) {
@@ -458,6 +568,7 @@ export function detectIntersectionRegions(entities: Record<EntityId, SketchEntit
           start: vertices[he.from]!,
           end: vertices[he.to]!,
           curveType: 'line',
+          identity: bounds.identity(he.entityId, he.from, he.to, bounds.param(he.entityId, he.from) < bounds.param(he.entityId, he.to)),
         });
         i++;
         continue;
@@ -497,6 +608,8 @@ export function detectIntersectionRegions(entities: Record<EntityId, SketchEntit
         radius: circle.radius,
         startAngle,
         endAngle,
+        // A circle's own direction is CCW, so a CW walk runs it backwards.
+        identity: bounds.identity(he.entityId, first.from, last.to, sweep > 0),
       });
       i = runEnd + 1;
     }
