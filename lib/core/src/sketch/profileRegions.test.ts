@@ -99,6 +99,34 @@ describe('detectSketchRegions', () => {
     expect(regions[0]!.segments.length).toBe(4);
   });
 
+  it('a circle on a rectangle edge: the cut rectangle and both half-discs are their own regions', () => {
+    const regions = buildAndDetect((s, f) => {
+      const st = drawRectangle(s, { corner: [0, 0], width: 40, height: 20 }, { idFactory: f }).state;
+      return drawCircle(st, { center: [20, 0], radius: 5 }, { idFactory: f }).state;
+    });
+    const halfDisc = Math.PI * 25 / 2;
+    // The whole rectangle and the whole circle stay selectable too.
+    expect(regions.map(r => r.area)).toEqual([
+      expect.closeTo(800, 3),
+      expect.closeTo(800 - halfDisc, -0.5),
+      expect.closeTo(Math.PI * 25, 3),
+      expect.closeTo(halfDisc, -0.5),
+      expect.closeTo(halfDisc, -0.5),
+    ]);
+    const cut = regions[1]!;
+    expect(cut.type).toBe('polygon');
+    expect(cut.allEntityIds).toHaveLength(5);
+  });
+
+  it('a line poking into a rectangle from an edge does not duplicate the rectangle', () => {
+    const regions = buildAndDetect((s, f) => {
+      const st = drawRectangle(s, { corner: [0, 0], width: 40, height: 20 }, { idFactory: f }).state;
+      return drawLine(st, [20, 0], [20, 10], { idFactory: f }).state;
+    });
+    expect(regions).toHaveLength(1);
+    expect(regions[0]!.area).toBeCloseTo(800, 3);
+  });
+
   it('region id is stable across entity insertion order', () => {
     // Build a triangle two different ways: lines added in different orders.
     const orderA = (() => {

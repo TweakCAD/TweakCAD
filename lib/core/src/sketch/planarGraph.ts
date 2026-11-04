@@ -73,8 +73,15 @@ function dist(a: Point2, b: Point2): number {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
+/** Rounds to 6 decimals; `-0.000000` keys as `0.000000` so a coordinate
+ *  a hair below zero meets one a hair above it. */
+function coordKey(v: number): string {
+  const s = v.toFixed(6);
+  return s === '-0.000000' ? '0.000000' : s;
+}
+
 function ptKey(p: Point2): string {
-  return `${p[0].toFixed(6)},${p[1].toFixed(6)}`;
+  return `${coordKey(p[0])},${coordKey(p[1])}`;
 }
 
 function ptEqual(a: Point2, b: Point2): boolean {
@@ -367,14 +374,19 @@ export function detectIntersectionRegions(entities: Record<EntityId, SketchEntit
     if (seg.type === 'line') {
       allLineSegs.push({ entityId: seg.entityId, start: seg.start, end: seg.end });
     } else if (seg.type === 'circle') {
-      // Approximate circle as polygon segments
+      // Approximate the circle as a closed polygon. Neighbouring chords
+      // share one sample point, so the last chord ends exactly where the
+      // first starts.
+      const samples: Point2[] = [];
       for (let i = 0; i < CIRCLE_SEGMENTS; i++) {
-        const a1 = (2 * Math.PI * i) / CIRCLE_SEGMENTS;
-        const a2 = (2 * Math.PI * (i + 1)) / CIRCLE_SEGMENTS;
+        const a = (2 * Math.PI * i) / CIRCLE_SEGMENTS;
+        samples.push([seg.center[0] + seg.radius * Math.cos(a), seg.center[1] + seg.radius * Math.sin(a)]);
+      }
+      for (let i = 0; i < CIRCLE_SEGMENTS; i++) {
         allLineSegs.push({
           entityId: seg.entityId,
-          start: [seg.center[0] + seg.radius * Math.cos(a1), seg.center[1] + seg.radius * Math.sin(a1)],
-          end: [seg.center[0] + seg.radius * Math.cos(a2), seg.center[1] + seg.radius * Math.sin(a2)],
+          start: samples[i]!,
+          end: samples[(i + 1) % CIRCLE_SEGMENTS]!,
         });
       }
     }
@@ -555,6 +567,19 @@ export function detectIntersectionRegions(entities: Record<EntityId, SketchEntit
     // line-typed face edges → the downstream extrude pipeline would
     // build 64 strip faces instead of one cylindrical face. See
     // `wireProfile.ts` for the kernel-side consumer.
+
+    // A trace can start partway along a circle's run of subedges; rotate
+    // it to start where the entity changes so the run stays one arc.
+    const head = faceEdges[0]!;
+    if (circleEntities.has(head.entityId) && faceEdges[faceEdges.length - 1]!.entityId === head.entityId) {
+      const k = faceEdges.findIndex(e => e.entityId !== head.entityId);
+      if (k > 0) {
+        while (faceEdges[0]!.entityId === head.entityId) {
+          faceEdges.push(faceEdges.shift()!);
+          faceVerts.push(faceVerts.shift()!);
+        }
+      }
+    }
 
     const consolidated: GraphEdge[] = [];
     let i = 0;
