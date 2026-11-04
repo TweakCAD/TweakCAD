@@ -83,6 +83,17 @@ export function mintBodyId(featureId: string, index = 0): BodyId {
 }
 
 /**
+ * Mint an id for a body an extrude creates from sketch profiles:
+ * `body_<featureId>~<regionKey>`, after the region (`regionKey`) of the
+ * profile it holds, the smallest key when profiles fused into it. Adding,
+ * removing or reordering another profile does not rename it; neither does
+ * OCCT returning the solids in another order.
+ */
+export function mintRegionBodyId(featureId: string, regionKey: string): BodyId {
+  return bodyIdBrand(`body_${featureId}~${regionKey}`);
+}
+
+/**
  * Choose which piece of a split keeps the original body's identity.
  *
  * Largest volume wins, because it is the piece a user would point at and call

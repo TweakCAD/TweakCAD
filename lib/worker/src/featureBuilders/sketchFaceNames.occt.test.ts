@@ -93,6 +93,27 @@ describe('faces named from the sketch (OCCT)', () => {
     expect(withSecond).toEqual(alone);
   }, 60_000);
 
+  it('adding a profile, or listing the profiles the other way round, renames no body', async () => {
+    const ids = makeCounterIdFactory();
+    const first = drawRectangle(emptyEditorState(), { corner: [0, 0], width: 20, height: 10 }, { idFactory: ids }).state;
+    const both = drawRectangle(first, { corner: [40, 0], width: 10, height: 10 }, { idFactory: ids }).state;
+    /** The body whose faces lie in x ∈ [x0, x1]. */
+    const bodyWithin = (maps: TopologyMap[], x0: number, x1: number) =>
+      String(maps.find(t => t.faces.every(f => {
+        const c = f.repairHint?.center;
+        return c !== undefined && c[0] >= x0 - 1e-6 && c[0] <= x1 + 1e-6;
+      }))?.bodyId);
+
+    const alone = await rebuild(extrudePart(first, [[5, 5]]));
+    const withSecond = await rebuild(extrudePart(both, [[5, 5], [45, 5]]));
+    const reversed = await rebuild(extrudePart(both, [[45, 5], [5, 5]]));
+    const block = bodyWithin(alone, 0, 20);
+    expect(block).toMatch(/^body_ext~[0-9a-f]{16}$/);
+    expect(bodyWithin(withSecond, 0, 20)).toBe(block);
+    expect(bodyWithin(reversed, 0, 20)).toBe(block);
+    expect(bodyWithin(reversed, 40, 50)).toBe(bodyWithin(withSecond, 40, 50));
+  }, 60_000);
+
   it('a hole on the top face stays on it, by the same ID, when a profile is added', async () => {
     const ids = makeCounterIdFactory();
     const first = drawRectangle(emptyEditorState(), { corner: [0, 0], width: 20, height: 10 }, { idFactory: ids }).state;

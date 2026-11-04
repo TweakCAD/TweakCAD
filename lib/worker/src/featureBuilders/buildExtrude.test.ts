@@ -145,12 +145,19 @@ describe('buildExtrude — operation semantics (one extrude → 1..N bodies)', (
     const context = await ctxWithSketch(twoCircleSketch(), kernel);
 
     // Compound fuse result → splitSolids splits it into N independent bodies.
+    // Each profile-body lies in one piece: the first in solid_A, the second
+    // in solid_B.
     const fuseSpy = vi.spyOn(kernel, 'booleanFuse');
     const disposeSpy = vi.spyOn(kernel, 'dispose');
-    vi.spyOn(kernel, 'splitSolids').mockResolvedValue([
-      { handle: 'solid_A', source: 'mock' } as KernelBody,
-      { handle: 'solid_B', source: 'mock' } as KernelBody,
-    ]);
+    const extrudeSpy = vi.spyOn(kernel, 'extrudeFace');
+    const solidA = { handle: 'solid_A', source: 'mock' } as KernelBody;
+    const solidB = { handle: 'solid_B', source: 'mock' } as KernelBody;
+    const splitSpy = vi.spyOn(kernel, 'splitSolids').mockResolvedValue([solidA, solidB]);
+    vi.spyOn(kernel, 'distanceBetween').mockImplementation(async (tool, piece) => {
+      const tools = await Promise.all(extrudeSpy.mock.results.map(r => r.value as Promise<{ ok: true; value: KernelBody }>));
+      const index = tools.findIndex(t => t.value === tool);
+      return piece === [solidA, solidB][index] ? 0 : 5;
+    });
 
     const extrude = makeExtrudeNode({
       profiles: [
@@ -164,12 +171,18 @@ describe('buildExtrude — operation semantics (one extrude → 1..N bodies)', (
     const result = await buildExtrude(extrude, {}, context, kernel);
 
     expect(result.bodies).toHaveLength(2);
-    // Body IDs must be deterministic per feature so picker references
-    // survive rebuilds. Suffix encodes the per-solid index.
-    expect(result.bodies.map(b => String(b.bodyId))).toEqual([
-      'body_ex_test_0',
-      'body_ex_test_1',
-    ]);
+    // Each body is named after its profile's region, not its place in the
+    // solid list: the same piece gets the same id when OCCT returns the
+    // solids the other way round.
+    const ids = result.bodies.map(b => String(b.bodyId));
+    for (const id of ids) expect(id).toMatch(/^body_ex_test~[0-9a-f]{16}$/);
+    expect(new Set(ids).size).toBe(2);
+    const idOf = (r: typeof result, piece: KernelBody) => String(r.bodies.find(b => b.handle === piece)?.bodyId);
+    extrudeSpy.mockClear();
+    splitSpy.mockResolvedValue([solidB, solidA]);
+    const swapped = await buildExtrude(extrude, {}, await ctxWithSketch(twoCircleSketch(), kernel), kernel);
+    expect(idOf(swapped, solidA)).toBe(idOf(result, solidA));
+    expect(idOf(swapped, solidB)).toBe(idOf(result, solidB));
     // The compound is replaced by its pieces and freed.
     const fused = (await fuseSpy.mock.results[0]!.value) as { ok: true; value: KernelBody };
     expect(disposeSpy).toHaveBeenCalledWith(fused.value);

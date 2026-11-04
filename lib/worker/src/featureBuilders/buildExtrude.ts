@@ -12,7 +12,7 @@ import { releaseShapes } from './releaseShapes.ts';
 import type { FeatureNode, ExtrudeFeatureInputs, ProfileRef } from '@tweakcad/core/src/document/schema.ts';
 import type { ResolvedParams } from '@tweakcad/core/src/expressions.ts';
 import { evaluateExpression } from '@tweakcad/core/src/expressions.ts';
-import { mintBodyId } from './bodyIdentity.ts';
+import { mintBodyId, mintRegionBodyId } from './bodyIdentity.ts';
 import { selectTargetCandidates, joinTouchingBodies, cutTouchingBodies, releaseUnusedTools } from './bodyOperation.ts';
 import type { EmittedBody } from './bodyOperation.ts';
 import type { FeatureId, BodyId } from '@tweakcad/core/src/ids.ts';
@@ -42,6 +42,9 @@ import { regionIdentity, regionKey, segmentIdentity } from '@tweakcad/core/src/s
  * and the resulting topology has degenerate edges.
  */
 const THROUGH_ALL_SLOP_MM = 5;
+
+/** A profile-body this close (mm) to a fused piece is part of it. */
+const TOUCH_TOLERANCE_MM = 1e-6;
 
 /** Perimeter samples handed to the kernel for a standalone ellipse — a
  *  periodic B-spline is fit through them. 48 is smooth past eye accuracy. */
@@ -164,6 +167,8 @@ export async function buildExtrude(
   // pre-extrude state) is what produced the "monster body" duplicates
   // where each profile emitted its own copy of "previous-state ∪ profile".
   const profileBodies: KernelBody[] = [];
+  // The region each profile-body was extruded from: names the body it ends up in.
+  const regionOf = new Map<KernelBody, string>();
   try {
     for (const profile of holedProfiles) {
       // Apply offset, then back-shift by half-distance for symmetric so
@@ -197,6 +202,7 @@ export async function buildExtrude(
         throw new Error(`Failed to extrude face: ${bodyResult.error.message}`);
       }
       profileBodies.push(bodyResult.value);
+      if (profile.region !== undefined) regionOf.set(bodyResult.value, profile.region);
     }
   } catch (error) {
     // A later profile failed: the solids already made are not going anywhere.
@@ -227,9 +233,24 @@ export async function buildExtrude(
     // share the compound's faces and edges, so they keep the IDs the extrude
     // and the fuse assigned.
     const pieces = await kernel.splitSolids(combined, node.id);
-    if (!pieces) return [{ bodyId: mintBodyId(node.id, 0), handle: combined }];
+    if (!pieces) return [{ bodyId: await bodyIdFor(combined, tools, 0, true), handle: combined }];
     if (combined !== tools[0]) releaseShapes(kernel, [combined]); // replaced by its pieces
-    return pieces.map((handle, i) => ({ bodyId: mintBodyId(node.id, i), handle }));
+    return Promise.all(pieces.map(async (handle, i) => ({ bodyId: await bodyIdFor(handle, tools, i, false), handle })));
+  };
+
+  // A new body is named after the smallest region key among the profiles in
+  // it (`mintRegionBodyId`); `all` when every tool went into it. A tool lies
+  // in exactly one piece, the one it touches. Without region keys, the
+  // solid's position names it.
+  const bodyIdFor = async (piece: KernelBody, tools: KernelBody[], index: number, all: boolean): Promise<BodyId> => {
+    const keys: string[] = [];
+    for (const tool of tools) {
+      const key = regionOf.get(tool);
+      if (key === undefined) return mintBodyId(node.id, index);
+      if (all || (await kernel.distanceBetween(tool, piece)) <= TOUCH_TOLERANCE_MM) keys.push(key);
+    }
+    const [smallest] = keys.sort();
+    return smallest === undefined ? mintBodyId(node.id, index) : mintRegionBodyId(node.id, smallest);
   };
 
   const operands = {
