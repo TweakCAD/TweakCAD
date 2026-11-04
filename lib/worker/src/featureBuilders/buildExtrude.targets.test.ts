@@ -24,6 +24,8 @@ import type { ResolvedParams } from '@tweakcad/core/src/expressions.ts';
 const BOX = bodyId('box');
 const LID = bodyId('lid');
 const CUBE = 20 ** 3;
+/** A body the extrude creates, named after its profile's region. */
+const NEW_BODY = /^body_ex~[0-9a-f]{16}$/;
 
 type Circle = { id: string; center: [number, number]; diameter: number };
 
@@ -154,9 +156,12 @@ describe('buildExtrude — join targets only the bodies it touches (real kernel)
       operation: 'join', from: 20, height: 5,
     });
 
-    expect(result.bodies.map(b => String(b.bodyId))).toEqual(['box', 'body_ex_0']);
+    const ids = result.bodies.map(b => String(b.bodyId));
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).toBe('box');
+    expect(ids[1]).toMatch(NEW_BODY);
     expect(context.bodies.size).toBe(3);
-    expect(await volume(kernel, context, bodyId('body_ex_0'))).toBeCloseTo(cylinder(4, 5), 3);
+    expect(await volume(kernel, context, bodyId(ids[1]!))).toBeCloseTo(cylinder(4, 5), 3);
   });
 
   it('a join that touches nothing creates a new body and leaves every existing body as is', async () => {
@@ -167,7 +172,7 @@ describe('buildExtrude — join targets only the bodies it touches (real kernel)
       operation: 'join', from: 0, height: 5,
     });
 
-    expect(result.bodies.map(b => String(b.bodyId))).toEqual(['body_ex_0']);
+    expect(result.bodies.map(b => String(b.bodyId))).toEqual([expect.stringMatching(NEW_BODY)]);
     for (const [id, handle] of before) expect(context.bodies.get(id)).toBe(handle);
   });
 

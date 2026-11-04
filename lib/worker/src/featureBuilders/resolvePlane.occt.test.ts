@@ -28,14 +28,24 @@ import { attachTestSolver } from '@tweakcad/testing/src/solver.ts';
 import { incrementalRebuild } from '../rebuilder.ts';
 
 const PART = partId('part_1');
-const BOX = 'body_extrude_box_0';
+const BOX = bodyOf('extrude_box', rectangle([-30, -20], 60, 40));
 const TOP = cap('extrude_box', rectangle([-30, -20], 60, 40), 'end');
 const BOTTOM = cap('extrude_box', rectangle([-30, -20], 60, 40), 'start');
 
+/** The key of a one-region sketch's region. */
+function keyOf(editorModel: SketchEditorSnapshot): string {
+  const regions = detectSketchRegions(sketchBuildGeometry({ editorModel }));
+  return regionKey(regions[0]!, regions);
+}
+
 /** The ID of the start or end cap an extrude of a one-region sketch makes. */
 function cap(extrudeId: string, editorModel: SketchEditorSnapshot, role: 'start' | 'end'): string {
-  const regions = detectSketchRegions(sketchBuildGeometry({ editorModel }));
-  return `sf_${extrudeId}~${role}(${regionKey(regions[0]!, regions)})`;
+  return `sf_${extrudeId}~${role}(${keyOf(editorModel)})`;
+}
+
+/** The ID of the body a newBody extrude of a one-region sketch makes. */
+function bodyOf(extrudeId: string, editorModel: SketchEditorSnapshot): string {
+  return `body_${extrudeId}~${keyOf(editorModel)}`;
 }
 
 function feature(id: string, type: string, inputs: unknown): FeatureNode {
@@ -178,7 +188,7 @@ describe('face anchors (OCCT)', () => {
         }),
       ]));
       expect(failed).toEqual([]);
-      const bbox = await kernel.getBoundingBox(bodyHandle(result, 'body_extrude_pad_0'));
+      const bbox = await kernel.getBoundingBox(bodyHandle(result, bodyOf('extrude_pad', pad)));
       expect(bbox.min[1]).toBeCloseTo(height, 2);
       expect(bbox.max[1]).toBeCloseTo(height + 10, 2);
     }
@@ -198,7 +208,7 @@ describe('face anchors (OCCT)', () => {
       }),
     ]));
     expect(failed).toEqual([]);
-    const bbox = await kernel.getBoundingBox(bodyHandle(result, 'body_extrude_pad_0'));
+    const bbox = await kernel.getBoundingBox(bodyHandle(result, bodyOf('extrude_pad', pad)));
     expect(bbox.min[1]).toBeCloseTo(23, 2);
   }, 60_000);
 
@@ -215,7 +225,7 @@ describe('face anchors (OCCT)', () => {
         }),
       ]));
       expect(failed).toEqual([]);
-      const bbox = await kernel.getBoundingBox(bodyHandle(result, 'body_extrude_post_0'));
+      const bbox = await kernel.getBoundingBox(bodyHandle(result, bodyOf('extrude_post', post)));
       expect(bbox.min[1]).toBeCloseTo(0, 2);
       expect(bbox.max[1]).toBeCloseTo(height, 2);
     }
@@ -243,7 +253,7 @@ describe('face anchors (OCCT)', () => {
           profiles: profiles('sketch_post', post),
           operation: 'join',
           direction: { type: 'normal' },
-          extent: { type: 'toPlane', plane: face(cap('extrude_lid', lid, 'start'), 'body_extrude_lid_0') },
+          extent: { type: 'toPlane', plane: face(cap('extrude_lid', lid, 'start'), bodyOf('extrude_lid', lid)) },
         }),
         feature('sketch_bore', 'sketch', { plane: { type: 'defaultPlane', name: 'XZ' }, editorModel: bore }),
         feature('extrude_bore', 'extrude', {

@@ -410,7 +410,6 @@ describe('buildHole — on a shelled body with joined bosses (OCCT)', () => {
   beforeAll(attachTestSolver, 30_000);
 
   const PART = partId('part_1');
-  const BOX = 'body_extrude_1_0';
   const RECT = toSnapshot(
     drawRectangle(emptyEditorState(), { corner: [-50, -25], width: 100, height: 50 }, { idFactory: makeCounterIdFactory() }).state,
   ) as unknown as SketchEditorSnapshot;
@@ -420,6 +419,7 @@ describe('buildHole — on a shelled body with joined bosses (OCCT)', () => {
     return [regions[0]!, regions] as const;
   };
   const RIM = `sf_extrude_1~end(${regionKey(...firstRegion(RECT))})`;
+  const BOX = `body_extrude_1~${regionKey(...firstRegion(RECT))}`;
 
   function feature(id: string, type: string, inputs: unknown, dependsOn: string[] = []): FeatureNode {
     return {
