@@ -719,12 +719,34 @@ function planarFaceToRegion(face: PlanarFace, index: number): SketchRegion {
 }
 
 /**
- * Check if two regions are duplicates (overlapping centroid + similar area).
+ * The entities that bound a planar-graph face. A segment the face walks
+ * out and back along (a line poking into the face from its boundary) does
+ * not bound it, so it is left out.
  */
-function isDuplicateRegion(a: SketchRegion, b: SketchRegion): boolean {
-  if (Math.abs(a.area - b.area) / Math.max(a.area, b.area, 1) > 0.1) return false;
-  const dx = a.center[0] - b.center[0];
-  const dy = a.center[1] - b.center[1];
+function graphFaceBoundaryEntities(region: SketchRegion): Set<string> {
+  const near = (p: [number, number] | undefined, q: [number, number] | undefined): boolean =>
+    p !== undefined && q !== undefined && Math.hypot(p[0] - q[0], p[1] - q[1]) < EPSILON;
+  const ids = new Set<string>();
+  for (const seg of region.segments) {
+    const retraced = region.segments.some(other =>
+      other !== seg && other.entityId === seg.entityId && near(other.start, seg.end) && near(other.end, seg.start));
+    if (!retraced) ids.add(String(seg.entityId));
+  }
+  return ids;
+}
+
+/**
+ * Whether a planar-graph face is the same area as a simple region: bounded
+ * by exactly the simple region's entities, with matching area (within the
+ * graph's polygonal approximation of circles) and centroid. A face that
+ * differs only by a cut-out is bounded by the cutting entity too, so it is
+ * kept even when its area is close.
+ */
+function isDuplicateRegion(simple: SketchRegion, graph: SketchRegion): boolean {
+  if (!setsEqual(new Set(simple.allEntityIds.map(String)), graphFaceBoundaryEntities(graph))) return false;
+  if (Math.abs(simple.area - graph.area) / Math.max(simple.area, graph.area, 1) > 0.01) return false;
+  const dx = simple.center[0] - graph.center[0];
+  const dy = simple.center[1] - graph.center[1];
   return Math.sqrt(dx * dx + dy * dy) < 1; // within 1mm
 }
 
