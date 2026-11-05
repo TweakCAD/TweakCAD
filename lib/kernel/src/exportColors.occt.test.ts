@@ -58,17 +58,66 @@ describe('STEP export with body colours', () => {
   });
 });
 
-describe('3MF export with body colours', () => {
-  it('colours every triangle of each body', async () => {
-    const { kernel, bodies } = await twoBoxes();
-    const blob = await kernel.export3MF(bodies, { name: 'Two', colors: ['#00ff00', '#0000ff'] });
-    const text = new TextDecoder().decode(new Uint8Array(await blob.arrayBuffer()));
+/**
+ * Each mesh object in a 3MF model, with its triangles as vertex-index
+ * triples. Objects without a mesh (the parent holding components) are left out.
+ */
+function meshObjects(model: string): { id: string; pid: string | null; triangles: [number, number, number][] }[] {
+  const out: { id: string; pid: string | null; triangles: [number, number, number][] }[] = [];
+  for (const m of model.matchAll(/<object id="(\d+)"([^>]*)>([\s\S]*?)<\/object>/g)) {
+    const body = m[3] ?? '';
+    if (!body.includes('<mesh>')) continue;
+    const triangles = [...body.matchAll(/<triangle v1="(\d+)" v2="(\d+)" v3="(\d+)"/g)]
+      .map(t => [Number(t[1]), Number(t[2]), Number(t[3])] as [number, number, number]);
+    out.push({ id: m[1] ?? '', pid: /pid="(\d+)"/.exec(m[2] ?? '')?.[1] ?? null, triangles });
+  }
+  return out;
+}
+
+/** Edges used by other than exactly two triangles: zero for a closed mesh. */
+function openEdges(triangles: [number, number, number][]): number {
+  const uses = new Map<string, number>();
+  for (const [a, b, c] of triangles) {
+    for (const [u, v] of [[a, b], [b, c], [c, a]] as const) {
+      const key = u < v ? `${u}-${v}` : `${v}-${u}`;
+      uses.set(key, (uses.get(key) ?? 0) + 1);
+    }
+  }
+  return [...uses.values()].filter(n => n !== 2).length;
+}
+
+async function boxAndCylinder(): Promise<{ kernel: OcctKernel; bodies: KernelBody[] }> {
+  const kernel = new OcctKernel();
+  await kernel.init();
+  const box = await kernel.makeBox({ origin: [0, 0, 0], width: 30, height: 30, depth: 10 });
+  const cyl = await kernel.makeCylinder({ center: [15, 15, 10], axis: [0, 0, 1], radius: 8, height: 12 });
+  if (!box.ok || !cyl.ok) throw new Error('could not make the test bodies');
+  return { kernel, bodies: [box.value, cyl.value] };
+}
+
+async function modelText(blob: Blob): Promise<string> {
+  return new TextDecoder().decode(new Uint8Array(await blob.arrayBuffer()));
+}
+
+describe('3MF export', () => {
+  it('writes closed meshes', async () => {
+    const { kernel, bodies } = await boxAndCylinder();
+    const [plain] = meshObjects(await modelText(await kernel.export3MF(bodies)));
+    expect(plain?.triangles.length).toBeGreaterThan(0);
+    // Two separate closed bodies in one mesh: still no open edge.
+    expect(openEdges(plain?.triangles ?? [])).toBe(0);
+  });
+
+  it('writes each coloured body as its own closed, coloured mesh object', async () => {
+    const { kernel, bodies } = await boxAndCylinder();
+    const text = await modelText(await kernel.export3MF(bodies, { name: 'Two', colors: ['#00ff00', '#0000ff'] }));
     expect(text).toContain('<m:color color="#00FF00" />');
     expect(text).toContain('<m:color color="#0000FF" />');
-    const tris = text.match(/<triangle [^>]*>/g) ?? [];
-    expect(tris.length).toBeGreaterThan(0);
-    expect(tris.every(t => / pid="1" p1="[01]"/.test(t))).toBe(true);
-    // Two boxes of 12 triangles each, one colour per box.
-    expect(tris.filter(t => t.includes('p1="0"'))).toHaveLength(tris.length / 2);
+    const objects = meshObjects(text);
+    expect(objects.map(o => o.pid)).toEqual(['1', '2']);
+    for (const o of objects) expect(openEdges(o.triangles)).toBe(0);
+    // A box is 12 triangles once its faces share their edges.
+    expect(objects[0]?.triangles).toHaveLength(12);
+    expect(text).toContain('<metadata key="extruder" value="2"/>');
   });
 });
