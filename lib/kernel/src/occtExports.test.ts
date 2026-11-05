@@ -6,7 +6,7 @@
  * we cover what we can in Node: mesh combine + 3MF ZIP packaging.
  */
 import { describe, expect, it } from 'vitest';
-import { build3MF, combineMeshes } from './occtExports.ts';
+import { build3MF, combineMeshes, weldMesh } from './occtExports.ts';
 import type { DisplayMesh } from '@tweakcad/core/src/document/schema.ts';
 import { bodyId } from '@tweakcad/core/src/ids.ts';
 
@@ -92,25 +92,57 @@ describe('build3MF', () => {
     expect(text).toContain('a&amp;b&lt;c&gt;&quot;d');
   });
 
-  it('writes no colour markup when no body has a colour', () => {
+  it('writes no colour markup and no settings file when no body has a colour', () => {
     const text = new TextDecoder().decode(new Uint8Array(
       build3MF([unitTriangleMesh(), unitTriangleMesh(2)], { colors: [undefined, undefined] })));
     expect(text).not.toContain('colorgroup');
     expect(text).not.toContain('pid=');
+    expect(text).not.toContain('model_settings.config');
     expect(text).toContain('<item objectid="1" />');
   });
 
-  it('colours each triangle by its body, the default colour for bodies without one', () => {
+  it('writes each coloured body as a component with its own colour group and extruder', () => {
     const text = new TextDecoder().decode(new Uint8Array(
-      build3MF([unitTriangleMesh(), unitTriangleMesh(2), unitTriangleMesh(4)], { colors: ['#e53935', undefined, '#e53935'] })));
-    expect(text).toContain('xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02"');
-    expect(text).toContain('<m:colorgroup id="1">');
-    expect(text).toContain('<m:color color="#E53935" />');
-    expect(text).toContain('<m:color color="#6699CC" />');
-    expect(text).toContain('<object id="2" name="model" type="model" pid="1" pindex="0">');
-    expect(text).toContain('<triangle v1="0" v2="1" v3="2" pid="1" p1="0" />');
-    expect(text).toContain('<triangle v1="3" v2="4" v3="5" pid="1" p1="1" />');
-    expect(text).toContain('<triangle v1="6" v2="7" v3="8" pid="1" p1="0" />');
-    expect(text).toContain('<item objectid="2" />');
+      build3MF([unitTriangleMesh(), unitTriangleMesh(2), unitTriangleMesh(4)], { name: 'Part', colors: ['#e53935', undefined, '#e53935'] })));
+    // One group per colour: some readers keep only one colour per group.
+    expect(text).toContain('<m:colorgroup id="1">\n      <m:color color="#E53935" />\n    </m:colorgroup>');
+    expect(text).toContain('<m:colorgroup id="2">\n      <m:color color="#6699CC" />\n    </m:colorgroup>');
+    // Bodies are objects 3, 4, 5, coloured on the object and on each triangle.
+    expect(text).toContain('<object id="3" name="Part 1" type="model" pid="1" pindex="0">');
+    expect(text).toContain('<object id="4" name="Part 2" type="model" pid="2" pindex="0">');
+    expect(text).toContain('<object id="5" name="Part 3" type="model" pid="1" pindex="0">');
+    expect(text).toContain('<triangle v1="0" v2="1" v3="2" pid="2" p1="0" />');
+    // The parent holds them as components, and is the one build item.
+    expect(text).toMatch(/<object id="6" name="Part" type="model">\s*<components>\s*<component objectid="3" \/>\s*<component objectid="4" \/>\s*<component objectid="5" \/>/);
+    expect(text).toContain('<item objectid="6" />');
+    // The settings file puts each body on its colour's extruder.
+    expect(text).toContain('Metadata/model_settings.config');
+    expect(text).toMatch(/<object id="6">[\s\S]*<part id="3" subtype="normal_part">\s*<metadata key="name" value="Part 1"\/>\s*<metadata key="extruder" value="1"\/>/);
+    expect(text).toMatch(/<part id="4" subtype="normal_part">\s*<metadata key="name" value="Part 2"\/>\s*<metadata key="extruder" value="2"\/>/);
+    expect(text).toMatch(/<part id="5" subtype="normal_part">\s*<metadata key="name" value="Part 3"\/>\s*<metadata key="extruder" value="1"\/>/);
+    expect(text).toContain('<Default Extension="config" ContentType="text/xml" />');
+  });
+});
+
+describe('weldMesh', () => {
+  it('merges coincident vertices so two faces share their edge', () => {
+    // Two triangles of a square, each with its own copy of the shared edge.
+    const quad = {
+      positions: new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0]),
+      indices: new Uint32Array([0, 1, 2, 3, 4, 5]),
+    };
+    const { vertices, triangles } = weldMesh(quad);
+    expect(vertices.length / 3).toBe(4);
+    expect([...triangles]).toEqual([0, 1, 2, 0, 2, 3]);
+  });
+
+  it('treats -0 and 0 as the same position, and drops triangles that collapse', () => {
+    const m = {
+      positions: new Float32Array([0, 0, 0, -0, 0, 0, 1, 0, 0, 0, 1, 0]),
+      indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
+    };
+    const { vertices, triangles } = weldMesh(m);
+    expect(vertices.length / 3).toBe(3);
+    expect([...triangles]).toEqual([0, 1, 2]);
   });
 });
