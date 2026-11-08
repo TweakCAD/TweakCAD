@@ -75,15 +75,19 @@ vite aliases.
 
 | Path | What |
 |---|---|
-| `src/` | The React app — `src/app/` (shell, viewport, storage), `src/sketcher/` (sketch editor), shared components. |
-| `lib/format/` | The document format: reader, writer, expressions, sketch regions, naming. |
+| `src/` | The React app — `src/app/` (shell, viewport, storage), `src/sketcher/` (sketch editor), `src/ai/` (the assistant panel, its tools and the MCP bridge client), shared components. |
+| `lib/format/` | The document format: reader, writer, expressions, sketch regions, naming. Specified in [`docs/format.md`](./docs/format.md). |
 | `lib/editor/` | Document store, undo/redo and the editing commands. |
 | `lib/kernel/` | The naming adapter over the OCCT (occt-wasm) kernel. |
-| `lib/worker/` | The evaluator and the Web Worker service that owns kernel handles. |
+| `lib/worker/` | The evaluator and the Web Worker service that owns kernel handles; STEP, STL, BREP, 3MF and FreeCAD export. |
 | `lib/viewport/` | View cube, camera framing and transform gizmo. |
 | `lib/fcstd-import/` | FreeCAD `.FCStd` files as documents. |
+| `lib/f3d-import/` | Fusion `.f3d` and `.f3z` files as documents. |
 | `lib/api-client`, `lib/cloud-providers` | Cloud glue. |
 | `lib/cad-tools`, `lib/api-types` | Vendored shared contract libs. |
+| `lib/testing/` | Fixture documents the tests build and compare against. |
+| `docs/` | The `.cadjson` format specification. |
+| `deploy/` | The web server config of the container image. |
 
 ## Development
 
