@@ -46,14 +46,13 @@ format is specified in [docs/format.md](./docs/format.md).
 
 ## Quick start
 
-With Docker, no build needed:
+With Docker, no build needed (more in [Run with Docker](#run-with-docker)):
 
 ```bash
 docker run --rm -p 8080:8080 ghcr.io/tweakcad/tweakcad:latest
 ```
 
-Then open http://localhost:8080. Documents are saved in the browser and to
-files; the cloud features need the hosted site.
+Then open http://localhost:8080.
 
 From source, it requires Node 24 (see `engines`) and [pnpm](https://pnpm.io/) — `corepack
 enable` picks up the pinned version from `packageManager`.
@@ -73,6 +72,47 @@ Static build:
 pnpm build      # tsc --noEmit + vite build
 pnpm preview    # serve the build locally
 ```
+
+## Run with Docker
+
+Every release is published as `ghcr.io/tweakcad/tweakcad`, tagged with its
+version (for example `0.2.2`) and `latest`, for linux/amd64. The container
+serves the app on port 8080.
+
+```bash
+docker run -d --name tweakcad --restart unless-stopped -p 8080:8080 ghcr.io/tweakcad/tweakcad:0.2.2
+```
+
+Open http://localhost:8080. To use another port, change the left side, e.g.
+`-p 3000:8080`. With Docker Compose:
+
+```yaml
+services:
+  tweakcad:
+    image: ghcr.io/tweakcad/tweakcad:0.2.2
+    ports:
+      - '8080:8080'
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+```
+
+- **Your documents are not in the container.** It only serves the app; documents
+  are kept in your browser's storage and in the files you save. Updating or
+  removing the container loses nothing (clearing the browser's site data does
+  remove the copies kept there). The cloud features need the hosted site.
+- **Updating:** pull the new version and recreate the container
+  (`docker compose pull && docker compose up -d`).
+- **Locked down:** it runs as an unprivileged user and works with a read-only
+  filesystem (`--read-only --tmpfs /tmp`, as in the Compose file above).
+- **Behind a reverse proxy:** serve it at the root of its own host name and pass
+  its response headers through unchanged (it sends
+  `Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy`).
+- **With the MCP bridge:** the bridge accepts the app from `localhost` on any
+  port. For any other address, start it with `--allow-origin <that origin>`.
+- **Other platforms, or your own build:** build the image from a checkout with
+  `docker build --target runner -t tweakcad .`
 
 ## Project layout
 
