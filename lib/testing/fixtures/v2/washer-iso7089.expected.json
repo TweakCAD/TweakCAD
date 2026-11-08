@@ -1,0 +1,27 @@
+{
+ "parts": [
+  {
+   "name": "Plain washer ISO 7089",
+   "bodies": [
+    {
+     "volume": 129.484,
+     "min": [
+      -6,
+      -6,
+      0
+     ],
+     "max": [
+      6,
+      6,
+      1.6
+     ],
+     "faces": 4,
+     "edges": 6
+    }
+   ],
+   "threads": []
+  }
+ ],
+ "assemblies": [],
+ "pauses": []
+}

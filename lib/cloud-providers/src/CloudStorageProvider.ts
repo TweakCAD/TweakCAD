@@ -7,17 +7,8 @@
  * established when the CAD app wires this in.
  */
 import { ApiClient } from '@tweakcad/api-client';
-import type {
-  CreateProjectRequest,
-  RenameProjectRequest,
-} from '@tweakcad/api-types';
-import {
-  ApiError,
-  ProjectSummary,
-  Project,
-  PageResponse,
-  type Page,
-} from '@tweakcad/api-types';
+import type { CreateProjectRequest, RenameProjectRequest } from '@tweakcad/api-types';
+import { ApiError, ProjectSummary, Project, PageResponse, type Page } from '@tweakcad/api-types';
 import { z } from 'zod';
 
 const ListResponse = PageResponse(ProjectSummary);
@@ -126,12 +117,7 @@ export class CloudStorageProvider {
   }
 
   async create(input: CreateProjectRequest): Promise<ProjectSummary> {
-    const res = await this.api.request(
-      'POST',
-      '/api/v1/projects',
-      ProjectSummary,
-      input,
-    );
+    const res = await this.api.request('POST', '/api/v1/projects', ProjectSummary, input);
     if (!res.ok) throw apiError(res.error);
     return res.value;
   }
@@ -153,18 +139,15 @@ export class CloudStorageProvider {
   }
 
   async load(projectId: string): Promise<GetResponse> {
-    const res = await this.api.request(
-      'GET',
-      `/api/v1/projects/${encodeURIComponent(projectId)}`,
-      GetResponse,
-    );
+    const res = await this.api.request('GET', `/api/v1/projects/${encodeURIComponent(projectId)}`, GetResponse);
     if (!res.ok) throw apiError(res.error);
     return res.value;
   }
 
   /**
-   * The live document, parsed but not validated, with the etag of the bytes
-   * that were served.
+   * The live document's text, unparsed, with the etag of the bytes that were
+   * served. The caller reads it with the format's strict reader, which needs
+   * the text as written.
    *
    * Read through the app rather than `downloadUrl`: that is a signed bucket
    * URL on another origin, and a cross-origin `fetch()` of it needs bucket
@@ -172,21 +155,21 @@ export class CloudStorageProvider {
    * from {@link load}, so it describes exactly the bytes returned even when
    * an autosave lands between the two requests.
    */
-  async loadDocument(projectId: string): Promise<{ document: unknown; etag: string | null }> {
-    const response = await this.fetchImpl(
-      `${this.baseUrl}/api/v1/projects/${encodeURIComponent(projectId)}/document`,
-      { method: 'GET', headers: { Accept: 'application/json' }, credentials: 'include', cache: 'no-store' },
-    );
+  async loadDocument(projectId: string): Promise<{ text: string; etag: string | null }> {
+    const response = await this.fetchImpl(`${this.baseUrl}/api/v1/projects/${encodeURIComponent(projectId)}/document`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      credentials: 'include',
+      cache: 'no-store',
+    });
     if (!response.ok) {
       const raw: unknown = await response.json().catch(() => null);
       const parsed = ApiError.safeParse(raw);
       throw apiError(
-        parsed.success
-          ? parsed.data
-          : { code: 'internal', message: `Document request failed (${response.status})` },
+        parsed.success ? parsed.data : { code: 'internal', message: `Document request failed (${response.status})` },
       );
     }
-    return { document: await response.json(), etag: response.headers.get('etag') };
+    return { text: await response.text(), etag: response.headers.get('etag') };
   }
 
   /**
@@ -200,11 +183,7 @@ export class CloudStorageProvider {
    *   is the only thing stopping two tabs from silently overwriting each
    *   other. Omit it only when there is genuinely nothing to compare against.
    */
-  async save(
-    projectId: string,
-    cadjson: Blob | File,
-    meta: { ifMatch?: string | null } = {},
-  ): Promise<SaveResponse> {
+  async save(projectId: string, cadjson: Blob | File, meta: { ifMatch?: string | null } = {}): Promise<SaveResponse> {
     const form = new FormData();
     form.append('cadjson', cadjson, 'document.cadjson');
     const res = await this.api.request(
@@ -339,11 +318,7 @@ export class CloudStorageProvider {
   }
 
   async delete(projectId: string): Promise<void> {
-    const res = await this.api.request(
-      'DELETE',
-      `/api/v1/projects/${encodeURIComponent(projectId)}`,
-      DeleteResponse,
-    );
+    const res = await this.api.request('DELETE', `/api/v1/projects/${encodeURIComponent(projectId)}`, DeleteResponse);
     if (!res.ok) throw apiError(res.error);
   }
 }

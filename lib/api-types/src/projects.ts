@@ -1,16 +1,11 @@
 // GENERATED — DO NOT EDIT HERE.
-// Client-safe subset vendored from the private TweakCAD-Site repo. This repo
-// has no sync script and cannot regenerate this file. To propose a change,
-// open an issue/PR here; a maintainer updates the source in TweakCAD-Site and
-// re-syncs. Local edits are overwritten on the next sync.
+// The site API's types, as the site defines them. Local edits are overwritten
+// when they are copied in again; to propose a change, open an issue or a PR.
 
 import { z } from 'zod';
 
-// CLIENT-SAFE project surface — mirrored into the public cad repo. Keep this
-// limited to the DTOs the CAD app legitimately receives at runtime (project
-// metadata it reads/creates). Site-private types — taxonomy, publish/
-// visibility, the model-card feed, remix, and comments + moderation — live in
-// `projects-publishing.ts` and `comments.ts` and must NOT be added here.
+// The project types the editor receives and sends: the project metadata it
+// reads and creates.
 
 /**
  * URL field restricted to the http(s) schemes. `z.string().url()` alone still

@@ -74,7 +74,10 @@ export function LoftDialog({
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onCancel();
+      }
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
@@ -95,16 +98,19 @@ export function LoftDialog({
   return (
     <div style={styles.overlay}>
       <div style={styles.panel}>
-        <PanelHeader title="Loft" icon={<PatternIcon size={14} color="#eab308" />} onClose={onCancel} closeTitle="Cancel (Esc)" />
+        <PanelHeader
+          title="Loft"
+          icon={<PatternIcon size={14} color="#eab308" />}
+          onClose={onCancel}
+          closeTitle="Cancel (Esc)"
+        />
 
         <div style={styles.section}>
           <div style={styles.sectionLabel}>
             Profiles {canConfirm ? `(${profiles.length})` : `(need ${MIN_PROFILES - profiles.length} more)`}
           </div>
           <div style={styles.profileList}>
-            {profiles.length === 0 && (
-              <div style={styles.emptyHint}>Click profiles in the viewport in order...</div>
-            )}
+            {profiles.length === 0 && <div style={styles.emptyHint}>Click profiles in the viewport in order...</div>}
             {profiles.map((p, idx) => (
               <div key={p.key} style={styles.profileRow}>
                 <span style={styles.profileIndex}>{idx + 1}</span>
@@ -114,8 +120,12 @@ export function LoftDialog({
                   style={styles.profileRemove}
                   onClick={() => onRemoveProfile(p.key)}
                   title="Remove from loft"
-                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = '#dc2626'; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = '#888'; }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.color = '#dc2626';
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.color = '#888';
+                  }}
                 >
                   <X size={11} />
                 </button>
@@ -126,22 +136,14 @@ export function LoftDialog({
 
         <div style={styles.row}>
           <label style={styles.checkboxRow}>
-            <input
-              type="checkbox"
-              checked={ruled}
-              onChange={e => setRuled(e.target.checked)}
-            />
+            <input type="checkbox" checked={ruled} onChange={(e) => setRuled(e.target.checked)} />
             <span style={styles.checkboxLabel}>Ruled (straight segments)</span>
           </label>
         </div>
 
         <div style={styles.row}>
           <label style={styles.checkboxRow}>
-            <input
-              type="checkbox"
-              checked={closed}
-              onChange={e => setClosed(e.target.checked)}
-            />
+            <input type="checkbox" checked={closed} onChange={(e) => setClosed(e.target.checked)} />
             <span style={styles.checkboxLabel}>Closed loop</span>
           </label>
         </div>
@@ -158,14 +160,12 @@ export function LoftDialog({
         {showTargetBodyPicker && (
           <div style={styles.row}>
             <span style={styles.label}>Target</span>
-            <select
-              value={targetBodyId}
-              onChange={e => setTargetBodyId(e.target.value)}
-              style={styles.select}
-            >
+            <select value={targetBodyId} onChange={(e) => setTargetBodyId(e.target.value)} style={styles.select}>
               <option value="">Auto</option>
-              {availableBodies!.map(body => (
-                <option key={body.id} value={body.id}>{body.label}</option>
+              {availableBodies!.map((body) => (
+                <option key={body.id} value={body.id}>
+                  {body.label}
+                </option>
               ))}
             </select>
           </div>
@@ -175,8 +175,12 @@ export function LoftDialog({
           <button
             style={styles.cancelBtn}
             onClick={onCancel}
-            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#eee'; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#f5f5f5'; }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = '#eee';
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = '#f5f5f5';
+            }}
           >
             Cancel
           </button>
@@ -188,10 +192,10 @@ export function LoftDialog({
             }}
             onClick={handleConfirm}
             disabled={!canConfirm}
-            onMouseEnter={e => {
+            onMouseEnter={(e) => {
               if (canConfirm) (e.currentTarget as HTMLButtonElement).style.background = '#a16207';
             }}
-            onMouseLeave={e => {
+            onMouseLeave={(e) => {
               if (canConfirm) (e.currentTarget as HTMLButtonElement).style.background = '#eab308';
             }}
             title={canConfirm ? 'Build loft' : `Pick at least ${MIN_PROFILES} profiles to enable`}
@@ -218,10 +222,10 @@ function ToggleButton({ active, onClick, label }: { active: boolean; onClick: ()
       }}
       onClick={onClick}
       title={label}
-      onMouseEnter={e => {
+      onMouseEnter={(e) => {
         if (!active) (e.currentTarget as HTMLButtonElement).style.background = '#ebebeb';
       }}
-      onMouseLeave={e => {
+      onMouseLeave={(e) => {
         (e.currentTarget as HTMLButtonElement).style.background = active ? '#fefce8' : '#f7f7f7';
       }}
     >

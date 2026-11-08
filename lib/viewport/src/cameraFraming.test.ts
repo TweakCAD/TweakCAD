@@ -12,7 +12,7 @@ describe('fitFraming', () => {
   it('centres on the box and backs off by the padded fov distance', () => {
     const f = fitFraming(box([10, 0, -4], [30, 8, 4]), FOV)!;
     expect(f.target.toArray()).toEqual([20, 4, 0]);
-    const expected = 20 / (2 * Math.tan((FOV * Math.PI / 180) / 2)) * 1.5;
+    const expected = (20 / (2 * Math.tan((FOV * Math.PI) / 180 / 2))) * 1.5;
     expect(f.radius).toBeCloseTo(expected, 9);
   });
 

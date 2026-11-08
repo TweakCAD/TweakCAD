@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { listAvailableModels, pickModelId, type AvailableModel } from './chatClient.ts';
+import {
+  listAvailableModels,
+  pickModelId,
+  streamChat,
+  type AvailableModel,
+  type ChatStreamEvent,
+} from './chatClient.ts';
 
 const sonnet: AvailableModel = {
   id: 'claude-sonnet-5-5',
@@ -8,7 +14,13 @@ const sonnet: AvailableModel = {
   supportsTools: true,
   isDefault: true,
 };
-const opus: AvailableModel = { ...sonnet, id: 'claude-opus-5-5', displayName: 'Claude Opus 5.5', costTier: 'premium', isDefault: false };
+const opus: AvailableModel = {
+  ...sonnet,
+  id: 'claude-opus-5-5',
+  displayName: 'Claude Opus 5.5',
+  costTier: 'premium',
+  isDefault: false,
+};
 
 function stubFetch(impl: () => Promise<Response>): void {
   vi.stubGlobal('fetch', vi.fn(impl));
@@ -65,5 +77,53 @@ describe('pickModelId', () => {
 
   it('is null with no models', () => {
     expect(pickModelId([], 'claude-opus-5-5')).toBeNull();
+  });
+});
+
+describe('streamChat', () => {
+  /** A response whose body arrives in `chunks`. */
+  function streamed(chunks: string[]): Response {
+    const bytes = new TextEncoder();
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        start(c) {
+          for (const chunk of chunks) c.enqueue(bytes.encode(chunk));
+          c.close();
+        },
+      }),
+      { headers: { 'Content-Type': 'text/event-stream' } },
+    );
+  }
+
+  async function events(chunks: string[]): Promise<ChatStreamEvent[]> {
+    stubFetch(async () => streamed(chunks));
+    const out: ChatStreamEvent[] = [];
+    for await (const e of streamChat({ messages: [] })) out.push(e);
+    return out;
+  }
+
+  const text = { type: 'text', delta: 'Hi' };
+  const done = { type: 'done', stopReason: 'end_turn' };
+
+  it('reads events ended by LF, CRLF or CR line ends', async () => {
+    for (const nl of ['\n', '\r\n', '\r']) {
+      expect(await events([`data: ${JSON.stringify(text)}${nl}${nl}data: ${JSON.stringify(done)}${nl}${nl}`])).toEqual([
+        text,
+        done,
+      ]);
+    }
+  });
+
+  it('reads a CRLF split across chunks, data on several lines, and a last event with no blank line', async () => {
+    const body = `: comment\r\nevent: x\r\ndata: ${JSON.stringify(text)}\r\n\r\ndata: {"type":\r\ndata: "done", "stopReason": "end_turn"}`;
+    const blank = body.indexOf('\r\n\r\n');
+    const chunks = [
+      body.slice(0, blank + 1),
+      body.slice(blank + 1, blank + 3),
+      body.slice(blank + 3, body.length - 4),
+      body.slice(body.length - 4),
+    ];
+    expect(chunks.join('')).toBe(body);
+    expect(await events(chunks)).toEqual([text, done]);
   });
 });

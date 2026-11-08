@@ -1,0 +1,29 @@
+{
+ "parts": [
+  {
+   "name": "Hex standoff",
+   "bodies": [
+    {
+     "volume": 1339.352,
+     "min": [
+      -5.774,
+      -5,
+      0
+     ],
+     "max": [
+      5.774,
+      5,
+      20
+     ],
+     "faces": 9,
+     "edges": 21
+    }
+   ],
+   "threads": [
+    "M6 6H internal"
+   ]
+  }
+ ],
+ "assemblies": [],
+ "pauses": []
+}

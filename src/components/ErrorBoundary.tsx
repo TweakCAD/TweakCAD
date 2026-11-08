@@ -9,7 +9,7 @@
  *   1. **App-level**, around `<Shell>` in App.tsx — last-resort safety
  *      net so any uncaught render exception shows a recovery panel
  *      instead of a blank page. Without this, a single bad feature
- *      (e.g. a sketch with malformed entities built by an AI agent)
+ *      (e.g. a sketch with malformed entities)
  *      takes the entire editor down.
  *
  *   2. **Component-level**, around individual `<SketchViewer>` mounts —
@@ -69,12 +69,8 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   override componentDidCatch(error: Error, info: ErrorInfo): void {
     // Always log — the only signal a dev gets when a boundary catches.
-     
-    console.error(
-      `[ErrorBoundary${this.props.scopeLabel ? `:${this.props.scopeLabel}` : ''}]`,
-      error,
-      info,
-    );
+
+    console.error(`[ErrorBoundary${this.props.scopeLabel ? `:${this.props.scopeLabel}` : ''}]`, error, info);
     this.props.onError?.(error, info);
   }
 
@@ -94,13 +90,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       if (this.props.fallback) {
         return this.props.fallback(this.state.error, this.reset);
       }
-      return (
-        <DefaultFallback
-          error={this.state.error}
-          reset={this.reset}
-          scopeLabel={this.props.scopeLabel}
-        />
-      );
+      return <DefaultFallback error={this.state.error} reset={this.reset} scopeLabel={this.props.scopeLabel} />;
     }
     return this.props.children;
   }
@@ -108,29 +98,21 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
 // ---- Default fallback panel ------------------------------------------------
 
-function DefaultFallback(props: {
-  error: Error;
-  reset: () => void;
-  scopeLabel?: string | undefined;
-}): ReactNode {
+function DefaultFallback(props: { error: Error; reset: () => void; scopeLabel?: string | undefined }): ReactNode {
   const scope = props.scopeLabel ?? 'this component';
   return (
     <div style={styles.root}>
       <div style={styles.card}>
         <div style={styles.title}>Something went wrong rendering {scope}.</div>
         <div style={styles.subtitle}>
-          The rest of the app is still running. You can retry, or reload the
-          page if the problem persists.
+          The rest of the app is still running. You can retry, or reload the page if the problem persists.
         </div>
         <pre style={styles.errorBox}>{formatError(props.error)}</pre>
         <div style={styles.actions}>
           <button style={styles.button} onClick={props.reset}>
             Retry
           </button>
-          <button
-            style={{ ...styles.button, ...styles.buttonPrimary }}
-            onClick={() => window.location.reload()}
-          >
+          <button style={{ ...styles.button, ...styles.buttonPrimary }} onClick={() => window.location.reload()}>
             Reload page
           </button>
         </div>
@@ -159,8 +141,7 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: 'center',
     background: '#f5f5f5',
     color: '#333',
-    fontFamily:
-      '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
     padding: 24,
     boxSizing: 'border-box',
   },
@@ -190,8 +171,7 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 4,
     padding: 12,
     fontSize: 12,
-    fontFamily:
-      'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
     overflow: 'auto',
     maxHeight: 200,
     whiteSpace: 'pre-wrap',

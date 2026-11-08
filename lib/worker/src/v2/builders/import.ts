@@ -1,0 +1,72 @@
+/**
+ * `core.import` (13.3): replays the stored shape, so a newer importer or kernel
+ * never changes an import. `units` and `upAxis` record what the importer did to
+ * reach it. Identities come from the shape map, after the 13.2 load check.
+ * Frozen features load their stored shapes the same way.
+ */
+import { OcctError, type ShapeHandle } from 'occt-wasm';
+import { contentHash, startFeature, type FeatureNamer, type ShapeMapJson, type ShapeRef } from '@tweakcad/format';
+import { FeaturePause, registerBuilder, type BuildContext, type Json } from '../context';
+
+/** An asset's bytes as text, verified against its row (13.1, 13.2). */
+function assetText(ctx: BuildContext, hash: string): string {
+  const row = ctx.ev.assets[hash] as Json | undefined;
+  if (!row) throw new FeaturePause('the stored shape is missing from the assets');
+  const data = row.data as Json | undefined;
+  if (!data || !('inline' in data)) throw new FeaturePause('the stored shape is not loaded yet');
+  const binary = atob((data.inline as Json).base64 as string);
+  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+  if (bytes.length !== row.size || contentHash(bytes) !== hash)
+    throw new FeaturePause('the stored shape does not match its asset hash');
+  return new TextDecoder().decode(bytes);
+}
+
+function decode(ctx: BuildContext, text: string): ShapeHandle {
+  try {
+    return ctx.ev.kernel.fromBREP(text);
+  } catch (e) {
+    if (e instanceof OcctError) throw new FeaturePause('the stored shape cannot be read');
+    throw e;
+  }
+}
+
+/**
+ * Decodes a stored shape (13.2) and gives its sub-shapes the identities of its
+ * map through `namer`; its solids become bodies. Pauses on an unknown
+ * representation, an asset that is missing or altered, a shape with no root
+ * compound, and a map that fails the load check.
+ */
+export function loadStored(
+  ctx: BuildContext,
+  namer: FeatureNamer,
+  stored: Json,
+  ref: string,
+): { ref: ShapeRef; handle: ShapeHandle } {
+  const representation = stored.representation as Json;
+  if (representation.name !== 'brep' || representation.version !== 1) {
+    throw new FeaturePause(
+      `the representation ${String(representation.name)} ${String(representation.version)} is not built yet`,
+    );
+  }
+  const { adapter } = ctx.ev;
+  const handle = decode(ctx, assetText(ctx, stored.asset as string));
+  const shape = adapter.addShape(handle, ref);
+  // The root of a stored shape is a compound holding the bodies (13.2).
+  if (adapter.subShapes(shape)[0]?.kind !== 'compound') throw new FeaturePause('the stored shape has no root compound');
+  namer.load(shape, stored.map as unknown as ShapeMapJson);
+  return { ref: shape, handle };
+}
+
+registerBuilder('core.import', (ctx) => {
+  const { inputs, id, ordinal, part } = ctx;
+  const { adapter, names } = ctx.ev;
+  const namer = startFeature(part.state, { feature: id, ordinal }, adapter, names);
+  const { ref, handle } = loadStored(ctx, namer, inputs.stored as Json, `import:${id}`);
+  const state = namer.finish([]);
+  const { solids } = adapter.topology(ref);
+  if (solids.length === 0) throw new FeaturePause('imported surfaces are not built yet');
+  if (solids.some((s) => state.get(s.solid) === undefined))
+    throw new FeaturePause('a stored solid has no name in the shape map');
+  part.state = state;
+  part.shapes.set(ref, handle);
+});

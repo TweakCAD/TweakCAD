@@ -30,8 +30,12 @@ export function PanelHeader({ title, icon, onClose, closeTitle = 'Close (Esc)' }
           style={styles.closeBtn}
           onClick={onClose}
           title={closeTitle}
-          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#e6e6e6'; }}
-          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background = '#e6e6e6';
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+          }}
         >
           <X size={13} />
         </button>

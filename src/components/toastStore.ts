@@ -25,6 +25,8 @@ export interface ToastPayload {
   message: string;
   tone?: ToastTone;
   durationMs?: number;
+  /** A button on the toast; clicking it dismisses the toast too. */
+  action?: { label: string; onClick: () => void };
 }
 
 interface ToastStoreState {
@@ -37,9 +39,10 @@ let nonceCounter = 0;
 
 export const useToastStore = create<ToastStoreState>((set) => ({
   current: null,
-  enqueue: (toast) => set({
-    current: { ...toast, nonce: ++nonceCounter },
-  }),
+  enqueue: (toast) =>
+    set({
+      current: { ...toast, nonce: ++nonceCounter },
+    }),
   dismiss: () => set({ current: null }),
 }));
 

@@ -26,7 +26,12 @@ const defaults: Required<Pick<IconProps, 'size' | 'color' | 'strokeWidth'>> = {
 
 // ---- Sketch ----
 /** Pencil on plane - represents 2D sketch creation */
-export function SketchIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function SketchIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       {/* Plane / grid base */}
@@ -40,7 +45,12 @@ export function SketchIcon({ size = defaults.size, color = defaults.color, strok
 
 // ---- Extrude ----
 /** Arrow pulling surface upward - represents extrusion */
-export function ExtrudeIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function ExtrudeIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       {/* Base rectangle (profile) */}
@@ -49,34 +59,62 @@ export function ExtrudeIcon({ size = defaults.size, color = defaults.color, stro
       <path d="M4 10V5M12 10V5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
       <path d="M4 5H12" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
       {/* Up arrow */}
-      <path d="M8 7V1M5.5 3.5L8 1L10.5 3.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M8 7V1M5.5 3.5L8 1L10.5 3.5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
 
 // ---- Plane (construction / datum) ----
 /** Tilted parallelogram with a normal tick — represents a reference plane */
-export function PlaneIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function PlaneIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       {/* Parallelogram (the plane in perspective) */}
       <path d="M2 10L6 4L14 4L10 10Z" stroke={color} strokeWidth={strokeWidth} strokeLinejoin="round" />
       {/* Normal indicator */}
       <path d="M8 7L8 13" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <path d="M6.5 11.5L8 13L9.5 11.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M6.5 11.5L8 13L9.5 11.5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
 
 // ---- Hole ----
 /** Circle with downward arrow - represents hole/bore */
-export function HoleIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function HoleIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       {/* Circle (hole profile) */}
       <circle cx="8" cy="6" r="4" stroke={color} strokeWidth={strokeWidth} />
       {/* Down arrow (cut direction) */}
-      <path d="M8 8V14M5.5 11.5L8 14L10.5 11.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M8 8V14M5.5 11.5L8 14L10.5 11.5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
       {/* Center crosshair */}
       <circle cx="8" cy="6" r="1" stroke={color} strokeWidth={strokeWidth} />
     </svg>
@@ -85,7 +123,12 @@ export function HoleIcon({ size = defaults.size, color = defaults.color, strokeW
 
 // ---- Cut (Boolean Subtract) ----
 /** Two overlapping shapes with minus - represents boolean cut */
-export function CutIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function CutIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       {/* Base shape */}
@@ -100,7 +143,12 @@ export function CutIcon({ size = defaults.size, color = defaults.color, strokeWi
 
 // ---- Fuse (Boolean Join) ----
 /** Two overlapping shapes with plus - represents boolean union */
-export function FuseIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function FuseIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       {/* Shape A */}
@@ -115,21 +163,200 @@ export function FuseIcon({ size = defaults.size, color = defaults.color, strokeW
 
 // ---- Pattern (Linear) ----
 /** Three repeated shapes in a row */
-export function PatternIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function PatternIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <rect x="1" y="5" width="3.5" height="6" rx="0.5" stroke={color} strokeWidth={strokeWidth} />
       <rect x="6.25" y="5" width="3.5" height="6" rx="0.5" stroke={color} strokeWidth={strokeWidth} />
       <rect x="11.5" y="5" width="3.5" height="6" rx="0.5" stroke={color} strokeWidth={strokeWidth} />
       {/* Arrow indicating repetition */}
-      <path d="M3 3H13M11 1.5L13 3L11 4.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M3 3H13M11 1.5L13 3L11 4.5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+// ---- Loft ----
+/** Two profiles of different sizes joined by a blended side */
+export function LoftIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+      <ellipse cx="8" cy="12.5" rx="6" ry="2" stroke={color} strokeWidth={strokeWidth} />
+      <rect x="5.5" y="2" width="5" height="2.5" rx="0.5" stroke={color} strokeWidth={strokeWidth} />
+      <path
+        d="M2 12.5Q3.5 7 5.5 4.5M14 12.5Q12.5 7 10.5 4.5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+// ---- Sweep ----
+/** A profile carried along a curved path */
+export function SweepIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+      <path
+        d="M3.5 13Q3.5 4.5 12.5 4.5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeDasharray="1.5 1.2"
+        strokeLinecap="round"
+      />
+      <ellipse cx="3.5" cy="13" rx="2.2" ry="1" stroke={color} strokeWidth={strokeWidth} />
+      <ellipse cx="12.5" cy="4.5" rx="1" ry="2.2" stroke={color} strokeWidth={strokeWidth} />
+      <path d="M1.3 13Q1.3 2.3 12.5 2.3M5.7 13Q5.7 6.7 12.5 6.7" stroke={color} strokeWidth={strokeWidth} />
+    </svg>
+  );
+}
+
+// ---- Thread ----
+/** A rod with helical thread lines */
+export function ThreadIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+      <rect x="5" y="1.5" width="6" height="13" rx="1" stroke={color} strokeWidth={strokeWidth} />
+      <path
+        d="M5 4.5L11 3M5 7.5L11 6M5 10.5L11 9M5 13.5L11 12"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+// ---- Construction axis ----
+/** A centre line through two end marks */
+export function AxisIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+      <path
+        d="M2.5 13.5L13.5 2.5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeDasharray="3 1 1 1"
+        strokeLinecap="round"
+      />
+      <path d="M1.5 11.5L4.5 14.5M11.5 1.5L14.5 4.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+    </svg>
+  );
+}
+
+// ---- Construction point ----
+/** A point with a cross through it */
+export function ConstructionPointIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+      <path d="M8 2V6M8 10V14M2 8H6M10 8H14" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      <circle cx="8" cy="8" r="1.6" fill={color} />
+    </svg>
+  );
+}
+
+// ---- Construction frame ----
+/** Three axes from one origin */
+export function FrameIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+      <path d="M5 11L14 11M5 11L5 2M5 11L1.5 14.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      <path
+        d="M12 9.5L14 11L12 12.5M3.5 4L5 2L6.5 4"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="5" cy="11" r="1" fill={color} />
+    </svg>
+  );
+}
+
+// ---- Joint ----
+/** Two links held at a pin */
+export function JointIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+      <rect
+        x="1.5"
+        y="9"
+        width="8"
+        height="4"
+        rx="2"
+        transform="rotate(-30 5.5 11)"
+        stroke={color}
+        strokeWidth={strokeWidth}
+      />
+      <rect
+        x="6.5"
+        y="3"
+        width="8"
+        height="4"
+        rx="2"
+        transform="rotate(-30 10.5 5)"
+        stroke={color}
+        strokeWidth={strokeWidth}
+      />
+      <circle cx="8" cy="8" r="1.2" fill={color} />
     </svg>
   );
 }
 
 // ---- Fillet ----
 /** Corner with rounded edge */
-export function FilletIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function FilletIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <path d="M3 2V8Q3 13 8 13H14" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" fill="none" />
@@ -142,7 +369,12 @@ export function FilletIcon({ size = defaults.size, color = defaults.color, strok
 
 // ---- Chamfer ----
 /** Corner with angled cut */
-export function ChamferIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function ChamferIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <path d="M3 2V8L8 13H14" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
@@ -156,7 +388,12 @@ export function ChamferIcon({ size = defaults.size, color = defaults.color, stro
 
 // ---- Mirror ----
 /** Shape with dashed line and mirrored copy */
-export function MirrorIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function MirrorIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       {/* Mirror line */}
@@ -171,7 +408,12 @@ export function MirrorIcon({ size = defaults.size, color = defaults.color, strok
 
 // ---- Shell ----
 /** Hollow box outline */
-export function ShellIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function ShellIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       {/* Outer box */}
@@ -184,14 +426,31 @@ export function ShellIcon({ size = defaults.size, color = defaults.color, stroke
 
 // ---- Revolve ----
 /** Profile with circular arrow */
-export function RevolveIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function RevolveIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       {/* Profile shape */}
       <path d="M3 4V12H6V8H4V4Z" stroke={color} strokeWidth={strokeWidth} strokeLinejoin="round" />
       {/* Circular arrow for revolution */}
-      <path d="M9 3C12 3 14 5.5 14 8C14 10.5 12 13 9 13" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" fill="none" />
-      <path d="M10.5 11L9 13L10.5 15" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M9 3C12 3 14 5.5 14 8C14 10.5 12 13 9 13"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        fill="none"
+      />
+      <path
+        d="M10.5 11L9 13L10.5 15"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -199,19 +458,45 @@ export function RevolveIcon({ size = defaults.size, color = defaults.color, stro
 // ---- Sketch Tool Icons ----
 
 /** Hand/pointer cursor - Select tool */
-export function SelectHandIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function SelectHandIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <path d="M7 1.5V9.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <path d="M7 9.5L4.5 7.5C4 7.1 3.2 7.2 3 7.8C2.8 8.4 3.1 8.9 3.5 9.2L7 12.5C7.5 13 8.5 13.5 9.5 13.5H10.5C12.5 13.5 13.5 12 13.5 10V7.5C13.5 7 13 6.5 12.5 6.5C12 6.5 11.5 7 11.5 7.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M11.5 7.5V6C11.5 5.5 11 5 10.5 5C10 5 9.5 5.5 9.5 6V6.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <path d="M9.5 6.5V5C9.5 4.5 9 4 8.5 4C8 4 7.5 4.5 7.5 5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      <path
+        d="M7 9.5L4.5 7.5C4 7.1 3.2 7.2 3 7.8C2.8 8.4 3.1 8.9 3.5 9.2L7 12.5C7.5 13 8.5 13.5 9.5 13.5H10.5C12.5 13.5 13.5 12 13.5 10V7.5C13.5 7 13 6.5 12.5 6.5C12 6.5 11.5 7 11.5 7.5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M11.5 7.5V6C11.5 5.5 11 5 10.5 5C10 5 9.5 5.5 9.5 6V6.5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+      />
+      <path
+        d="M9.5 6.5V5C9.5 4.5 9 4 8.5 4C8 4 7.5 4.5 7.5 5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+      />
     </svg>
   );
 }
 
 /** Diagonal line - Line tool */
-export function LineToolIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function LineToolIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <line x1="3" y1="13" x2="13" y2="3" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
@@ -222,7 +507,12 @@ export function LineToolIcon({ size = defaults.size, color = defaults.color, str
 }
 
 /** Rectangle outline - Rectangle tool */
-export function RectToolIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function RectToolIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <rect x="2" y="4" width="12" height="8" stroke={color} strokeWidth={strokeWidth} strokeLinejoin="round" />
@@ -235,7 +525,12 @@ export function RectToolIcon({ size = defaults.size, color = defaults.color, str
 }
 
 /** Circle outline - Circle tool */
-export function CircleToolIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function CircleToolIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <circle cx="8" cy="8" r="6" stroke={color} strokeWidth={strokeWidth} />
@@ -245,7 +540,12 @@ export function CircleToolIcon({ size = defaults.size, color = defaults.color, s
 }
 
 /** Arc curve - Arc tool */
-export function ArcToolIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function ArcToolIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <path d="M3 12C3 6 6 3 13 3" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" fill="none" />
@@ -256,16 +556,32 @@ export function ArcToolIcon({ size = defaults.size, color = defaults.color, stro
 }
 
 /** Pentagon - Polygon tool */
-export function PolygonToolIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function PolygonToolIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
-      <polygon points="8,1.5 14,5.5 12,13 4,13 2,5.5" stroke={color} strokeWidth={strokeWidth} strokeLinejoin="round" fill="none" />
+      <polygon
+        points="8,1.5 14,5.5 12,13 4,13 2,5.5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinejoin="round"
+        fill="none"
+      />
     </svg>
   );
 }
 
 /** Ellipse outline */
-export function EllipseToolIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function EllipseToolIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <ellipse cx="8" cy="8" rx="7" ry="4.5" stroke={color} strokeWidth={strokeWidth} />
@@ -275,7 +591,12 @@ export function EllipseToolIcon({ size = defaults.size, color = defaults.color, 
 }
 
 /** Slot / rounded rectangle */
-export function SlotToolIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function SlotToolIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <rect x="1.5" y="5" width="13" height="6" rx="3" stroke={color} strokeWidth={strokeWidth} />
@@ -284,27 +605,130 @@ export function SlotToolIcon({ size = defaults.size, color = defaults.color, str
 }
 
 /** Spline / free-form curve */
-export function SplineToolIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function SplineToolIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
-      <path d="M2 12C4 4 7 14 10 6C11.5 2 14 3 14 5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" fill="none" />
+      <path
+        d="M2 12C4 4 7 14 10 6C11.5 2 14 3 14 5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        fill="none"
+      />
       <circle cx="2" cy="12" r="1" fill={color} />
       <circle cx="14" cy="5" r="1" fill={color} />
     </svg>
   );
 }
 
-/** Outlined capital T - Text tool */
-export function TextToolIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+/** Rectangle with its centre marked - centre rectangle tool */
+export function CenterRectToolIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
-      <path d="M2.5 2.5H13.5V5.5H9.5V13.5H6.5V5.5H2.5Z" stroke={color} strokeWidth={strokeWidth} strokeLinejoin="round" fill="none" />
+      <rect x="2" y="4" width="12" height="8" stroke={color} strokeWidth={strokeWidth} fill="none" />
+      <line x1="2" y1="12" x2="14" y2="4" stroke={color} strokeWidth={strokeWidth * 0.6} strokeDasharray="1.5 1.5" />
+      <circle cx="8" cy="8" r="1.2" fill={color} />
+    </svg>
+  );
+}
+
+/** A line running on into an arc - tangent arc tool */
+export function TangentArcToolIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+      <path
+        d="M1.5 12.5H7.5A6 6 0 0 0 13.5 6.5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        fill="none"
+      />
+      <circle cx="7.5" cy="12.5" r="1" fill={color} />
+    </svg>
+  );
+}
+
+/** An edge dropped onto the sketch plane - project tool */
+export function ProjectToolIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+      <path d="M4 2.5H12" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      <path
+        d="M8 4.5V9.5M6 7.5L8 9.5L10 7.5"
+        stroke={color}
+        strokeWidth={strokeWidth * 0.7}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M1.5 13.5L4 11.5H14.5L12 13.5Z" stroke={color} strokeWidth={strokeWidth * 0.7} strokeLinejoin="round" />
+      <path d="M5 12.5H11" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** A solid cut by the sketch plane - intersect tool */
+export function IntersectToolIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+      <rect x="5" y="2" width="6" height="12" stroke={color} strokeWidth={strokeWidth * 0.7} />
+      <path d="M1.5 10L4 8H14.5L12 10Z" stroke={color} strokeWidth={strokeWidth * 0.7} strokeLinejoin="round" />
+      <path d="M5 9H11" stroke={color} strokeWidth={strokeWidth * 1.2} strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** Outlined capital T - Text tool */
+export function TextToolIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+      <path
+        d="M2.5 2.5H13.5V5.5H9.5V13.5H6.5V5.5H2.5Z"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinejoin="round"
+        fill="none"
+      />
     </svg>
   );
 }
 
 /** Small dot - Point tool */
-export function PointToolIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function PointToolIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <circle cx="8" cy="8" r="2.5" fill={color} />
@@ -317,7 +741,12 @@ export function PointToolIcon({ size = defaults.size, color = defaults.color, st
 }
 
 /** Scissors - Trim tool */
-export function TrimToolIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function TrimToolIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <circle cx="4" cy="4" r="2.5" stroke={color} strokeWidth={strokeWidth} />
@@ -329,22 +758,54 @@ export function TrimToolIcon({ size = defaults.size, color = defaults.color, str
 }
 
 /** Extend line tool */
-export function ExtendToolIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function ExtendToolIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <line x1="2" y1="8" x2="10" y2="8" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <line x1="10" y1="8" x2="14" y2="8" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeDasharray="2 1.5" />
-      <path d="M12 5.5L14.5 8L12 10.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+      <line
+        x1="10"
+        y1="8"
+        x2="14"
+        y2="8"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeDasharray="2 1.5"
+      />
+      <path
+        d="M12 5.5L14.5 8L12 10.5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
 
 /** Offset curves tool */
-export function OffsetToolIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function OffsetToolIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <path d="M3 4C3 4 5 12 11 12" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" fill="none" />
-      <path d="M5 2C5 2 7 10 13 10" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" fill="none" strokeDasharray="2 1.5" />
+      <path
+        d="M5 2C5 2 7 10 13 10"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        fill="none"
+        strokeDasharray="2 1.5"
+      />
       <path d="M4 3L5.5 1.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
       <path d="M7 8L8.5 6.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
     </svg>
@@ -352,7 +813,12 @@ export function OffsetToolIcon({ size = defaults.size, color = defaults.color, s
 }
 
 /** Sketch fillet (2D corner rounding) */
-export function SketchFilletToolIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function SketchFilletToolIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <path d="M3 3V9Q3 13 7 13H13" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" fill="none" />
@@ -361,7 +827,12 @@ export function SketchFilletToolIcon({ size = defaults.size, color = defaults.co
 }
 
 /** Sketch mirror tool */
-export function SketchMirrorToolIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function SketchMirrorToolIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <path d="M8 2V14" stroke={color} strokeWidth={strokeWidth} strokeDasharray="2 1.5" strokeLinecap="round" />
@@ -372,43 +843,99 @@ export function SketchMirrorToolIcon({ size = defaults.size, color = defaults.co
 }
 
 /** Horizontal constraint */
-export function HorizontalConstraintIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function HorizontalConstraintIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <line x1="2" y1="8" x2="14" y2="8" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <path d="M4 5.5L2 8L4 10.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M12 5.5L14 8L12 10.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M4 5.5L2 8L4 10.5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M12 5.5L14 8L12 10.5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
 
 /** Combined horizontal/vertical constraint (auto). */
-export function HVConstraintIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function HVConstraintIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       {/* horizontal segment */}
       <line x1="2" y1="11" x2="10" y2="11" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <path d="M3.5 9L2 11L3.5 13" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M3.5 9L2 11L3.5 13"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
       {/* vertical segment */}
       <line x1="11" y1="2" x2="11" y2="14" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <path d="M9 3.5L11 2L13 3.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M9 3.5L11 2L13 3.5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
 
 /** Vertical constraint */
-export function VerticalConstraintIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function VerticalConstraintIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <line x1="8" y1="2" x2="8" y2="14" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <path d="M5.5 4L8 2L10.5 4" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M5.5 12L8 14L10.5 12" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M5.5 4L8 2L10.5 4"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M5.5 12L8 14L10.5 12"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
 
 /** Perpendicular constraint (right angle symbol) */
-export function PerpendicularConstraintIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function PerpendicularConstraintIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <line x1="2" y1="13" x2="14" y2="13" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
@@ -419,7 +946,12 @@ export function PerpendicularConstraintIcon({ size = defaults.size, color = defa
 }
 
 /** Parallel constraint (two parallel lines) */
-export function ParallelConstraintIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function ParallelConstraintIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <line x1="3" y1="13" x2="11" y2="3" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
@@ -428,8 +960,37 @@ export function ParallelConstraintIcon({ size = defaults.size, color = defaults.
   );
 }
 
+/** Collinear constraint: two segments on one line, a gap between them. */
+export function CollinearConstraintIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+      <line x1="2" y1="13" x2="6.5" y2="8.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      <line x1="9.5" y1="5.5" x2="14" y2="1" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      <line
+        x1="6.5"
+        y1="8.5"
+        x2="9.5"
+        y2="5.5"
+        stroke={color}
+        strokeWidth={strokeWidth * 0.6}
+        strokeDasharray="1 1.5"
+      />
+    </svg>
+  );
+}
+
 /** Tangent constraint — circle resting on a line (line is geometrically tangent). */
-export function TangentConstraintIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function TangentConstraintIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   // Circle (cx=8, cy=7, r=4). Bottom of circle sits at y=11.
   // Line y=11 touches the circle at exactly one point (8, 11) → true tangency.
   return (
@@ -441,7 +1002,12 @@ export function TangentConstraintIcon({ size = defaults.size, color = defaults.c
 }
 
 /** Equal constraint (= sign) */
-export function EqualConstraintIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function EqualConstraintIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <line x1="3" y1="6" x2="13" y2="6" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
@@ -451,7 +1017,12 @@ export function EqualConstraintIcon({ size = defaults.size, color = defaults.col
 }
 
 /** Concentric constraint — two circles sharing a centre. */
-export function ConcentricConstraintIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function ConcentricConstraintIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <circle cx="8" cy="8" r="6" stroke={color} strokeWidth={strokeWidth} />
@@ -462,7 +1033,12 @@ export function ConcentricConstraintIcon({ size = defaults.size, color = default
 }
 
 /** Midpoint constraint — line segment with a dot at its centre. */
-export function MidpointConstraintIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function MidpointConstraintIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <line x1="2" y1="8" x2="14" y2="8" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
@@ -474,7 +1050,12 @@ export function MidpointConstraintIcon({ size = defaults.size, color = defaults.
 }
 
 /** Coincident constraint (overlapping dots) */
-export function CoincidentConstraintIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function CoincidentConstraintIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <circle cx="8" cy="8" r="3.5" stroke={color} strokeWidth={strokeWidth} />
@@ -484,7 +1065,12 @@ export function CoincidentConstraintIcon({ size = defaults.size, color = default
 }
 
 /** Point-on-line constraint (filled dot sitting on a line) */
-export function PointOnLineConstraintIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function PointOnLineConstraintIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <line x1="2" y1="13" x2="14" y2="3" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
@@ -494,7 +1080,12 @@ export function PointOnLineConstraintIcon({ size = defaults.size, color = defaul
 }
 
 /** Point-on-circle constraint (filled dot on a circle's perimeter) */
-export function PointOnCircleConstraintIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function PointOnCircleConstraintIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <circle cx="8" cy="8" r="5" stroke={color} strokeWidth={strokeWidth} />
@@ -504,11 +1095,25 @@ export function PointOnCircleConstraintIcon({ size = defaults.size, color = defa
 }
 
 /** Symmetric constraint (two dots mirrored about a dashed centerline) */
-export function SymmetryConstraintIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function SymmetryConstraintIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       {/* Symmetry axis */}
-      <line x1="8" y1="2" x2="8" y2="14" stroke={color} strokeWidth={strokeWidth} strokeDasharray="2 1.5" strokeLinecap="round" />
+      <line
+        x1="8"
+        y1="2"
+        x2="8"
+        y2="14"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeDasharray="2 1.5"
+        strokeLinecap="round"
+      />
       {/* Two mirrored points */}
       <circle cx="3.5" cy="8" r="1.5" fill={color} />
       <circle cx="12.5" cy="8" r="1.5" fill={color} />
@@ -520,46 +1125,99 @@ export function SymmetryConstraintIcon({ size = defaults.size, color = defaults.
 }
 
 /** Horizontal dimension (distance X) — two points with arrows along X axis */
-export function DistanceXToolIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function DistanceXToolIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <line x1="3" y1="4" x2="3" y2="12" stroke={color} strokeWidth={strokeWidth} />
       <line x1="13" y1="4" x2="13" y2="12" stroke={color} strokeWidth={strokeWidth} />
       <line x1="3" y1="8" x2="13" y2="8" stroke={color} strokeWidth={strokeWidth} />
-      <path d="M5 6.5L3 8L5 9.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M11 6.5L13 8L11 9.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-      <text x="8" y="14" fontSize="5" fill={color} textAnchor="middle" fontFamily="ui-monospace,monospace">X</text>
+      <path
+        d="M5 6.5L3 8L5 9.5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M11 6.5L13 8L11 9.5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <text x="8" y="14" fontSize="5" fill={color} textAnchor="middle" fontFamily="ui-monospace,monospace">
+        X
+      </text>
     </svg>
   );
 }
 
 /** Vertical dimension (distance Y) — two points with arrows along Y axis */
-export function DistanceYToolIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function DistanceYToolIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <line x1="4" y1="3" x2="12" y2="3" stroke={color} strokeWidth={strokeWidth} />
       <line x1="4" y1="13" x2="12" y2="13" stroke={color} strokeWidth={strokeWidth} />
       <line x1="8" y1="3" x2="8" y2="13" stroke={color} strokeWidth={strokeWidth} />
-      <path d="M6.5 5L8 3L9.5 5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M6.5 11L8 13L9.5 11" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-      <text x="14" y="9" fontSize="5" fill={color} textAnchor="middle" fontFamily="ui-monospace,monospace">Y</text>
+      <path
+        d="M6.5 5L8 3L9.5 5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M6.5 11L8 13L9.5 11"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <text x="14" y="9" fontSize="5" fill={color} textAnchor="middle" fontFamily="ui-monospace,monospace">
+        Y
+      </text>
     </svg>
   );
 }
 
 /** Fix/lock constraint (padlock) */
-export function FixConstraintIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function FixConstraintIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <rect x="3.5" y="7" width="9" height="7" rx="1" stroke={color} strokeWidth={strokeWidth} />
-      <path d="M5.5 7V5C5.5 3 6.5 1.5 8 1.5C9.5 1.5 10.5 3 10.5 5V7" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      <path
+        d="M5.5 7V5C5.5 3 6.5 1.5 8 1.5C9.5 1.5 10.5 3 10.5 5V7"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+      />
       <circle cx="8" cy="10.5" r="1" fill={color} />
     </svg>
   );
 }
 
 /** Dimension / ruler tool */
-export function DimensionToolIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function DimensionToolIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       {/* Extension lines */}
@@ -567,8 +1225,20 @@ export function DimensionToolIcon({ size = defaults.size, color = defaults.color
       <line x1="13" y1="3" x2="13" y2="9" stroke={color} strokeWidth={strokeWidth} />
       {/* Dimension line with arrows */}
       <line x1="3" y1="6" x2="13" y2="6" stroke={color} strokeWidth={strokeWidth} />
-      <path d="M5 4.5L3 6L5 7.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M11 4.5L13 6L11 7.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M5 4.5L3 6L5 7.5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M11 4.5L13 6L11 7.5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
       {/* Value label background */}
       <rect x="6.5" y="10" width="3" height="3.5" rx="0.4" stroke={color} strokeWidth={strokeWidth} fill="none" />
     </svg>
@@ -579,11 +1249,19 @@ export function DimensionToolIcon({ size = defaults.size, color = defaults.color
  * Construction-geometry indicator: single dashed line in the construction
  * style color (#964B00 brown). Used on the ribbon toggle button.
  */
-export function ConstructionGeometryIcon({ size = defaults.size, color = '#964B00', strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function ConstructionGeometryIcon({
+  size = defaults.size,
+  color = '#964B00',
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <line
-        x1="2" y1="8" x2="14" y2="8"
+        x1="2"
+        y1="8"
+        x2="14"
+        y2="8"
         stroke={color}
         strokeWidth={Math.max(strokeWidth * 1.5, 1.2)}
         strokeDasharray="2.5,1.5"
@@ -594,10 +1272,21 @@ export function ConstructionGeometryIcon({ size = defaults.size, color = '#964B0
 }
 
 /** Green checkmark - Finish Sketch */
-export function FinishSketchIcon({ size = defaults.size, color = '#22c55e', strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function FinishSketchIcon({
+  size = defaults.size,
+  color = '#22c55e',
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
-      <path d="M3 8.5L6.5 12L13 4" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M3 8.5L6.5 12L13 4"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -647,33 +1336,67 @@ export function FeatureSuppressedIcon({ size = 12, color = '#999', ...rest }: Ic
 // ---- Timeline Navigation Icons (defined here for consistency, but also available from Lucide) ----
 
 /** Rollback marker - vertical bar with left arrow */
-export function RollbackIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function RollbackIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <path d="M6 3V13" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <path d="M11 5L6 8L11 11" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <path
+        d="M11 5L6 8L11 11"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
     </svg>
   );
 }
 
 /** Calliper jaws over a dimension line — measurement, not modification */
-export function MeasureIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function MeasureIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <path d="M3 4V12M13 4V12" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
       <path d="M3 8H13" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <path d="M5 6L3 8L5 10M11 6L13 8L11 10" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M5 6L3 8L5 10M11 6L13 8L11 10"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
 
 // ---- Move ----
 /** Four-way arrows — the body is repositioned, not reshaped */
-export function MoveIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function MoveIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <path d="M8 2V14M2 8H14" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <path d="M6 4L8 2L10 4M6 12L8 14L10 12M4 6L2 8L4 10M12 6L14 8L12 10" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M6 4L8 2L10 4M6 12L8 14L10 12M4 6L2 8L4 10M12 6L14 8L12 10"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -683,7 +1406,12 @@ export function MoveIcon({ size = defaults.size, color = defaults.color, strokeW
 // as a set in the CREATE dropdown.
 
 /** Isometric cube */
-export function BoxIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function BoxIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <path d="M8 1.5L14 5V11L8 14.5L2 11V5Z" stroke={color} strokeWidth={strokeWidth} strokeLinejoin="round" />
@@ -693,7 +1421,12 @@ export function BoxIcon({ size = defaults.size, color = defaults.color, strokeWi
 }
 
 /** Upright cylinder — ellipse cap over two sides */
-export function CylinderIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function CylinderIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <ellipse cx="8" cy="4" rx="5" ry="2.2" stroke={color} strokeWidth={strokeWidth} />
@@ -704,7 +1437,12 @@ export function CylinderIcon({ size = defaults.size, color = defaults.color, str
 }
 
 /** Sphere — outline with an equator ellipse for volume */
-export function SphereIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function SphereIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <circle cx="8" cy="8" r="6" stroke={color} strokeWidth={strokeWidth} />
@@ -714,17 +1452,33 @@ export function SphereIcon({ size = defaults.size, color = defaults.color, strok
 }
 
 /** Pointed cone on an elliptical base */
-export function ConeIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function ConeIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
-      <path d="M8 2L13 12M8 2L3 12" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M8 2L13 12M8 2L3 12"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
       <ellipse cx="8" cy="12" rx="5" ry="2.2" stroke={color} strokeWidth={strokeWidth} />
     </svg>
   );
 }
 
 /** Torus — outer ring with the inner hole */
-export function TorusIcon({ size = defaults.size, color = defaults.color, strokeWidth = defaults.strokeWidth, ...rest }: IconProps) {
+export function TorusIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
       <ellipse cx="8" cy="8" rx="6.2" ry="4" stroke={color} strokeWidth={strokeWidth} />
@@ -775,6 +1529,24 @@ export function getFeatureIcon(featureType: string, size = 14): ReactElement {
       return <RevolveIcon size={size} />;
     case 'constructionPlane':
       return <PlaneIcon size={size} />;
+    case 'constructionAxis':
+      return <AxisIcon size={size} />;
+    case 'constructionPoint':
+      return <ConstructionPointIcon size={size} />;
+    case 'constructionFrame':
+      return <FrameIcon size={size} />;
+    case 'loft':
+      return <LoftIcon size={size} />;
+    case 'sweep':
+      return <SweepIcon size={size} />;
+    case 'thread':
+      return <ThreadIcon size={size} />;
+    case 'removeBody':
+      return <CutIcon size={size} />;
+    case 'measure':
+      return <MeasureIcon size={size} />;
+    case 'joint':
+      return <JointIcon size={size} />;
     case 'box':
     case 'primitive':
       return <BoxIcon size={size} />;
@@ -803,24 +1575,33 @@ export function getFeatureIcon(featureType: string, size = 14): ReactElement {
 
 /** Icon color mapping for feature types in tree/timeline */
 export const featureTypeColors: Record<string, string> = {
-  sketch: '#3b82f6',     // blue
-  extrude: '#22c55e',    // green
-  hole: '#f97316',       // orange
-  cut: '#ef4444',        // red
-  fuse: '#8b5cf6',       // purple
-  fillet: '#06b6d4',     // cyan
-  chamfer: '#06b6d4',    // cyan
-  mirror: '#a855f7',     // violet
-  pattern: '#eab308',    // yellow
+  sketch: '#3b82f6', // blue
+  extrude: '#22c55e', // green
+  hole: '#f97316', // orange
+  cut: '#ef4444', // red
+  fuse: '#8b5cf6', // purple
+  fillet: '#06b6d4', // cyan
+  chamfer: '#06b6d4', // cyan
+  mirror: '#a855f7', // violet
+  pattern: '#eab308', // yellow
   linearPattern: '#eab308',
   circularPattern: '#eab308',
-  shell: '#64748b',      // slate
-  revolve: '#ec4899',    // pink
+  shell: '#64748b', // slate
+  revolve: '#ec4899', // pink
   constructionPlane: '#3b82f6', // blue — same family as Sketch (both are reference-geometry inputs)
-  component: '#6366f1',          // indigo
-  boolean: '#8b5cf6',           // purple — matches the ribbon Combine/Cut
-  move: '#0ea5e9',               // sky — a placement, not new material
-  importedGeometry: '#64748b',   // slate
+  constructionAxis: '#3b82f6',
+  constructionPoint: '#3b82f6',
+  constructionFrame: '#3b82f6',
+  loft: '#eab308',
+  sweep: '#eab308',
+  thread: '#f97316',
+  removeBody: '#ef4444',
+  measure: '#0d9488',
+  joint: '#6366f1',
+  component: '#6366f1', // indigo
+  boolean: '#8b5cf6', // purple — matches the ribbon Combine/Cut
+  move: '#0ea5e9', // sky — a placement, not new material
+  importedGeometry: '#64748b', // slate
   // Primitives key on their shape (see `featureIconType`) and share one
   // teal, because they are one feature type doing one job.
   primitive: '#14b8a6',

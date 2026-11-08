@@ -6,9 +6,7 @@ export type ApiClientConfig = {
   fetch?: typeof fetch;
 };
 
-export type ApiResult<T> =
-  | { ok: true; value: T }
-  | { ok: false; error: ApiError };
+export type ApiResult<T> = { ok: true; value: T } | { ok: false; error: ApiError };
 
 export class ApiClient {
   private readonly baseUrl: string;

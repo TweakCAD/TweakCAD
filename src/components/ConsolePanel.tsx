@@ -10,17 +10,17 @@
  */
 
 import { useRef, useEffect } from 'react';
-import {
-  ChevronUp,
-  ChevronDown,
-  Trash2,
-  Terminal,
-  AlertTriangle,
-  AlertCircle,
-  CheckCircle,
-  Info,
-} from 'lucide-react';
-import type { LogLevel, ConsoleEntry } from '@tweakcad/core/src/store/consoleStore.ts';
+import { ChevronUp, ChevronDown, Trash2, Terminal, AlertTriangle, AlertCircle, CheckCircle, Info } from 'lucide-react';
+
+export type LogLevel = 'info' | 'warn' | 'error' | 'success';
+
+export interface ConsoleEntry {
+  id: string;
+  level: LogLevel;
+  message: string;
+  timestamp: number;
+  source: string | undefined;
+}
 
 // ---- Helpers ----
 
@@ -33,9 +33,9 @@ function formatTime(ts: number): string {
 }
 
 const levelConfig: Record<LogLevel, { color: string; bg: string; icon: React.ReactNode }> = {
-  info:    { color: '#666', bg: 'transparent', icon: <Info size={12} /> },
-  warn:    { color: '#b45309', bg: '#fffbeb', icon: <AlertTriangle size={12} /> },
-  error:   { color: '#dc2626', bg: '#fef2f2', icon: <AlertCircle size={12} /> },
+  info: { color: '#666', bg: 'transparent', icon: <Info size={12} /> },
+  warn: { color: '#b45309', bg: '#fffbeb', icon: <AlertTriangle size={12} /> },
+  error: { color: '#dc2626', bg: '#fef2f2', icon: <AlertCircle size={12} /> },
   success: { color: '#16a34a', bg: '#f0fdf4', icon: <CheckCircle size={12} /> },
 };
 
@@ -60,20 +60,26 @@ export function ConsolePanel({ entries, collapsed, onToggle, onClear }: ConsoleP
     }
   }, [entries.length, collapsed]);
 
-  const errorCount = entries.filter(e => e.level === 'error').length;
-  const warnCount = entries.filter(e => e.level === 'warn').length;
+  const errorCount = entries.filter((e) => e.level === 'error').length;
+  const warnCount = entries.filter((e) => e.level === 'warn').length;
 
   return (
-    <div style={{
-      ...styles.root,
-      height: collapsed ? 28 : 160,
-    }}>
+    <div
+      style={{
+        ...styles.root,
+        height: collapsed ? 28 : 160,
+      }}
+    >
       {/* Header bar */}
       <button
         style={styles.header}
         onClick={onToggle}
-        onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#eaeaea'; }}
-        onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#f0f0f0'; }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.background = '#eaeaea';
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.background = '#f0f0f0';
+        }}
       >
         <Terminal size={12} style={{ color: '#888' }} />
         <span style={styles.headerTitle}>Console</span>
@@ -95,30 +101,33 @@ export function ConsolePanel({ entries, collapsed, onToggle, onClear }: ConsoleP
         {!collapsed && (
           <span
             style={styles.clearBtn}
-            onClick={(e) => { e.stopPropagation(); onClear(); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onClear();
+            }}
             title="Clear console"
             role="button"
             tabIndex={0}
-            onMouseEnter={e => { (e.currentTarget as HTMLSpanElement).style.color = '#dc2626'; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLSpanElement).style.color = '#999'; }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLSpanElement).style.color = '#dc2626';
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLSpanElement).style.color = '#999';
+            }}
           >
             <Trash2 size={12} />
           </span>
         )}
 
-        <span style={styles.collapseIcon}>
-          {collapsed ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-        </span>
+        <span style={styles.collapseIcon}>{collapsed ? <ChevronUp size={12} /> : <ChevronDown size={12} />}</span>
       </button>
 
       {/* Log entries */}
       {!collapsed && (
         <div ref={scrollRef} style={styles.logArea}>
-          {entries.length === 0 && (
-            <div style={styles.emptyText}>No console output</div>
-          )}
+          {entries.length === 0 && <div style={styles.emptyText}>No console output</div>}
 
-          {entries.map(entry => {
+          {entries.map((entry) => {
             const cfg = levelConfig[entry.level];
             return (
               <div

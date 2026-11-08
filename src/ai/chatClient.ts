@@ -38,9 +38,7 @@ export type ChatStreamEvent =
       error?: { message: string; code?: string };
     };
 
-export type ToolResultBlock =
-  | { type: 'text'; text: string }
-  | { type: 'image'; mimeType: string; data: string };
+export type ToolResultBlock = { type: 'text'; text: string } | { type: 'image'; mimeType: string; data: string };
 
 export type NormalizedContent =
   | { type: 'text'; text: string }
@@ -126,61 +124,75 @@ export async function* streamChat(req: ChatRequest): AsyncIterable<ChatStreamEve
 
 /**
  * Parse a Response body as Server-Sent Events. Yields the parsed
- * JSON payload of every `data:` line as a `ChatStreamEvent`.
+ * JSON payload of every event's `data:` lines as a `ChatStreamEvent`.
  *
- * The format is simple — lines separated by `\n`, events by `\n\n`,
- * `data:` prefix on each data line. We tolerate `\r\n` line endings
- * just in case a proxy normalizes them.
+ * Lines end in `\r\n`, `\n` or `\r`, and an empty line ends an event;
+ * a `\r\n` split across two chunks is one line end. Fields other than
+ * `data` (`event:`, `id:`, `retry:`, comments) are not used.
  */
-async function* parseSSEStream(
-  body: ReadableStream<Uint8Array>,
-): AsyncIterable<ChatStreamEvent> {
+async function* parseSSEStream(body: ReadableStream<Uint8Array>): AsyncIterable<ChatStreamEvent> {
   const reader = body.getReader();
   const decoder = new TextDecoder('utf-8');
-  let buffer = '';
+  const parser = new SSEParser();
 
   try {
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      // Process complete events: separated by a blank line (\n\n).
-      let sepIdx: number;
-      while ((sepIdx = buffer.indexOf('\n\n')) !== -1) {
-        const block = buffer.slice(0, sepIdx);
-        buffer = buffer.slice(sepIdx + 2);
-        const event = parseEventBlock(block);
-        if (event) yield event;
-      }
+      yield* parser.push(decoder.decode(value, { stream: true }));
     }
-
-    // Flush any trailing event without a final blank line.
-    if (buffer.trim().length > 0) {
-      const event = parseEventBlock(buffer);
-      if (event) yield event;
-    }
+    yield* parser.finish(decoder.decode());
   } finally {
     reader.releaseLock();
   }
 }
 
-function parseEventBlock(block: string): ChatStreamEvent | null {
-  const lines = block.split(/\r?\n/);
-  const dataParts: string[] = [];
-  for (const line of lines) {
-    if (line.startsWith('data:')) {
-      // Spec allows a single space after the colon — strip it.
-      dataParts.push(line.slice(5).replace(/^ /, ''));
+/** The SSE line state machine: text in, the events it completes out. */
+export class SSEParser {
+  private buffer = '';
+  private data: string[] = [];
+
+  /** The events `text` completes. */
+  push(text: string): ChatStreamEvent[] {
+    this.buffer += text;
+    const out: ChatStreamEvent[] = [];
+    let start = 0;
+    for (let i = 0; i < this.buffer.length; i++) {
+      const c = this.buffer[i];
+      if (c !== '\n' && c !== '\r') continue;
+      // A `\r` that ends the text may be the first half of `\r\n`: wait for the next chunk.
+      if (c === '\r' && i === this.buffer.length - 1) break;
+      this.line(this.buffer.slice(start, i), out);
+      if (c === '\r' && this.buffer[i + 1] === '\n') i++;
+      start = i + 1;
     }
-    // Ignore `event:`, `id:`, `retry:`, and comments — we don't use them.
+    this.buffer = this.buffer.slice(start);
+    return out;
   }
-  if (dataParts.length === 0) return null;
-  const raw = dataParts.join('\n');
-  try {
-    return JSON.parse(raw) as ChatStreamEvent;
-  } catch {
-    return null;
+
+  /** The events the end of the stream completes: a last event without a blank line after it. */
+  finish(text = ''): ChatStreamEvent[] {
+    const out = this.push(text);
+    if (this.buffer.length > 0) this.line(this.buffer.replace(/\r$/, ''), out);
+    this.buffer = '';
+    this.line('', out);
+    return out;
+  }
+
+  private line(line: string, out: ChatStreamEvent[]): void {
+    if (line === '') {
+      if (this.data.length === 0) return;
+      const raw = this.data.join('\n');
+      this.data = [];
+      try {
+        out.push(JSON.parse(raw) as ChatStreamEvent);
+      } catch {
+        // Not JSON: not an event of this endpoint.
+      }
+      return;
+    }
+    // The spec allows one space after the colon.
+    if (line.startsWith('data:')) this.data.push(line.slice(5).replace(/^ /, ''));
   }
 }
 

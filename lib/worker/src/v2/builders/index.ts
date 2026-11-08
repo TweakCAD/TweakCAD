@@ -1,0 +1,22 @@
+// Each builder registers itself when loaded; add one import per feature type.
+import './extrude';
+import './revolve';
+import './loft';
+import './sweep';
+import './draft';
+import './transformChain';
+import './coil';
+import './fillet';
+import './chamfer';
+import './hole';
+import './thread';
+import './shell';
+import './pattern';
+import './mirror';
+import './move';
+import './primitive';
+import './boolean';
+import './construction';
+import './import';
+import './measure';
+import './derive';

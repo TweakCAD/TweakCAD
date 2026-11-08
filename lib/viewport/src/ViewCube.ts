@@ -24,12 +24,12 @@ interface StandardView {
 
 /** Map face names to spherical camera angles */
 const STANDARD_VIEWS: Record<string, StandardView> = {
-  FRONT:  { theta: Math.PI / 2,     phi: Math.PI / 2 },
-  BACK:   { theta: -Math.PI / 2,    phi: Math.PI / 2 },
-  TOP:    { theta: Math.PI / 2,     phi: 0.001 },       // avoid gimbal at exact 0
-  BOTTOM: { theta: Math.PI / 2,     phi: Math.PI - 0.001 },
-  RIGHT:  { theta: 0,               phi: Math.PI / 2 },
-  LEFT:   { theta: Math.PI,         phi: Math.PI / 2 },
+  FRONT: { theta: Math.PI / 2, phi: Math.PI / 2 },
+  BACK: { theta: -Math.PI / 2, phi: Math.PI / 2 },
+  TOP: { theta: Math.PI / 2, phi: 0.001 }, // avoid gimbal at exact 0
+  BOTTOM: { theta: Math.PI / 2, phi: Math.PI - 0.001 },
+  RIGHT: { theta: 0, phi: Math.PI / 2 },
+  LEFT: { theta: Math.PI, phi: Math.PI / 2 },
 };
 
 // ---- Colors ----
@@ -132,7 +132,7 @@ export class ViewCube {
 
     // Clear only the viewcube region
     renderer.setClearColor(0x000000, 0); // transparent
-    renderer.clear(true, true, false);   // clear color+depth in scissor region only
+    renderer.clear(true, true, false); // clear color+depth in scissor region only
 
     // Render viewcube scene
     renderer.render(this.scene, this.camera);
@@ -159,10 +159,7 @@ export class ViewCube {
     const cubeTop = margin;
 
     // Check if mouse is within viewcube bounds
-    if (
-      clientX < cubeLeft || clientX > cubeLeft + this.size ||
-      clientY < cubeTop || clientY > cubeTop + this.size
-    ) {
+    if (clientX < cubeLeft || clientX > cubeLeft + this.size || clientY < cubeTop || clientY > cubeTop + this.size) {
       this.clearHover();
       return false;
     }
@@ -200,10 +197,7 @@ export class ViewCube {
     const cubeLeft = canvasWidth - this.size - margin;
     const cubeTop = margin;
 
-    if (
-      clientX < cubeLeft || clientX > cubeLeft + this.size ||
-      clientY < cubeTop || clientY > cubeTop + this.size
-    ) {
+    if (clientX < cubeLeft || clientX > cubeLeft + this.size || clientY < cubeTop || clientY > cubeTop + this.size) {
       return null;
     }
 
@@ -255,12 +249,12 @@ export class ViewCube {
    */
   private buildCube(): void {
     const faceData: { name: string; position: [number, number, number]; rotation: [number, number, number] }[] = [
-      { name: 'FRONT',  position: [0, 0, 1],   rotation: [0, 0, 0] },
-      { name: 'BACK',   position: [0, 0, -1],   rotation: [0, Math.PI, 0] },
-      { name: 'TOP',    position: [0, 1, 0],    rotation: [-Math.PI / 2, 0, 0] },
-      { name: 'BOTTOM', position: [0, -1, 0],   rotation: [Math.PI / 2, 0, 0] },
-      { name: 'RIGHT',  position: [1, 0, 0],    rotation: [0, Math.PI / 2, 0] },
-      { name: 'LEFT',   position: [-1, 0, 0],   rotation: [0, -Math.PI / 2, 0] },
+      { name: 'FRONT', position: [0, 0, 1], rotation: [0, 0, 0] },
+      { name: 'BACK', position: [0, 0, -1], rotation: [0, Math.PI, 0] },
+      { name: 'TOP', position: [0, 1, 0], rotation: [-Math.PI / 2, 0, 0] },
+      { name: 'BOTTOM', position: [0, -1, 0], rotation: [Math.PI / 2, 0, 0] },
+      { name: 'RIGHT', position: [1, 0, 0], rotation: [0, Math.PI / 2, 0] },
+      { name: 'LEFT', position: [-1, 0, 0], rotation: [0, -Math.PI / 2, 0] },
     ];
 
     for (const face of faceData) {
@@ -321,10 +315,7 @@ export class ViewCube {
   private buildEdges(): THREE.LineSegments {
     const box = new THREE.BoxGeometry(2, 2, 2);
     const edges = new THREE.EdgesGeometry(box);
-    const line = new THREE.LineSegments(
-      edges,
-      new THREE.LineBasicMaterial({ color: EDGE_COLOR, linewidth: 2 })
-    );
+    const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: EDGE_COLOR, linewidth: 2 }));
     box.dispose();
     return line;
   }

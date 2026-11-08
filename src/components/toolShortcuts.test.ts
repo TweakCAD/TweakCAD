@@ -34,10 +34,17 @@ describe('toolForShortcutKey', () => {
   });
 
   it('ignores keys typed into text fields', () => {
-    for (const target of [{ tagName: 'INPUT' }, { tagName: 'textarea' }, { tagName: 'SELECT' }, { isContentEditable: true }]) {
+    for (const target of [
+      { tagName: 'INPUT' },
+      { tagName: 'textarea' },
+      { tagName: 'SELECT' },
+      { isContentEditable: true },
+    ]) {
       expect(toolForShortcutKey(key('o', { target: target as unknown as EventTarget }), TOOLS)).toBeNull();
     }
-    expect(toolForShortcutKey(key('o', { target: { tagName: 'BUTTON' } as unknown as EventTarget }), TOOLS)).toBe('offset');
+    expect(toolForShortcutKey(key('o', { target: { tagName: 'BUTTON' } as unknown as EventTarget }), TOOLS)).toBe(
+      'offset',
+    );
   });
 });
 

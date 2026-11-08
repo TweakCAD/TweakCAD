@@ -7,7 +7,6 @@
     "resolveJsonModule": true,
     "baseUrl": ".",
     "paths": {
-      "@tweakcad/core/*": ["./lib/core/*"],
       "@tweakcad/kernel/*": ["./lib/kernel/*"],
       "@tweakcad/viewport/*": ["./lib/viewport/*"],
       "@tweakcad/worker/*": ["./lib/worker/*"],
@@ -15,9 +14,10 @@
       "@tweakcad/api-client/*": ["./lib/api-client/*"],
       "@tweakcad/cloud-providers": ["./lib/cloud-providers/src/index.ts"],
       "@tweakcad/cloud-providers/*": ["./lib/cloud-providers/*"],
+      "@tweakcad/format": ["./lib/format/src/index.ts"],
+      "@tweakcad/editor": ["./lib/editor/src/index.ts"],
       "@tweakcad/fcstd-import": ["./lib/fcstd-import/src/index.ts"],
-      "@tweakcad/fcstd-import/*": ["./lib/fcstd-import/*"],
-      "@tweakcad/testing/*": ["./lib/testing/*"],
+      "@tweakcad/f3d-import": ["./lib/f3d-import/src/index.ts"],
       "@tweakcad/api-types": ["./lib/api-types/src/index.ts"],
       "@tweakcad/cad-tools": ["./lib/cad-tools/src/index.ts"]
     }
@@ -34,7 +34,6 @@
     "**/*.test.ts",
     "**/*.test.tsx",
     "**/testSetup.ts",
-    "**/vitest.config.ts",
-    "lib/testing"
+    "**/vitest.config.ts"
   ]
 }

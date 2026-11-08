@@ -58,16 +58,22 @@ export function SettingsDialog({ open, onClose }: DialogProps) {
     if (open) setActiveTab('ai');
   }
 
-  const onDialogClick = useCallback((e: React.MouseEvent<HTMLDialogElement>) => {
-    // Click on the backdrop (the dialog element itself, not its
-    // children) closes the modal — matches the rest of the app.
-    if (e.target === e.currentTarget) onClose();
-  }, [onClose]);
+  const onDialogClick = useCallback(
+    (e: React.MouseEvent<HTMLDialogElement>) => {
+      // Click on the backdrop (the dialog element itself, not its
+      // children) closes the modal — matches the rest of the app.
+      if (e.target === e.currentTarget) onClose();
+    },
+    [onClose],
+  );
 
-  const onDialogCancel = useCallback((e: React.SyntheticEvent<HTMLDialogElement>) => {
-    e.preventDefault();
-    onClose();
-  }, [onClose]);
+  const onDialogCancel = useCallback(
+    (e: React.SyntheticEvent<HTMLDialogElement>) => {
+      e.preventDefault();
+      onClose();
+    },
+    [onClose],
+  );
 
   return (
     <dialog ref={ref} onClick={onDialogClick} onCancel={onDialogCancel} style={styles.dialog}>
@@ -82,7 +88,7 @@ export function SettingsDialog({ open, onClose }: DialogProps) {
         <div style={styles.layout}>
           {/* Tab nav */}
           <nav style={styles.tabNav} aria-label="Settings sections">
-            {TAB_DEFS.map(tab => (
+            {TAB_DEFS.map((tab) => (
               <TabButton
                 key={tab.id}
                 label={tab.label}
@@ -94,9 +100,7 @@ export function SettingsDialog({ open, onClose }: DialogProps) {
           </nav>
 
           {/* Content pane */}
-          <div style={styles.pane}>
-            {activeTab === 'ai' && <AiTab />}
-          </div>
+          <div style={styles.pane}>{activeTab === 'ai' && <AiTab />}</div>
         </div>
       </div>
     </dialog>
@@ -142,10 +146,9 @@ function AiTab() {
     <div style={styles.tabContent}>
       <h3 style={styles.sectionTitle}>Local AI Bridge (MCP)</h3>
       <p style={styles.sectionLead}>
-        Connect this CAD app to any <strong>MCP-capable AI assistant</strong>
-        {' '}(Claude Desktop, Claude Code, Cursor, Codex, VS Code...) via a local
-        bridge process. The assistant can then inspect and modify your
-        project through the same commands the human UI uses.
+        Connect this CAD app to any <strong>MCP-capable AI assistant</strong> (Claude Desktop, Claude Code, Cursor,
+        Codex, VS Code...) via a local bridge process. The assistant can then inspect and modify your project through
+        the same commands the human UI uses.
       </p>
 
       {/* Toggle uses a sibling label (htmlFor) rather than a wrapping
@@ -162,14 +165,16 @@ function AiTab() {
           onChange={(e) => setAppSettings({ ai: { bridgeEnabled: e.target.checked } })}
           style={styles.checkbox}
         />
-        <label htmlFor="bridge-enabled" style={styles.toggleLabel}>Enable AI bridge</label>
-        <span style={styles.toggleHint}>
-          When enabled, the app probes the WebSocket address below on startup.
-        </span>
+        <label htmlFor="bridge-enabled" style={styles.toggleLabel}>
+          Enable AI bridge
+        </label>
+        <span style={styles.toggleHint}>When enabled, the app probes the WebSocket address below on startup.</span>
       </div>
 
       <div style={styles.fieldGrid}>
-        <label style={styles.fieldLabel} htmlFor="bridge-host">Host</label>
+        <label style={styles.fieldLabel} htmlFor="bridge-host">
+          Host
+        </label>
         <input
           id="bridge-host"
           type="text"
@@ -179,7 +184,9 @@ function AiTab() {
           style={{ ...styles.input, ...(ai.bridgeEnabled ? {} : styles.inputDisabled) }}
         />
 
-        <label style={styles.fieldLabel} htmlFor="bridge-port">Port</label>
+        <label style={styles.fieldLabel} htmlFor="bridge-port">
+          Port
+        </label>
         <input
           id="bridge-port"
           type="number"
@@ -201,15 +208,13 @@ function AiTab() {
           </li>
           <li>Enable the toggle above.</li>
           <li>
-            Register the bridge in your assistant's MCP server config (see the
-            bridge's README for client-specific snippets: Claude Desktop,
-            Cursor, VS Code, etc.).
+            Register the bridge in your assistant's MCP server config (see the bridge's README for client-specific
+            snippets: Claude Desktop, Cursor, VS Code, etc.).
           </li>
         </ol>
         <div style={styles.helpFootnote}>
-          The bridge holds no state; it relays tool calls between the assistant
-          and this tab. If the tab closes, the assistant will see a
-          "no active session" error until you re-open the app.
+          The bridge holds no state; it relays tool calls between the assistant and this tab. If the tab closes, the
+          assistant will see a "no active session" error until you re-open the app.
         </div>
       </div>
     </div>
@@ -229,7 +234,10 @@ export function useSettingsDialog(): { open: () => void; element: React.ReactEle
 // ---- Sub-components ----
 
 function TabButton({
-  label, icon, active, onClick,
+  label,
+  icon,
+  active,
+  onClick,
 }: {
   label: string;
   icon: React.ReactNode;

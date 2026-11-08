@@ -1,0 +1,29 @@
+{
+ "parts": [
+  {
+   "name": "Threaded rod",
+   "bodies": [
+    {
+     "volume": 1124.64,
+     "min": [
+      -3,
+      -3,
+      0
+     ],
+     "max": [
+      3,
+      3,
+      40
+     ],
+     "faces": 5,
+     "edges": 7
+    }
+   ],
+   "threads": [
+    "M6 6g external"
+   ]
+  }
+ ],
+ "assemblies": [],
+ "pauses": []
+}

@@ -1,0 +1,27 @@
+{
+ "parts": [
+  {
+   "name": "Hex nut ISO 4032, modelled thread",
+   "bodies": [
+    {
+     "volume": 318.068,
+     "min": [
+      -5.774,
+      -5,
+      0
+     ],
+     "max": [
+      5.774,
+      5,
+      5.2
+     ],
+     "faces": 48,
+     "edges": 114
+    }
+   ],
+   "threads": []
+  }
+ ],
+ "assemblies": [],
+ "pauses": []
+}

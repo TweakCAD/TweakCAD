@@ -1,0 +1,27 @@
+{
+ "parts": [
+  {
+   "name": "Hex bolt ISO 4017, modelled thread",
+   "bodies": [
+    {
+     "volume": 1029.164,
+     "min": [
+      -5.774,
+      -5,
+      -30
+     ],
+     "max": [
+      5.774,
+      5,
+      4
+     ],
+     "faces": 153,
+     "edges": 375
+    }
+   ],
+   "threads": []
+  }
+ ],
+ "assemblies": [],
+ "pauses": []
+}

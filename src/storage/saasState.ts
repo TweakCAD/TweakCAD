@@ -144,8 +144,6 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 export function isSaasAvailable(s: SaasState | undefined): boolean {
   return s?.kind === 'available';
 }
-export function isSignedIn(
-  s: SaasState,
-): s is { kind: 'available'; signedIn: true; user: SaasUser } {
+export function isSignedIn(s: SaasState): s is { kind: 'available'; signedIn: true; user: SaasUser } {
   return s.kind === 'available' && s.signedIn;
 }

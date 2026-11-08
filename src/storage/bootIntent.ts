@@ -41,11 +41,7 @@ export type BootSignals = {
 };
 
 export function decideBoot(s: BootSignals): BootIntent {
-  const mode: BootMode = !s.saas.reachable
-    ? 'standalone'
-    : s.saas.signedIn
-      ? 'cloud'
-      : 'offline';
+  const mode: BootMode = !s.saas.reachable ? 'standalone' : s.saas.signedIn ? 'cloud' : 'offline';
 
   // A named document wins in every mode. This is the first principle: a
   // window's document is whatever its URL says, and nothing else gets a

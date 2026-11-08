@@ -25,8 +25,8 @@ timeline. Everything runs in the browser; no account required.
   stable topology selection (faces / edges / vertices) that survives rebuilds.
 - **Local-first storage** — documents live in the browser (IndexedDB); optional
   cloud sync via pluggable storage providers.
-- **Import / export** — STL and STEP (read + write); partial FreeCAD `.FCStd`
-  import.
+- **Import / export** — STEP, STL and BREP (read + write), 3MF (write), STEP
+  assemblies (write); FreeCAD `.FCStd` import and export of PartDesign Bodies.
 - **MCP bridge** — drive the editor from any MCP client via the companion
   `@tweakcad/mcp-bridge` npm package (a separate, pure-relay CLI).
 
@@ -36,12 +36,13 @@ The UI never touches the kernel directly. Every document mutation is a
 serializable command:
 
 ```text
-CommandBus → DocumentStore → RebuildScheduler → Worker → Kernel → Artifacts → Viewport
+Editor → DocumentStore → RebuildScheduler → Worker (EvaluationService) → Kernel → Display → Viewport
 ```
 
 `.cadjson` is the source of truth; generated meshes and kernel shapes are a
 disposable cache. React renders the panels, Three.js renders the viewport, and
-the OCCT kernel lives entirely inside the worker.
+the OCCT kernel lives entirely inside the worker. The `.cadjson` document
+format is specified in [docs/format.md](./docs/format.md).
 
 ## Quick start
 
@@ -74,12 +75,14 @@ vite aliases.
 
 | Path | What |
 |---|---|
-| `src/` | The React app — editor shell, panels, viewport, sketch UI, MCP client. |
-| `lib/core/` | Document model, command bus, sketch operations, constraint pipeline. |
-| `lib/kernel/` | OCCT (occt-wasm) wrapper and the rebuild ops. |
-| `lib/worker/` | The Web Worker that owns kernel handles. |
-| `lib/viewport/` | Three.js scene, picking, and rendering. |
-| `lib/api-client`, `lib/cloud-providers`, `lib/fcstd-import` | Cloud + import glue. |
+| `src/` | The React app — `src/app/` (shell, viewport, storage), `src/sketcher/` (sketch editor), shared components. |
+| `lib/format/` | The document format: reader, writer, expressions, sketch regions, naming. |
+| `lib/editor/` | Document store, undo/redo and the editing commands. |
+| `lib/kernel/` | The naming adapter over the OCCT (occt-wasm) kernel. |
+| `lib/worker/` | The evaluator and the Web Worker service that owns kernel handles. |
+| `lib/viewport/` | View cube, camera framing and transform gizmo. |
+| `lib/fcstd-import/` | FreeCAD `.FCStd` files as documents. |
+| `lib/api-client`, `lib/cloud-providers` | Cloud glue. |
 | `lib/cad-tools`, `lib/api-types` | Vendored shared contract libs. |
 
 ## Development

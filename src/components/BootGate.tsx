@@ -89,8 +89,8 @@ export function BootGate({
         <>
           <h1 style={styles.title}>Sign in to save your work</h1>
           <p style={styles.body}>
-            Signing in keeps your projects in your account, on any machine.
-            You can also work offline — everything stays in this browser.
+            Signing in keeps your projects in your account, on any machine. You can also work offline — everything stays
+            in this browser.
           </p>
           <div style={styles.actions}>
             <Action
@@ -110,16 +110,15 @@ export function BootGate({
             />
           </div>
           <p style={styles.footnote}>
-            Working offline stores documents in this browser only. Clearing
-            site data removes them.
+            Working offline stores documents in this browser only. Clearing site data removes them.
           </p>
         </>
       ) : (
         <>
           <h1 style={styles.title}>Open a project</h1>
           <p style={styles.body}>
-            Pick up where you left off, or start something new. Projects live
-            in your account, so this window always knows which one it has.
+            Pick up where you left off, or start something new. Projects live in your account, so this window always
+            knows which one it has.
           </p>
           <div style={styles.actions}>
             <Action
@@ -178,22 +177,13 @@ function Action({
   const style: React.CSSProperties = {
     ...styles.action,
     ...(primary ? styles.actionPrimary : {}),
-    ...(hovered && !disabled
-      ? primary
-        ? { background: '#1557a8' }
-        : { background: '#f2f2f2' }
-      : {}),
+    ...(hovered && !disabled ? (primary ? { background: '#1557a8' } : { background: '#f2f2f2' }) : {}),
     ...(disabled ? { opacity: 0.6, cursor: 'default' } : {}),
   };
 
   if (href) {
     return (
-      <a
-        href={href}
-        style={style}
-        onMouseEnter={() => onHover(true)}
-        onMouseLeave={() => onHover(false)}
-      >
+      <a href={href} style={style} onMouseEnter={() => onHover(true)} onMouseLeave={() => onHover(false)}>
         {icon}
         {label}
       </a>

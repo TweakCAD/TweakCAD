@@ -39,23 +39,17 @@ export function fitFraming(box: THREE.Box3, fovDegrees: number): CameraFraming |
   if (!Number.isFinite(maxDim) || !Number.isFinite(center.length())) return null;
 
   const fov = fovDegrees * (Math.PI / 180);
-  const distance = maxDim / (2 * Math.tan(fov / 2)) * FIT_PADDING;
+  const distance = (maxDim / (2 * Math.tan(fov / 2))) * FIT_PADDING;
   return { target: center, radius: Math.max(distance, MIN_FIT_RADIUS) };
 }
 
 /** Home framing: fit the box, or the origin at the default distance when there is nothing to fit. */
 export function homeFraming(box: THREE.Box3, fovDegrees: number): CameraFraming {
-  return fitFraming(box, fovDegrees)
-    ?? { target: new THREE.Vector3(0, 0, 0), radius: HOME_EMPTY_RADIUS };
+  return fitFraming(box, fovDegrees) ?? { target: new THREE.Vector3(0, 0, 0), radius: HOME_EMPTY_RADIUS };
 }
 
 /** Blend two framings at `t` in [0, 1], writing into `out`. */
-export function lerpFraming(
-  from: CameraFraming,
-  to: CameraFraming,
-  t: number,
-  out: CameraFraming,
-): CameraFraming {
+export function lerpFraming(from: CameraFraming, to: CameraFraming, t: number, out: CameraFraming): CameraFraming {
   out.target.lerpVectors(from.target, to.target, t);
   out.radius = from.radius + (to.radius - from.radius) * t;
   return out;

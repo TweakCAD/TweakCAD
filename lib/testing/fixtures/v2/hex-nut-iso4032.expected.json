@@ -1,0 +1,29 @@
+{
+ "parts": [
+  {
+   "name": "Hex nut ISO 4032",
+   "bodies": [
+    {
+     "volume": 336.26,
+     "min": [
+      -5.774,
+      -5,
+      0
+     ],
+     "max": [
+      5.774,
+      5,
+      5.2
+     ],
+     "faces": 21,
+     "edges": 45
+    }
+   ],
+   "threads": [
+    "M6 6H internal"
+   ]
+  }
+ ],
+ "assemblies": [],
+ "pauses": []
+}

@@ -1,23 +1,32 @@
 /**
- * CAD tool catalogue exposed to tool consumers (via MCP, in-app chat, etc.).
+ * The CAD tool catalogue: the tools an AI client calls to read and edit a
+ * TweakCAD document, as JSON schemas. It is a public contract, read by
+ * three consumers unchanged:
+ *   - the in-app chat (the site's chat endpoint offers these to the model);
+ *   - the MCP bridge (the app advertises them to the bridge, which lists them
+ *     to MCP clients);
+ *   - the app's tool executor, which runs every call against the open editor.
  *
- * Three consumer surfaces import this module unchanged:
- *   - the in-app chat panel (talks to the server chat endpoint)
- *   - the server-side tool loop (runs on a document clone)
- *   - the local MCP bridge (exposes these as MCP tools)
+ * The tools work in terms of the editor's commands and the version-2
+ * document (spec `document-format-v2`): parts, features with their inputs,
+ * value objects bound to expressions, and sketch rows. What the model is
+ * built into comes from the evaluation's display: bodies, faces, edges,
+ * vertices, sketch regions and construction geometry are listed with
+ * handles. A feature input that references geometry takes handles, and the
+ * executor writes each reference by picking the entity (spec 9.2); the
+ * caller never writes a reference by hand.
  *
- * Adding a new tool is a one-file change here. All three surfaces pick
- * it up because they all execute through `toolExecutor.ts`.
- *
- * Field naming: we store `inputSchema` (camelCase) because that's what
- * the MCP SDK expects. Surfaces that need the snake_case `input_schema`
- * form rename once at request-build time.
+ * `inputSchema` is camelCase, as the MCP SDK expects it; surfaces that need
+ * `input_schema` rename it when they build a request.
  */
 
 /**
- * Minimal JSON Schema shape — narrow enough to feed the MCP SDK (which
- * expects an object schema for tool inputs) without pulling a dependency.
+ * The version of this contract. A change that renames or removes a tool or
+ * an input, or changes what one means, increases it.
  */
+export const CAD_TOOLS_CONTRACT = 3;
+
+/** A JSON schema for a tool's input: an object schema, as the MCP SDK takes it. */
 export type ToolInputSchema = {
   type: 'object';
   properties?: Record<string, unknown>;
@@ -29,1663 +38,1606 @@ export type ToolInputSchema = {
 export type CadToolDefinition = {
   /** Stable tool name. MCP requires `^[a-zA-Z0-9_-]{1,64}$`. */
   name: string;
-  /** Human-readable, client-facing description. */
+  /** What the tool does, for the model. */
   description: string;
-  /** JSON Schema for the tool's input. */
+  /** JSON schema of the tool's input. */
   inputSchema: ToolInputSchema;
 };
 
+// ---- Shared input shapes ----
+
+/** An expression: a number in the field's unit, or expression text naming parameters and values. */
+function expr(description: string): Record<string, unknown> {
+  return { type: ['number', 'string'], description };
+}
+
+function handles(description: string, minItems = 1): Record<string, unknown> {
+  return { type: 'array', items: { type: 'string' }, minItems, description };
+}
+
+const handle = (description: string): Record<string, unknown> => ({ type: 'string', description });
+
+const vec2 = (description: string): Record<string, unknown> => ({
+  type: 'array',
+  items: { type: 'number' },
+  minItems: 2,
+  maxItems: 2,
+  description,
+});
+
+const vec3 = (description: string): Record<string, unknown> => ({
+  type: 'array',
+  items: { type: ['number', 'string'] },
+  minItems: 3,
+  maxItems: 3,
+  description,
+});
+
+/** A sketch point: `[x, y]` in sketch coordinates (mm), or the id of a point the sketch has. */
+const point = (description: string): Record<string, unknown> => ({
+  type: ['array', 'string'],
+  items: { type: 'number' },
+  description: `${description} [x, y] in mm, or the id of a point of the sketch (pt_…).`,
+});
+
+const featureId = (description = 'The feature id (feat_…).'): Record<string, unknown> => ({
+  type: 'string',
+  description,
+});
+
+const sketchId = { type: 'string', description: 'The sketch feature id (feat_…).' };
+
+const construction = {
+  type: 'boolean',
+  description: 'Draw construction curves (not part of any profile). Default false.',
+};
+
+const tolerance = {
+  type: 'number',
+  description:
+    'A point within this distance (mm) of a point the sketch has becomes that point, so curves share corners. Default 1e-6.',
+};
+
+/** The part a tool works on when it names none, as the app's modeling commands choose it. */
+const WORKING_PART =
+  'the part the app works in (the part opened or edited in context, else the root part, else the first part)';
+
+const partField = { type: 'string', description: `Optional: the part (part_…); default ${WORKING_PART}.` };
+
+const JOIN_WHEN_BODY = "'join' when the part has a body, else 'new'";
+
+const operation = (offered: readonly string[], fallback = JOIN_WHEN_BODY): Record<string, unknown> => ({
+  type: 'string',
+  enum: offered,
+  description:
+    "'new' makes new bodies; 'join' fuses with the bodies the result meets (a result that meets none stays a new body); " +
+    `${offered.includes('cut') ? "'cut' removes from them; 'intersect' keeps the common part. " : ''}Default ${fallback}.`,
+});
+
+const targets = handles(
+  'Optional, for join, cut and intersect: the bodies to act on (body handles), instead of every body.',
+  1,
+);
+
+const axis = {
+  type: 'string',
+  description:
+    "A standard axis 'x', 'y' or 'z', or a handle of a straight sketch line, straight edge or construction axis.",
+};
+
+const plane = {
+  type: 'string',
+  description: "A standard plane 'xy', 'xz' or 'yz', or a handle of a planar face or construction plane.",
+};
+
+const empty: ToolInputSchema = { type: 'object', properties: {}, additionalProperties: false };
+
 /**
- * Canonical, frozen list of tools. Order is stable so MCP clients can
- * cache against it. Add new tools by appending — never reorder.
- *
- * The v1 set covers: read state, dispatch mutations, group mutations into
- * one undo step, list features compactly, and inspect build diagnostics.
- * Component-generation / repair-loop tools land later.
+ * Every tool, in a stable order. New tools are added at the end of their
+ * group; a removal or rename is a contract change (`CAD_TOOLS_CONTRACT`).
  */
 export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
+  // ---- Guide and reading ----
   {
     name: 'cad_help',
     description:
-      'Returns a workflow guide for this CAD toolset: canonical tool ' +
-      'ordering, how to discover IDs, coordinate system + units, common ' +
-      'patterns (build a plate, plate-with-hole, recover from a failed ' +
-      'extrude), and gotchas previous agents hit. ' +
-      'CALL THIS FIRST if you are about to model anything more than a ' +
-      'single one-shot mutation. Cheap (returns a markdown string). ' +
-      'Reading the guide saves multiple wasted rounds on shape/enum guesses.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      additionalProperties: false,
-    },
+      'The workflow guide for these tools: the document model, handles and how references are made, units and sketch ' +
+      'coordinates, worked examples (a plate, a plate with holes, fillets, a revolve), and what fails and why. ' +
+      'Call it first when you are about to model more than one change.',
+    inputSchema: empty,
   },
   {
     name: 'get_document',
     description:
-      'Return a snapshot of the current CAD document (parts, parameters, ' +
-      'features, embedded components). Call this FIRST when you need to ' +
-      'know the current state — every id you reference in mutations must ' +
-      'come from a real entry here, not from memory. ' +
-      'After mutations, the new state is also returned by `dispatch_command`, ' +
-      "so you don't have to re-call get_document just to learn what changed.",
+      'The document as stored (format version 2): metadata, parameters, parts with their timelines of features and ' +
+      'their inputs, assemblies and assets. Every number a user can set is a value object `{id, name?, def: {expr: {text}}}`. ' +
+      "Pass `part` to get one part only. Use `list_features` for a short outline; read this for a feature's inputs and value ids.",
     inputSchema: {
       type: 'object',
-      properties: {},
+      properties: { part: { type: 'string', description: 'Optional: only this part (part id).' } },
       additionalProperties: false,
     },
   },
   {
-    name: 'dispatch_command',
+    name: 'list_features',
     description:
-      'Apply a single CadCommand to the document. ESCAPE HATCH for commands ' +
-      "that don't have a dedicated tool yet (fillet, chamfer, hole, mirror, " +
-      'pattern, shell, sweep, revolve, loft, set/delete parameter, etc.). ' +
-      'PREFER the wrapped tools when they exist: ' +
-      '`sketch_create` / `sketch_draw_*` / `feature_extrude` have validated ' +
-      'schemas and return ids directly, so you avoid round-tripping ' +
-      '`get_document` after every dispatch. ' +
-      'Commands are validated before applying; invalid commands return an ' +
-      'error without mutating state. Returns the new document snapshot. ' +
-      'Examples: ' +
-      "`{type:'SetParameter',scope:'project',name:'width',value:{name:'width',expression:'50',unit:'mm'}}`, " +
-      "`{type:'SuppressFeature',partId:'part_X',featureId:'feat_Y',enabled:false}`.",
+      'An outline of the document: each part with its features in timeline order (id, type, name, suppressed, and ' +
+      "status 'ok', 'paused' with the reason, or 'blocked' by an earlier pause), its rollback marker, the parameters, " +
+      'and the assemblies. Waits for the newest rebuild.',
     inputSchema: {
       type: 'object',
-      properties: {
-        command: {
-          type: 'object',
-          description:
-            "A CadCommand with discriminator `type` (e.g. CreatePart, " +
-            "SetParameter, SuppressFeature). See @tweakcad/core/src/commands/types.ts.",
-        },
-      },
-      required: ['command'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'begin_transaction',
-    description:
-      'Open an undo-grouped transaction. All commands dispatched until ' +
-      'a matching `end_transaction` collapse into ONE undo step labeled ' +
-      'with the given string. ' +
-      'IMPORTANT: open a transaction whenever you are about to make a ' +
-      'multi-step change so the user can Ctrl-Z your whole reply at once. ' +
-      'Always close it — if you forget, the next user action will appear ' +
-      'as part of your transaction and break undo for them.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        label: {
-          type: 'string',
-          description: "Undo step label (e.g. \"AI: add 4 mounting holes\").",
-        },
-      },
-      required: ['label'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'end_transaction',
-    description:
-      'Close the currently open undo-grouped transaction. Pair with ' +
-      'every `begin_transaction` you call.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'query_features',
-    description:
-      'Return a compact list of features in a part timeline (id, type, name, ' +
-      'enabled, visible). Use this instead of `get_document` when you only ' +
-      'need to enumerate the timeline — much smaller payload. Pass a partId ' +
-      'to scope; omit for all parts.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        partId: {
-          type: 'string',
-          description: 'Optional — limit to this part. Omit for all parts.',
-        },
-      },
+      properties: { part: { type: 'string', description: 'Optional: only this part.' } },
       additionalProperties: false,
     },
   },
   {
     name: 'get_diagnostics',
     description:
-      'Return rebuild diagnostics — per-feature build status (success / ' +
-      'failed / blocked / suppressed) and the error message when failed. ' +
-      'CALL THIS AFTER every geometry-creating mutation (extrude, fillet, ' +
-      'hole, etc.) to confirm the build succeeded. A `failed` status means ' +
-      'your model is wrong — STOP chaining more operations until you ' +
-      'investigate and fix. Pass a partId to scope; omit for all parts.',
+      'What the newest rebuild could not do: each paused feature with its reason, features blocked by it, stale ones, ' +
+      'captured contexts that are out of date, and a failed rebuild. Empty lists mean everything built. Waits for the newest rebuild.',
     inputSchema: {
       type: 'object',
-      properties: {
-        partId: {
-          type: 'string',
-          description: 'Optional part id to scope the result.',
-        },
-      },
+      properties: { part: { type: 'string', description: 'Optional: only this part.' } },
       additionalProperties: false,
     },
   },
-  // ---- Viewport manipulation tools ----
-  //
-  // These tools let the caller control the camera without the user
-  // having to drag/scroll. Use them when you've added or modified
-  // geometry that's outside the current frame, or when you want to
-  // look at the result from a specific angle.
+  // ---- Editing the document ----
   {
-    name: 'view_fit_all',
+    name: 'run_command',
     description:
-      'Frame the viewport camera to fit all visible bodies in the project. ' +
-      'Useful after creating new geometry that might be outside the current ' +
-      "view (e.g. an extrude that's larger than what was framed before).",
+      'Run one editor command on the document, for edits no other tool makes: rename, suppress, delete, move or roll back ' +
+      'features, parameters and their tables, configurations, attributes, notes and assembly rows. Commands are JSON with a `type`, e.g. ' +
+      "`{type:'renameFeature',feature:'feat_…',name:'Base'}`, `{type:'setSuppressed',feature:'feat_…',suppressed:true}`, " +
+      "`{type:'removeFeature',feature:'feat_…'}`, `{type:'setRollback',part:'part_…',before:'feat_…'}` (omit `before` for the end). " +
+      "Feature groups: `{type:'addGroup',part:'part_…',group:{id:'new:grp',name:'Holes',members:['feat_…']}}` (features next to each other in the timeline), `editGroup`, `removeGroup`. " +
+      'A row a command adds needs an id: write `"new:<kind>"` (`new:grp`, `new:val`, `new:tbl`, …) and one is made; the same token ' +
+      'twice in one command is one id, and the made ids are returned. ' +
+      'A refused command changes nothing and says why. References to geometry are not written here: use `set_reference`.',
     inputSchema: {
       type: 'object',
-      properties: {},
+      properties: {
+        command: { type: 'object', description: 'An editor command: an object with a string `type`.' },
+      },
+      required: ['command'],
       additionalProperties: false,
     },
   },
   {
-    name: 'view_set_standard',
+    name: 'set_reference',
     description:
-      'Snap the camera to a named standard view: front / back / top / ' +
-      'bottom / left / right, or `home` for the default isometric angle. ' +
-      'Combine with `view_fit_all` to land on a clean framed iso view.',
+      "Write a reference into a feature's inputs at a JSON pointer (RFC 6901, under the inputs), for inputs no feature tool covers. " +
+      'The reference is made by picking: give a handle, a standard plane or axis name, or a feature id. ' +
+      "A pointer ending in `/-` appends to a list. Example: `{feature:'feat_…', pointer:'/frame/attach/support/-', entity:'f:4'}`.",
     inputSchema: {
       type: 'object',
       properties: {
-        view: {
-          type: 'string',
-          enum: ['front', 'back', 'top', 'bottom', 'left', 'right', 'home'],
-          description: 'Which standard view to switch to.',
-        },
+        feature: featureId('The feature whose inputs take the reference.'),
+        pointer: { type: 'string', description: "Where, under the feature's inputs, e.g. '/plane'." },
+        entity: handle('A handle from a list tool.'),
+        standard: { type: 'string', enum: ['xy', 'xz', 'yz', 'x', 'y', 'z'], description: 'A standard plane or axis.' },
+        ofFeature: featureId('A whole feature, as patterns and mirrors of features reference one.'),
       },
-      required: ['view'],
+      required: ['feature', 'pointer'],
       additionalProperties: false,
     },
   },
   {
-    name: 'view_zoom',
+    name: 'set_value',
     description:
-      'Zoom the camera in or out by one step. Multiple calls compound. ' +
-      'Prefer `view_fit_all` when you want a known framing; use this for ' +
-      'fine-grained adjustments.',
+      "Set a value object's expression: a feature input such as an extrude's distance, a sketch dimension or a parameter's value. " +
+      "Value ids (val_…) are in `get_document`. A bare number takes the value's unit (mm, deg). Expressions may name parameters and " +
+      "earlier named values, e.g. 'width / 2 + 1 mm'.",
     inputSchema: {
       type: 'object',
       properties: {
-        direction: {
-          type: 'string',
-          enum: ['in', 'out'],
-          description: "'in' brings the camera closer, 'out' pulls back.",
-        },
+        value: { type: 'string', description: 'The value id (val_…).' },
+        expression: expr('The new expression.'),
       },
-      required: ['direction'],
+      required: ['value', 'expression'],
       additionalProperties: false,
     },
   },
-  // Note: `view_get_state` was removed from the catalog. It cost ~60
-  // tokens per request to advertise across all sessions and no current
-  // flow actually called it intentionally — the only call seen in the
-  // smoke test was a reflexive viewport probe. Re-add as a one-liner
-  // here if a real use case ever shows up (the ToolHost method, browser
-  // impl, and bridge round-trip can all come with it).
-  // ---- Higher-level modeling tools ----
-  //
-  // These wrap CadCommands with full JSON schemas + return the new ids
-  // directly. Without these the caller would have to read the
-  // CadCommand type definitions to learn the command shapes and
-  // round-trip get_document just to find ids it just created.
-  // Discoverability gap → first-class tool.
-  //
-  // Every tool here is a thin wrapper around one CadCommand. The
-  // underlying command stays the single source of truth.
+  {
+    name: 'set_parameter',
+    description:
+      'Create or change a named parameter of the document or of a part. Features and dimensions use it by name in their ' +
+      "expressions, so one change resizes everything that uses it. Returns the parameter id. Example: `{name:'width', expression:'60'}`.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Parameter name: a letter or _ then letters, digits or _.' },
+        expression: expr('Its value: a number in `unit`, or an expression.'),
+        unit: {
+          type: 'string',
+          enum: ['mm', 'deg', 'none'],
+          description: "The quantity: 'mm' a length (default), 'deg' an angle, 'none' a plain number.",
+        },
+        part: {
+          type: 'string',
+          description: 'Optional: a part id, for a part parameter. Default: a document parameter.',
+        },
+        description: { type: 'string', description: 'Optional description.' },
+      },
+      required: ['name', 'expression'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'begin_transaction',
+    description:
+      'Open an undo group: every change until the matching `end_transaction` is one undo step with this label. ' +
+      'Always close it; groups nest.',
+    inputSchema: {
+      type: 'object',
+      properties: { label: { type: 'string', description: 'The undo label, e.g. "Add 4 mounting holes".' } },
+      required: ['label'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'end_transaction',
+    description: 'Close the innermost undo group you opened with `begin_transaction`.',
+    inputSchema: empty,
+  },
+  // ---- Sketches ----
   {
     name: 'sketch_create',
     description:
-      'Create a new sketch feature on the given part, sitting on one of ' +
-      'the three default planes (`plane`: XY, XZ, YZ) or on a planar body ' +
-      'face (`face`). A sketch on a face follows the face on every rebuild, ' +
-      'so it stays put on the face when upstream dimensions change. ' +
-      'Returns `{ sketchId }`. ' +
-      "Use the sketchId in subsequent sketch_draw_* and feature_extrude calls.",
+      "Add a sketch to a part on a standard plane ('xy', 'xz', 'yz') or on a planar face or construction plane (a handle). " +
+      'A sketch on a face follows the face when earlier features change. It goes in at the rollback marker. ' +
+      'Returns `{sketch, frame}`: the sketch plane in part coordinates (origin, x, y, normal), so you can place sketch coordinates. ' +
+      'Standard planes: xy has x = +X, y = +Y, normal +Z; xz has x = +X, y = −Z, normal +Y; yz has x = −Z, y = +Y, normal +X.',
     inputSchema: {
       type: 'object',
       properties: {
-        partId: {
-          type: 'string',
-          description: 'The part id. Read from get_document().parts keys.',
-        },
-        plane: {
-          type: 'string',
-          enum: ['XY', 'XZ', 'YZ'],
-          description:
-            'Which default plane to sketch on (Y-up world). Sketch x / y ' +
-            'map to world XY: +X / +Y, XZ: +X / -Z, YZ: -Z / +Y, so a ' +
-            'shape reads unmirrored from the +Z, +Y and +X side respectively.',
-        },
-        face: {
-          type: 'object',
-          description:
-            'Sketch on this planar body face instead of a default plane (pass ' +
-            'exactly one of `plane` / `face`). Ids from `list_bodies` / ' +
-            '`list_faces`. Sketch origin = the world origin projected onto the ' +
-            "face's plane; sketch y = world +Y projected onto it (world -Z " +
-            'when the face normal is mostly +Y, +Z when mostly -Y) and x = ' +
-            'y × normal. So on a face parallel to a default plane the ' +
-            'coordinates match that plane: an upward (+Y) face uses the XZ ' +
-            'mapping (x = +X, y = -Z) at the face height.',
-          properties: {
-            bodyId: { type: 'string' },
-            stableFaceId: { type: 'string' },
-          },
-          required: ['bodyId', 'stableFaceId'],
-          additionalProperties: false,
-        },
+        on: plane,
+        part: partField,
       },
-      required: ['partId'],
+      required: ['on'],
       additionalProperties: false,
     },
   },
   {
     name: 'sketch_draw_line',
     description:
-      'Draw a line segment in a sketch. Endpoints snap to existing ' +
-      'sketch points within `tolerance` mm — this is how sequential lines ' +
-      'share corners and form closed loops the extrude can consume. ' +
-      'Returns `{ entityId }` (the line entity id). For an axis-aligned ' +
-      'rectangle, prefer sketch_draw_rectangle — it draws all four edges, ' +
-      'already constrained, in one call.',
+      'Draw a chain of lines through two or more points; consecutive lines share their points. `closed` joins the last point to ' +
+      'the first, making a closed outline. Returns `{curves, points}` (the new ids). Points given by id, or within `tolerance` ' +
+      'of an existing point, are that point. A point at [0, 0] is held at the sketch origin.',
     inputSchema: {
       type: 'object',
       properties: {
-        sketchId: { type: 'string', description: 'The sketch feature id.' },
-        from: {
-          type: 'array',
-          items: { type: 'number' },
-          minItems: 2,
-          maxItems: 2,
-          description: 'Start point in sketch-plane coordinates [x, y] (mm).',
-        },
-        to: {
-          type: 'array',
-          items: { type: 'number' },
-          minItems: 2,
-          maxItems: 2,
-          description: 'End point [x, y] (mm).',
-        },
-        construction: {
-          type: 'boolean',
-          description: 'Construction line (dashed, not used in profile detection). Default false.',
-        },
-        tolerance: {
-          type: 'number',
-          description: 'Coincident-point merge tolerance (mm). Default 1e-6.',
-        },
+        sketch: sketchId,
+        points: { type: 'array', items: point('A point:'), minItems: 2, description: 'The points in order.' },
+        closed: { type: 'boolean', description: 'Join the last point to the first. Default false.' },
+        construction,
+        tolerance,
       },
-      required: ['sketchId', 'from', 'to'],
+      required: ['sketch', 'points'],
       additionalProperties: false,
     },
   },
   {
     name: 'sketch_draw_rectangle',
     description:
-      'Draw an axis-aligned rectangle in a sketch: four line entities held ' +
-      'together by coincident + horizontal + vertical constraints (there is ' +
-      'no composite rectangle entity). They close into one region extrude ' +
-      'can use directly. `corner` is the bottom-left (min X, min Y); ' +
-      'negative width/height is normalized. Returns `{ entityIds }` with the ' +
-      'four new line ids.',
+      'Draw an axis-aligned rectangle from two opposite corners: four lines sharing corner points, held horizontal and vertical by ' +
+      'constraints. Returns `{curves, points}`: curve i runs from point i to point i + 1, starting at `from`.',
     inputSchema: {
       type: 'object',
       properties: {
-        sketchId: { type: 'string', description: 'The sketch feature id.' },
-        corner: {
-          type: 'array',
-          items: { type: 'number' },
-          minItems: 2,
-          maxItems: 2,
-          description: 'Bottom-left corner [x, y] (mm).',
-        },
-        width: { type: 'number', description: 'Extent along +X (mm). Non-zero.' },
-        height: { type: 'number', description: 'Extent along +Y (mm). Non-zero.' },
-        construction: { type: 'boolean', description: 'Construction geometry. Default false.' },
-        tolerance: { type: 'number', description: 'Coincident-point merge tolerance (mm). Default 1e-6.' },
+        sketch: sketchId,
+        from: point('One corner:'),
+        to: point('The opposite corner:'),
+        construction,
+        tolerance,
       },
-      required: ['sketchId', 'corner', 'width', 'height'],
+      required: ['sketch', 'from', 'to'],
       additionalProperties: false,
     },
   },
   {
     name: 'sketch_draw_circle',
-    description:
-      'Draw a circle in a sketch from center + radius. Circles are ' +
-      'intrinsically closed — feature_extrude can use them directly. ' +
-      'Returns `{ entityId }`.',
+    description: 'Draw a circle from its centre and radius. Returns `{curve, center}`.',
     inputSchema: {
       type: 'object',
       properties: {
-        sketchId: { type: 'string', description: 'The sketch feature id.' },
-        center: {
-          type: 'array',
-          items: { type: 'number' },
-          minItems: 2,
-          maxItems: 2,
-          description: 'Center [x, y] (mm).',
-        },
-        radius: { type: 'number', description: 'Radius (mm). Must be positive.' },
-        construction: { type: 'boolean', description: 'Construction geometry. Default false.' },
-        tolerance: { type: 'number', description: 'Coincident-point merge tolerance (mm). Default 1e-6.' },
+        sketch: sketchId,
+        center: point('The centre:'),
+        radius: { type: 'number', description: 'Radius (mm), more than 0.' },
+        construction,
+        tolerance,
       },
-      required: ['sketchId', 'center', 'radius'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'sketch_draw_slot',
-    description:
-      'Draw a slot (stadium shape: two semicircular end-caps + a straight ' +
-      'strip between them) from two end-cap centers + width. ' +
-      'Total outer length = |center2 − center1| + width. ' +
-      'Decomposes into two line and two arc entities held together by ' +
-      'coincident, tangent, equal and parallel constraints (there is no ' +
-      'composite slot entity); they close into one region extrude can use ' +
-      'directly. Returns `{ entityIds }` with the four new ids.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        sketchId: { type: 'string', description: 'The sketch feature id.' },
-        center1: {
-          type: 'array',
-          items: { type: 'number' },
-          minItems: 2,
-          maxItems: 2,
-          description: 'First end-cap center [x, y] (mm).',
-        },
-        center2: {
-          type: 'array',
-          items: { type: 'number' },
-          minItems: 2,
-          maxItems: 2,
-          description: 'Second end-cap center [x, y] (mm). Must differ from center1.',
-        },
-        width: {
-          type: 'number',
-          description: 'Slot width = end-cap diameter (mm). Must be > 0.',
-        },
-        construction: { type: 'boolean', description: 'Construction geometry. Default false.' },
-        tolerance: { type: 'number', description: 'Coincident-point merge tolerance (mm). Default 1e-6.' },
-      },
-      required: ['sketchId', 'center1', 'center2', 'width'],
+      required: ['sketch', 'center', 'radius'],
       additionalProperties: false,
     },
   },
   {
     name: 'sketch_draw_arc',
     description:
-      'Draw an arc from center + radius + start/end angles (radians, CCW ' +
-      'from +X axis). The arc\'s start and end points snap to existing ' +
-      'coincident sketch points within `tolerance`. Returns `{ entityId }`. ' +
-      'CAVEAT: the planar-graph region detector does NOT yet handle arc ' +
-      'entities — a closed loop containing an arc returns 0 detected ' +
-      'regions and `feature_extrude` will fail. The arc DOES round-trip ' +
-      'cleanly through the document (UI editor sees it correctly, points ' +
-      'snap as expected). Until the detector grows arc support, prefer ' +
-      'all-line profiles for extrudes; use arcs only when you need them ' +
-      'for visual reference (with `construction: true`).',
+      'Draw a circular arc: through three points (`start`, `through`, `end`), or from `center`, `start` and `end` running ' +
+      'counter-clockwise from start to end (the end is moved onto the circle through start). Returns `{curve, points}`.',
     inputSchema: {
       type: 'object',
       properties: {
-        sketchId: { type: 'string', description: 'The sketch feature id.' },
-        center: {
-          type: 'array',
-          items: { type: 'number' },
-          minItems: 2,
-          maxItems: 2,
-          description: 'Center [x, y] (mm).',
-        },
-        radius: { type: 'number', description: 'Radius (mm). Must be > 0.' },
-        startAngle: {
-          type: 'number',
-          description: 'Start angle in RADIANS (CCW from +X axis).',
-        },
-        endAngle: {
-          type: 'number',
-          description: 'End angle in RADIANS. Must differ from startAngle. CCW from startAngle to endAngle.',
-        },
-        construction: { type: 'boolean', description: 'Construction geometry. Default false.' },
-        tolerance: { type: 'number', description: 'Coincident-point merge tolerance (mm). Default 1e-6.' },
+        sketch: sketchId,
+        start: point('Where the arc starts:'),
+        end: point('Where it ends:'),
+        through: vec2('A point the arc passes between start and end [x, y] (three-point arc).'),
+        center: point('The centre (centre arc):'),
+        construction,
+        tolerance,
       },
-      required: ['sketchId', 'center', 'radius', 'startAngle', 'endAngle'],
+      required: ['sketch', 'start', 'end'],
       additionalProperties: false,
     },
   },
   {
-    name: 'sketch_draw_arc3point',
+    name: 'sketch_draw_slot',
     description:
-      'Draw an arc through three points (start → mid → end). The mid ' +
-      'point is a construction input only — it fixes the arc\'s curvature ' +
-      'but is NOT preserved as a sketch point. Use this when you have ' +
-      'three known points along the arc; use `sketch_draw_arc` when you ' +
-      'have center + radius + angles. Internally delegates to the same ' +
-      'core primitive as `sketch_draw_arc`, so the resulting arc entity ' +
-      'is structurally identical (no special "3-point arc" type). Returns ' +
-      '`{ entityId }`. Same region-detector caveat as `sketch_draw_arc` — ' +
-      'closed loops with arc segments don\'t yet detect.',
+      'Draw a slot: two parallel lines and two half-circle ends around the segment from `from` to `to`, `width` across. ' +
+      'Its overall length is the segment length plus the width. Returns `{curves, points}`.',
     inputSchema: {
       type: 'object',
       properties: {
-        sketchId: { type: 'string', description: 'The sketch feature id.' },
-        start: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'Start point [x, y] (mm).' },
-        mid:   { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'A point on the arc between start and end. NOT preserved as a sketch point.' },
-        end:   { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'End point [x, y] (mm).' },
-        construction: { type: 'boolean', description: 'Construction geometry. Default false.' },
-        tolerance: { type: 'number', description: 'Coincident-point merge tolerance (mm). Default 1e-6.' },
+        sketch: sketchId,
+        from: vec2('The centre of one end [x, y].'),
+        to: vec2('The centre of the other end [x, y].'),
+        width: { type: 'number', description: 'The slot width (mm), more than 0.' },
+        construction,
+        tolerance,
       },
-      required: ['sketchId', 'start', 'mid', 'end'],
+      required: ['sketch', 'from', 'to', 'width'],
       additionalProperties: false,
     },
   },
   {
     name: 'sketch_draw_polygon',
     description:
-      'Draw a regular N-sided inscribed polygon — center + a point on ' +
-      'vertex 0 (which fixes both the circumscribed radius and the ' +
-      'orientation). Decomposes at draw time into N SketchLineEntity ' +
-      'records held together by N coincident + (N-1) equal-length + ' +
-      '(N-1) angle constraints (invariant #11: no composite polygon ' +
-      'entity). A construction center point is also added. Returns ' +
-      '`{ entityIds }` with the N new line ids in CCW order — pass ' +
-      'the whole list as `ProfileRef.wireEntityIds` to extrude the ' +
-      'polygon as one closed profile.',
+      'Draw a regular polygon inscribed in a circle: `center`, a first corner `corner` and `sides`. Lines share their corners; ' +
+      'they are held equal in length. Returns `{curves, points}`.',
     inputSchema: {
       type: 'object',
       properties: {
-        sketchId: { type: 'string', description: 'The sketch feature id.' },
-        center: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'Polygon center [x, y] (mm).' },
-        vertex: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'A point on vertex 0 — fixes orientation + circumscribed radius.' },
-        sides:  { type: 'integer', minimum: 3, maximum: 64, description: 'Number of sides (3..64).' },
-        construction: { type: 'boolean', description: 'Construction geometry (all sides). Default false.' },
-        tolerance: { type: 'number', description: 'Coincident-point merge tolerance (mm). Default 1e-6.' },
+        sketch: sketchId,
+        center: vec2('The centre [x, y].'),
+        corner: vec2('The first corner [x, y]: sets the size and the turn.'),
+        sides: { type: 'integer', minimum: 3, maximum: 64, description: 'Number of sides.' },
+        construction,
+        tolerance,
       },
-      required: ['sketchId', 'center', 'vertex', 'sides'],
+      required: ['sketch', 'center', 'corner', 'sides'],
       additionalProperties: false,
     },
   },
   {
     name: 'sketch_draw_ellipse',
     description:
-      'Draw an ellipse from center + major-axis endpoint (which defines ' +
-      'both the major-axis length and the rotation) + minorRadius. ' +
-      'Single curve primitive — no decomposition (an ellipse IS a curve). ' +
-      'CAVEAT: ellipses round-trip via the editor sidecar only; they ' +
-      'don\'t yet have a document `entities` projection, so the region ' +
-      'detector + extrude can\'t consume them. Use for visual reference; ' +
-      'returns `{ geometryId }` — the editor SketchGeometryId, usable ' +
-      'with `sketch_apply_constraint`.',
+      'Draw an ellipse from its centre, the end of its major axis (which sets the major radius and the turn) and its minor radius, ' +
+      'no more than the major radius. Returns `{curve, points}`.',
     inputSchema: {
       type: 'object',
       properties: {
-        sketchId: { type: 'string', description: 'The sketch feature id.' },
-        center: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'Ellipse center [x, y] (mm).' },
-        major:  { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'Major-axis endpoint [x, y]; vector center→major fixes the major axis length and rotation.' },
-        minorRadius: { type: 'number', description: 'Minor-axis radius (mm). Must be > 0.' },
-        construction: { type: 'boolean', description: 'Construction geometry. Default false.' },
-        tolerance: { type: 'number', description: 'Coincident-point merge tolerance (mm). Default 1e-6.' },
+        sketch: sketchId,
+        center: point('The centre:'),
+        majorEnd: point('The end of the major axis:'),
+        minorRadius: { type: 'number', description: 'Minor radius (mm), more than 0.' },
+        construction,
+        tolerance,
       },
-      required: ['sketchId', 'center', 'major', 'minorRadius'],
+      required: ['sketch', 'center', 'majorEnd', 'minorRadius'],
       additionalProperties: false,
     },
   },
   {
     name: 'sketch_draw_spline',
     description:
-      'Draw a spline as an ordered control-point sequence (≥2 points). ' +
-      'Each control point may snap to an existing coincident sketch ' +
-      'point within `tolerance`. Single curve primitive (a spline IS a ' +
-      'curve — same rationale as ellipse). CAVEAT: splines round-trip ' +
-      'via the editor sidecar only; the document `entities` projection ' +
-      'and region detector don\'t consume them yet. Use for visual ' +
-      'reference / construction. Returns `{ geometryId }`.',
+      'Draw a smooth curve (a cubic spline) through two or more points in order; `closed` makes it a closed loop. ' +
+      'Constraints on the spline curve itself do not solve; constrain its points. Returns `{curve, points}`.',
     inputSchema: {
       type: 'object',
       properties: {
-        sketchId: { type: 'string', description: 'The sketch feature id.' },
+        sketch: sketchId,
         points: {
           type: 'array',
-          items: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 },
+          items: point('A point:'),
           minItems: 2,
-          description: 'Ordered control points (≥2). Each is [x, y] (mm).',
+          description: 'The points it passes, in order.',
         },
-        construction: { type: 'boolean', description: 'Construction geometry. Default false.' },
-        tolerance: { type: 'number', description: 'Coincident-point merge tolerance (mm). Default 1e-6.' },
+        closed: { type: 'boolean', description: 'A closed loop. Default false.' },
+        construction,
+        tolerance,
       },
-      required: ['sketchId', 'points'],
+      required: ['sketch', 'points'],
       additionalProperties: false,
     },
   },
   {
     name: 'sketch_draw_point',
-    description:
-      'Place a standalone reference point — wraps a SketchPoint in a ' +
-      'SketchStandalonePoint geometry so it shows up as a first-class ' +
-      'addressable entity in the sketch browser. Useful as a dimension ' +
-      'anchor, midpoint marker, or construction reference. May snap to ' +
-      'an existing point within `tolerance` (reuses that point id). ' +
-      'CAVEAT: standalone points round-trip via the editor sidecar only ' +
-      '(no document `entities` projection). Returns `{ geometryId }`.',
+    description: 'Place a sketch point, for constraints and dimensions, or as a hole centre. Returns `{curve, point}`.',
     inputSchema: {
       type: 'object',
       properties: {
-        sketchId: { type: 'string', description: 'The sketch feature id.' },
-        at: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'Point location [x, y] (mm).' },
-        construction: { type: 'boolean', description: 'Construction (reference) geometry. Default false.' },
-        tolerance: { type: 'number', description: 'Coincident-point merge tolerance (mm). Default 1e-6.' },
+        sketch: sketchId,
+        at: vec2('Where [x, y] (mm).'),
+        construction,
+        tolerance,
       },
-      required: ['sketchId', 'at'],
+      required: ['sketch', 'at'],
       additionalProperties: false,
     },
   },
   {
-    name: 'sketch_apply_constraint',
+    name: 'sketch_constrain',
     description:
-      'Apply a constraint to a sketch. One tool covers EVERY constraint kind ' +
-      'and every dimension — the discriminator is the `constraint.type` ' +
-      'field. The handler appends to the sketch editor state without ' +
-      'running the solver; the in-browser editor re-solves on next ' +
-      'interaction (drag, dimension edit). Returns `{ constraintId }`. ' +
-      'Use `list_sketch_elements(sketchId)` to discover point + geometry ' +
-      'ids the constraint should reference. ' +
-      'Examples: ' +
-      "`{type:'horizontal',geometryId:'<lineId>'}`, " +
-      "`{type:'coincident',pointA:'<ptA>',pointB:'<ptB>'}`, " +
-      "`{type:'tangent',lineId:'<lineId>',circleId:'<circleId>'}` (line-circle), " +
-      "`{type:'tangent',circleId:'<aId>',secondCircleId:'<bId>'}` (circle-circle), " +
-      "`{type:'length',geometryId:'<lineId>',value:50}`, " +
-      "`{type:'distance',pointA:'<a>',pointB:'<b>',value:25}`, " +
-      "`{type:'angle',geometryA:'<la>',geometryB:'<lb>',value:1.5708}` (radians).",
+      'Add a constraint or a dimension to sketch rows (point and curve ids), as the sketch editor applies it to a selection. ' +
+      "Geometric kinds: 'coincident' (points become one point; or a point onto a curve), 'horizontal', 'vertical', 'hv' (lines, or two points), " +
+      "'parallel', 'perpendicular', 'collinear' (two lines), 'equal' (lines, or round curves), 'tangent' (two curves), 'concentric' (round curves), " +
+      "'midpoint' (a point and a curve), 'symmetric' (two points, or two circles or arcs, then a line), 'fix' (points or curves; again to unfix). " +
+      "Dimension kinds: 'dimension' (a line's length, a circle's diameter, an arc's radius, the distance between two points or a point and a line, " +
+      "the angle between two lines), 'dimensionX' and 'dimensionY' (along the sketch x or y). The sketch's own origin and axes are 'origin', " +
+      "'xAxis' and 'yAxis' in `entities`. " +
+      'A dimension takes `value`, an expression (default: what it measures now); its value is named (d1, d2, …) for use in other expressions. ' +
+      'The sketch is solved; a constraint that would over-constrain it is refused. Returns `{constraints, dof}` (degrees of freedom left).',
     inputSchema: {
       type: 'object',
       properties: {
-        sketchId: { type: 'string', description: 'The sketch feature id.' },
-        constraint: {
-          type: 'object',
-          description:
-            "A SketchConstraintInput. `type` is one of: coincident, horizontal, " +
-            "vertical, fixed, distance, distanceX, distanceY, radius, length, " +
-            "parallel, perpendicular, angle, tangent, pointOnLine, " +
-            "pointOnCircle, symmetric, equal, concentric, midpoint. " +
-            "See @tweakcad/core/src/sketch/types.ts.",
-        },
-      },
-      required: ['sketchId', 'constraint'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'sketch_remove_constraint',
-    description:
-      'Remove a constraint from a sketch by id. Idempotent — no-op on ' +
-      'missing ids. Use this to revert an over-constraint that the editor ' +
-      'flagged red.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        sketchId: { type: 'string' },
-        constraintId: { type: 'string' },
-      },
-      required: ['sketchId', 'constraintId'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'list_sketch_elements',
-    description:
-      'Return the full editor-state graph of a sketch: every point ' +
-      '(with coords), every geometry (with point refs + curve type + ' +
-      'construction flag), every constraint (with refs + kind). ' +
-      'USE THIS to discover the point + geometry ids you need to feed ' +
-      'into `sketch_apply_constraint`. The flat `entities` document model ' +
-      'returned by `get_document` does NOT include the point ids — it ' +
-      'collapses rectangles into a single entity and bakes line endpoints ' +
-      'into the entity body — so this tool is the only way to address ' +
-      'individual corners or edges of a multi-line shape.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        sketchId: { type: 'string', description: 'The sketch feature id.' },
-      },
-      required: ['sketchId'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'feature_extrude',
-    description:
-      "Extrude a sketch's closed profile(s) along the sketch normal. " +
-      'If `profiles` is omitted, ALL closed regions in the sketch are ' +
-      'used (the common case — works whenever the sketch has exactly the ' +
-      'shapes you want to extrude). Selecting a ring together with the ' +
-      'region filling its hole extrudes the solid outer shape, so to keep ' +
-      'a hole open pass `profiles` without the inner region. ' +
-      "The tool resolves the sketch's part " +
-      'automatically from sketchId. Returns `{ featureId }`. ' +
-      'AFTER calling: ALWAYS call `get_diagnostics` to confirm the ' +
-      'extrude built (sketches can build successfully but extrude can ' +
-      'still fail). If it failed, use `list_sketch_regions(sketchId)` to ' +
-      'inspect what regions the detector found; common cause is no ' +
-      'closed loop. Use `view_fit_all` + `view_screenshot` for visual ' +
-      'confirmation if requested. ' +
-      '`startFace` starts the extrude on a planar face instead of the ' +
-      'sketch plane, and `toFace` extrudes (or cuts) up to a planar face ' +
-      'instead of a fixed distance. Both are re-resolved on every rebuild, ' +
-      'so the result follows the faces when upstream dimensions change.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        sketchId: { type: 'string', description: 'The sketch feature id to extrude from.' },
-        distance: {
-          type: 'number',
-          description:
-            "Extrusion distance (mm). For direction='symmetric' this is the TOTAL extent (half each way). " +
-            'Required unless `toFace` is given.',
-        },
-        toFace: {
-          type: 'object',
-          description:
-            'Extrude up to this planar face instead of `distance`. ' +
-            "`direction` picks which way to go; the face must lie ahead of the start. Not with direction 'symmetric'.",
-          properties: {
-            bodyId: { type: 'string' },
-            stableFaceId: { type: 'string' },
-          },
-          required: ['bodyId', 'stableFaceId'],
-          additionalProperties: false,
-        },
-        startFace: {
-          type: 'object',
-          description:
-            'Start the extrude on this planar face instead of the sketch plane: ' +
-            'the profile moves along the sketch normal onto the face.',
-          properties: {
-            bodyId: { type: 'string' },
-            stableFaceId: { type: 'string' },
-          },
-          required: ['bodyId', 'stableFaceId'],
-          additionalProperties: false,
-        },
-        startOffset: {
-          type: 'number',
-          description: 'Shift of the start along the extrude direction (mm), from the sketch plane or `startFace`. Default 0.',
-        },
-        operation: {
-          type: 'string',
-          enum: ['newBody', 'join', 'cut'],
-          description:
-            "'newBody' creates a new disconnected body (most common — start here). " +
-            "'join' fuses the extrude with the bodies it touches or overlaps and " +
-            "keeps the first one's bodyId; bodies it does not reach are left " +
-            'alone, and an extrude that touches no body becomes a new body. ' +
-            "'cut' subtracts the extrude from every body it overlaps (each keeps " +
-            'its bodyId) and fails with "Cut removes nothing" when it overlaps ' +
-            "none. Default 'newBody'.",
-        },
-        targetBodies: {
-          type: 'array',
-          items: { type: 'string' },
-          description:
-            "OPTIONAL, for 'join' / 'cut'. bodyIds (from `list_bodies`) to act on " +
-            'instead of the bodies the extrude touches. A picked join fuses all of ' +
-            "them into the first one's bodyId; a picked cut cuts only them.",
-        },
-        direction: {
-          type: 'string',
-          enum: ['normal', 'reversed', 'symmetric'],
-          description:
-            "'normal' extrudes along the sketch's normal (default). " +
-            "'reversed' extrudes the opposite way. " +
-            "'symmetric' extrudes equally in both directions (distance is the TOTAL).",
-        },
-        profiles: {
-          type: 'array',
-          description:
-            'OPTIONAL. Explicit profile selection. Each profile names a ' +
-            'sketch and the entity ids whose closed loop is the wire. Omit ' +
-            'this to auto-use every closed region in the sketch.',
-          items: {
-            type: 'object',
-            properties: {
-              wireEntityIds: {
-                type: 'array',
-                items: { type: 'string' },
-                minItems: 1,
-                description:
-                  'Entity ids forming the wire boundary (e.g. [circleId] or [lineA, lineB, lineC, lineD]). ' +
-                  'For a ring, the outer boundary alone or outer + hole ids ([outer, inner]) both name the ring.',
-              },
-              interiorPoint: {
-                type: 'array',
-                items: { type: 'number' },
-                minItems: 2,
-                maxItems: 2,
-                description: 'Optional disambiguator: a 2D point known to lie inside this region.',
-              },
-            },
-            required: ['wireEntityIds'],
-            additionalProperties: false,
-          },
-        },
-      },
-      required: ['sketchId'],
-      additionalProperties: false,
-    },
-  },
-  // ---- Body-replication tools ----
-  //
-  // Revolve takes a sketch profile + axis + angle.
-  // Mirror/Pattern act on existing bodies (need bodyId from list_bodies).
-  {
-    name: 'feature_revolve',
-    description:
-      'Revolve a sketch profile around a Cartesian axis to create a ' +
-      'solid body. Omit `profile` to auto-pick the FIRST closed region ' +
-      'in the sketch (the common case). `angle` is in degrees — 360 = ' +
-      'full revolution; partial angles produce sector solids. ' +
-      'Returns `{ featureId }`. CALL `wait_for_rebuild` then ' +
-      '`get_diagnostics` afterward.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        sketchId: { type: 'string', description: 'The sketch feature id to revolve from.' },
-        axis: {
-          type: 'string',
-          enum: ['x', 'y', 'z'],
-          description: "Rotation axis: 'x', 'y', or 'z' (cartesian). For axes along picked edges, fall back to dispatch_command.",
-        },
-        angle: {
-          type: 'number',
-          description: 'Sweep angle in DEGREES. 360 = full revolve. Negative reverses direction.',
-        },
-        operation: {
-          type: 'string',
-          enum: ['newBody', 'join', 'cut'],
-          description:
-            "'newBody' creates a new disconnected body (default). " +
-            "'join' fuses the revolve with the bodies it touches or overlaps and " +
-            "keeps the first one's bodyId; bodies it does not reach are left " +
-            'alone, and a revolve that touches no body becomes a new body. ' +
-            "'cut' subtracts the revolve from every body it overlaps (each keeps " +
-            'its bodyId) and fails with "Cut removes nothing" when it overlaps ' +
-            'none.',
-        },
-        targetBodies: {
-          type: 'array',
-          items: { type: 'string' },
-          description:
-            "OPTIONAL, for 'join' / 'cut'. bodyIds (from `list_bodies`) to act on " +
-            'instead of the bodies the revolve touches. A picked join fuses all of ' +
-            "them into the first one's bodyId; a picked cut cuts only them.",
-        },
-        profile: {
-          type: 'object',
-          description: 'OPTIONAL. Explicit profile selection. Omit for auto-detect.',
-          properties: {
-            wireEntityIds: {
-              type: 'array',
-              items: { type: 'string' },
-              minItems: 1,
-              description: 'Entity ids forming the wire boundary.',
-            },
-            interiorPoint: {
-              type: 'array',
-              items: { type: 'number' },
-              minItems: 2,
-              maxItems: 2,
-              description: 'Optional disambiguator: a 2D point known to lie inside this region.',
-            },
-          },
-          required: ['wireEntityIds'],
-          additionalProperties: false,
-        },
-      },
-      required: ['sketchId', 'axis', 'angle'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'feature_mirror',
-    description:
-      'Mirror an existing body across a default plane (XY / YZ / XZ). ' +
-      "Use `operation: 'join'` to fuse the mirror into the source body " +
-      "(symmetric one-piece result); `operation: 'newBody'` (default) " +
-      "keeps the mirror as a separate body. " +
-      'Returns `{ featureId }`. For mirroring across a construction ' +
-      'plane or a body face, fall back to `dispatch_command CreateMirror`.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        partId: { type: 'string' },
-        bodyId: { type: 'string', description: 'The body to mirror (from `list_bodies`).' },
-        plane: {
-          type: 'string',
-          enum: ['XY', 'YZ', 'XZ'],
-          description: 'Default plane to mirror across.',
-        },
-        operation: {
-          type: 'string',
-          enum: ['newBody', 'join'],
-          description: "Default 'newBody'. 'join' produces one symmetric body; 'newBody' leaves the mirror as a sibling.",
-        },
-      },
-      required: ['partId', 'bodyId', 'plane'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'feature_pattern',
-    description:
-      'Replicate a body in a regular linear or circular pattern. ' +
-      "Linear: `{ patternType: 'linear', direction: 'x'|'y'|'z', count: int, spacing: mm }`. " +
-      "Circular: `{ patternType: 'circular', axis: 'x'|'y'|'z', count: int, fullAngle?: degrees }`. " +
-      'Source body counts as instance #1; `count` MUST be ≥ 2 (1 = no-op). ' +
-      "fullAngle defaults to 360. " +
-      'Returns `{ featureId }`. For non-Cartesian axes / directions ' +
-      'or feature-mode patterns, fall back to `dispatch_command`.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        partId: { type: 'string' },
-        bodyId: { type: 'string', description: 'The body to replicate (from `list_bodies`).' },
-        patternType: {
-          type: 'string',
-          enum: ['linear', 'circular'],
-          description: 'Linear (line of copies) or circular (polar array).',
-        },
-        count: {
-          type: 'integer',
-          minimum: 2,
-          description: 'Total instance count including the source (≥ 2).',
-        },
-        direction: {
-          type: 'string',
-          enum: ['x', 'y', 'z'],
-          description: 'Linear only: axis to replicate along.',
-        },
-        spacing: {
-          type: 'number',
-          description: 'Linear only: center-to-center spacing in mm between consecutive instances.',
-        },
-        axis: {
-          type: 'string',
-          enum: ['x', 'y', 'z'],
-          description: 'Circular only: rotation axis.',
-        },
-        fullAngle: {
-          type: 'number',
-          description: 'Circular only: total sweep in degrees. Default 360.',
-        },
-      },
-      required: ['partId', 'bodyId', 'patternType', 'count'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'feature_shell',
-    description:
-      'Hollow a body to a uniform wall thickness, leaving one or more ' +
-      'faces open so the cavity is reachable. Discovery: ' +
-      '`list_faces(bodyId)` → pick the stable face ids you want left ' +
-      'open. All open faces must belong to the same body. Wall grows ' +
-      'INWARD (toward the body interior). Returns `{ featureId }`.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        partId: { type: 'string' },
-        bodyId: { type: 'string', description: 'The body to shell (from `list_bodies`).' },
-        removedFaceIds: {
-          type: 'array',
-          items: { type: 'string' },
-          minItems: 1,
-          description: 'Stable face ids of faces to leave OPEN (the cavity opens through these).',
-        },
-        thickness: {
-          type: 'number',
-          description: 'Wall thickness (mm). > 0. Grows inward.',
-        },
-        tolerance: {
-          type: 'number',
-          description: 'Optional. Offset-surface fit tolerance. Default 1e-3 (loose); pass 1e-6 for precise shells.',
-        },
-      },
-      required: ['partId', 'bodyId', 'removedFaceIds', 'thickness'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'feature_sweep',
-    description:
-      'Sweep a closed profile along a closed path (spine). Canonical ' +
-      'use: circle profile + circle path = torus. Both `profile` and ' +
-      '`path` are `{ sketchId, wireEntityIds? }` — when wireEntityIds is ' +
-      'omitted the wrapper picks the first detected region of that sketch. ' +
-      'V1 only supports `operation: newBody` (the schema enforces this). ' +
-      'Open-wire paths and body-edge paths are deferred. ' +
-      'Returns `{ featureId }`.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        profile: {
-          type: 'object',
-          properties: {
-            sketchId: { type: 'string' },
-            wireEntityIds: { type: 'array', items: { type: 'string' } },
-            interiorPoint: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 },
-          },
-          required: ['sketchId'],
-          additionalProperties: false,
-          description: 'Closed profile to sweep.',
-        },
-        path: {
-          type: 'object',
-          properties: {
-            sketchId: { type: 'string' },
-            wireEntityIds: { type: 'array', items: { type: 'string' } },
-            interiorPoint: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 },
-          },
-          required: ['sketchId'],
-          additionalProperties: false,
-          description: 'Closed region whose boundary wire is the sweep spine.',
-        },
-      },
-      required: ['profile', 'path'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'feature_loft',
-    description:
-      'Loft a solid through 2–16 ordered closed profile sections. ' +
-      'Profile order matters — the surface interpolates between ' +
-      'consecutive entries in the given order. Each profile is ' +
-      '`{ sketchId, wireEntityIds? }` (auto-pick first region when ' +
-      'wireEntityIds is omitted). Use `ruled: true` for straight ' +
-      '(faster, simpler topology) instead of a smooth fit. Use ' +
-      '`closed: true` to wrap the last profile back to the first ' +
-      '(torus-style loops). Returns `{ featureId }`.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        profiles: {
-          type: 'array',
-          minItems: 2,
-          maxItems: 16,
-          items: {
-            type: 'object',
-            properties: {
-              sketchId: { type: 'string' },
-              wireEntityIds: { type: 'array', items: { type: 'string' } },
-              interiorPoint: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 },
-            },
-            required: ['sketchId'],
-            additionalProperties: false,
-          },
-          description: 'Ordered profile sections (2–16).',
-        },
-        operation: {
-          type: 'string',
-          enum: ['newBody', 'join', 'cut'],
-          description:
-            "'newBody' creates a new disconnected body (default). " +
-            "'join' fuses the loft with the bodies it touches or overlaps and " +
-            "keeps the first one's bodyId; bodies it does not reach are left " +
-            'alone, and a loft that touches no body becomes a new body. ' +
-            "'cut' subtracts the loft from every body it overlaps (each keeps " +
-            'its bodyId) and fails with "Cut removes nothing" when it overlaps ' +
-            'none.',
-        },
-        targetBodies: {
-          type: 'array',
-          items: { type: 'string' },
-          description:
-            "OPTIONAL, for 'join' / 'cut'. bodyIds (from `list_bodies`) to act on " +
-            'instead of the bodies the loft touches. A picked join fuses all of ' +
-            "them into the first one's bodyId; a picked cut cuts only them.",
-        },
-        ruled: {
-          type: 'boolean',
-          description: 'If true, straight segments between profiles instead of a smooth fit.',
-        },
-        closed: {
-          type: 'boolean',
-          description: 'If true, wraps last → first (closed loop / torus).',
-        },
-      },
-      required: ['profiles'],
-      additionalProperties: false,
-    },
-  },
-  // ---- Edge / face modification tools ----
-  //
-  // Fillet, chamfer, and hole all need stable edge / face references
-  // discovered via list_edges / list_faces. The wrappers take a flat
-  // shape (partId + bodyId + stable*Id + measurement) and assemble the
-  // EdgeRef / FaceRef envelopes the CadCommand expects.
-  {
-    name: 'feature_fillet',
-    description:
-      'Round one or more edges of a body with a constant-radius fillet. ' +
-      'Discovery flow: call `list_bodies(partId)` → pick `bodyId` → ' +
-      '`list_edges(bodyId)` → collect the `stableEdgeId` of each edge ' +
-      'you want to fillet. All edges must belong to ONE body. ' +
-      'Returns `{ featureId }`. CALL `wait_for_rebuild` then ' +
-      '`get_diagnostics` afterward to confirm the fillet succeeded — ' +
-      "fillets fail when radius exceeds the edge's adjacent geometry.",
-    inputSchema: {
-      type: 'object',
-      properties: {
-        partId: { type: 'string', description: 'The part id containing the body.' },
-        bodyId: {
-          type: 'string',
-          description: 'The body id (from `list_bodies`). All edges must belong to this body.',
-        },
-        stableEdgeIds: {
-          type: 'array',
-          items: { type: 'string' },
-          minItems: 1,
-          description: 'Stable edge ids from `list_edges`. At least one required.',
-        },
-        radius: {
-          type: 'number',
-          description: 'Fillet radius (mm). Must be > 0 and smaller than the adjacent geometry can absorb.',
-        },
-      },
-      required: ['partId', 'bodyId', 'stableEdgeIds', 'radius'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'feature_chamfer',
-    description:
-      'Bevel one or more edges of a body with a symmetric chamfer ' +
-      '(equal setback on each adjacent face). Discovery flow identical ' +
-      'to `feature_fillet`. Returns `{ featureId }`. CALL ' +
-      '`wait_for_rebuild` then `get_diagnostics` afterward.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        partId: { type: 'string', description: 'The part id containing the body.' },
-        bodyId: { type: 'string', description: 'The body id (from `list_bodies`).' },
-        stableEdgeIds: {
-          type: 'array',
-          items: { type: 'string' },
-          minItems: 1,
-          description: 'Stable edge ids from `list_edges`.',
-        },
-        distance: {
-          type: 'number',
-          description: 'Symmetric setback per face (mm). Must be > 0.',
-        },
-      },
-      required: ['partId', 'bodyId', 'stableEdgeIds', 'distance'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'feature_hole',
-    description:
-      'Drill a cylindrical hole into a body, perpendicular to a chosen ' +
-      'face. Discovery: `list_bodies(partId)` → `list_faces(bodyId)` → ' +
-      'pick the planar face with the right `stableFaceId`. ' +
-      '`center` is a [u, v] offset (mm) from the face centroid in the ' +
-      "face's tangent frame: v = +X and u = X × normal, except when the " +
-      'normal points mostly along ±X (|nx| > 0.9), where v = +Y and ' +
-      'u = Y × normal. So on an upward (+Y) face, center = [z, x] ' +
-      'relative to the centroid; on a +Z face, [-y, x]. The centroid of ' +
-      "a face with an opening (a shelled box's rim) lies off the face, " +
-      'so [0, 0] there drills into empty space. A hole that removes no ' +
-      'material fails the feature. ' +
-      '`depth` is along the face normal (use a value larger than the ' +
-      'body for a through-hole). ' +
-      "`kind` selects 'simple' (cylindrical) | 'counterbore' (with a " +
-      "cylindrical recess) | 'countersink' (conical recess). " +
-      'Counterbore needs `counterboreDiameter` + `counterboreDepth`; ' +
-      'countersink needs `countersinkDiameter` + optional ' +
-      '`countersinkAngle` (default 90°). Returns `{ featureId }`.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        partId: { type: 'string' },
-        bodyId: { type: 'string', description: 'The body id (from `list_bodies`).' },
-        stableFaceId: {
-          type: 'string',
-          description: 'Stable face id of the face to drill into. Get from `list_faces`.',
-        },
-        center: {
-          type: 'array',
-          items: { type: 'number' },
-          minItems: 2,
-          maxItems: 2,
-          description: 'Center [u, v] in mm from the face centroid, in the face frame described above. [0, 0] = face centroid.',
-        },
-        diameter: {
-          type: 'number',
-          description: 'Hole diameter (mm). > 0.',
-        },
-        depth: {
-          type: 'number',
-          description: 'Hole depth measured from the face along the normal (mm). > 0. Use a large value for through-hole.',
-        },
+        sketch: sketchId,
         kind: {
           type: 'string',
-          enum: ['simple', 'counterbore', 'countersink'],
-          description: "Default 'simple'. Counterbore / countersink require their matching fields.",
+          enum: [
+            'coincident',
+            'hv',
+            'horizontal',
+            'vertical',
+            'parallel',
+            'perpendicular',
+            'collinear',
+            'equal',
+            'tangent',
+            'concentric',
+            'midpoint',
+            'symmetric',
+            'fix',
+            'dimension',
+            'dimensionX',
+            'dimensionY',
+          ],
         },
-        counterboreDiameter: {
-          type: 'number',
-          description: 'Required when kind = counterbore. Head recess diameter (mm), must be > diameter.',
-        },
-        counterboreDepth: {
-          type: 'number',
-          description: 'Required when kind = counterbore. Head recess depth (mm), > 0.',
-        },
-        countersinkDiameter: {
-          type: 'number',
-          description: 'Required when kind = countersink. Rim diameter at face surface (mm), must be > diameter.',
-        },
-        countersinkAngle: {
-          type: 'number',
-          description: 'Optional when kind = countersink. Full included angle in degrees (0 < a < 180). Default 90.',
-        },
-      },
-      required: ['partId', 'bodyId', 'stableFaceId', 'center', 'diameter', 'depth'],
-      additionalProperties: false,
-    },
-  },
-  // ---- ID discovery tools ----
-  //
-  // The kernel produces bodies / faces / edges during rebuild. Their
-  // IDs live in the viewport store (build artifacts), NOT in the
-  // document. Without these tools the caller has no way to learn which
-  // ids exist — and therefore can't call fillet, chamfer, hole, or
-  // sketch-on-face. Each tool returns a list with enough metadata
-  // (geometric kind, area, centroid, normal, etc.) that the caller can
-  // pick the right id in one call.
-  {
-    name: 'list_bodies',
-    description:
-      'List the bodies a part has produced from its most recent build. ' +
-      'Each entry has `bodyId`, `sourceFeatureId` (which feature created ' +
-      'it), `role`, and `boundingBox`. Use BEFORE `list_faces` / ' +
-      '`list_edges` to find the bodyId you need. ' +
-      'Returns `[]` if the part has no built bodies (sketch-only project, ' +
-      'or build failed — check `get_diagnostics`).',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        partId: { type: 'string', description: 'The part id to enumerate.' },
-      },
-      required: ['partId'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'list_faces',
-    description:
-      "List the faces of a body. Each entry currently has just " +
-      '`faceId`, `stableFaceId` (survives rebuilds — preferred for ' +
-      'fillet/chamfer/hole references), and `triStart`/`triEnd` ' +
-      '(triangle range in the displayMesh). ' +
-      'CAVEAT: per-face metadata (kind / area / centroid / normal) ' +
-      "isn't surfaced yet — the topology layer doesn't compute it. " +
-      'Until it does, agents must pick faces by stableFaceId convention ' +
-      '(e.g. for an extrude origin XY, the top face is typically the ' +
-      'highest-indexed planar face). For finding the face adjacent to a ' +
-      'specific edge, use `find_face` with `adjacentToEdgeIds`.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        bodyId: { type: 'string', description: 'The body id. Get from `list_bodies`.' },
-      },
-      required: ['bodyId'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'list_edges',
-    description:
-      'List the edges of a body. Each entry has `edgeId`, `stableEdgeId` ' +
-      '(preferred for fillet/chamfer — survives rebuilds), ' +
-      '`adjacentFaceIds`, and segment start/end points. ' +
-      'USE THIS before any tool that needs an edgeId (fillet, chamfer). ' +
-      '`adjacentFaceIds` holds the two faces the edge bounds (the same ' +
-      'face twice for a seam or open-shell edge).',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        bodyId: { type: 'string', description: 'The body id. Get from `list_bodies`.' },
-      },
-      required: ['bodyId'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'find_edges',
-    description:
-      'Filter a body\'s edges by topology criteria. Each filter is ' +
-      'OPTIONAL; multiple filters AND together. ' +
-      'Examples: `{ betweenFaces: [faceA, faceB] }` returns the one ' +
-      'edge between two faces (the classic fillet target). ' +
-      '`{ adjacentToFaceIds: [topFaceId] }` returns the 4 edges ' +
-      'around the top face of a box. `{ lengthRange: { min: 50 } }` ' +
-      'returns edges at least 50 mm long. ' +
-      'Returns the same shape as `list_edges`, so you can pipe the ' +
-      'result straight into `feature_fillet.stableEdgeIds`.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        bodyId: { type: 'string', description: 'The body id (from `list_bodies`).' },
-        adjacentToFaceIds: {
+        entities: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Match-ANY: keep edges touching at least one of these faceIds.',
+          minItems: 1,
+          description:
+            "Point and curve ids (pt_…, crv_…), or 'origin', 'xAxis', 'yAxis', in the order the kind reads them.",
         },
-        betweenFaces: {
-          type: 'array',
-          items: { type: 'string' },
-          minItems: 2,
-          maxItems: 2,
-          description: 'Order-insensitive pair: keep edges whose two adjacent faces equal this set.',
-        },
-        lengthRange: {
-          type: 'object',
-          properties: {
-            min: { type: 'number', description: 'Minimum chord length (mm).' },
-            max: { type: 'number', description: 'Maximum chord length (mm).' },
-          },
-          additionalProperties: false,
-          description: 'Chord-length range (mm). Either bound is optional.',
-        },
-        lengthApprox: {
-          type: 'object',
-          properties: {
-            value: { type: 'number', description: 'Target chord length (mm).' },
-            tolerance: { type: 'number', description: 'Allowed deviation (mm). Default 1e-3.' },
-          },
-          required: ['value'],
-          additionalProperties: false,
-          description: 'Exact-ish chord-length match.',
-        },
+        value: expr('For a dimension: its expression, a number in mm (deg for an angle) or text such as "width / 2".'),
       },
-      required: ['bodyId'],
+      required: ['sketch', 'kind', 'entities'],
       additionalProperties: false,
     },
   },
   {
-    name: 'find_face',
+    name: 'sketch_set_dimension',
     description:
-      "Filter a body's faces by topology criteria. v1 supports two " +
-      'filters (more land as the topology layer gains kind / normal / ' +
-      'centroid metadata): ' +
-      '`adjacentToEdgeIds` returns faces touching ANY of the given ' +
-      'edges (handy when you have an edge id and want its faces); ' +
-      '`withStableIdOnly: true` drops faces without a `stableFaceId` ' +
-      "so you only get refs that survive rebuilds. " +
-      'Returns the same shape as `list_faces`.',
+      "Change a sketch dimension's value; the sketch is solved again and the geometry follows. Returns `{dof}`.",
     inputSchema: {
       type: 'object',
       properties: {
-        bodyId: { type: 'string', description: 'The body id (from `list_bodies`).' },
-        adjacentToEdgeIds: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Match-ANY: keep faces adjacent to at least one of these edgeIds.',
-        },
-        withStableIdOnly: {
-          type: 'boolean',
-          description: 'Default false. When true, omit faces without a stableFaceId.',
-        },
+        sketch: sketchId,
+        constraint: { type: 'string', description: 'The dimension constraint id (con_…).' },
+        value: expr('The new expression, a number in mm (deg for an angle) or text.'),
       },
-      required: ['bodyId'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'list_sketch_regions',
-    description:
-      'List the closed regions detected in a sketch. Each entry has an ' +
-      '`id`, `type` (`circle` / `polygon` / `ellipse` / `closedSpline`), ' +
-      '`area` (fillable area, holes subtracted), `center` (a point inside ' +
-      'the region), and `wireEntityIds` (the sketch entities forming the ' +
-      'outer boundary). A loop nested inside another makes the outer ' +
-      'region a ring: it lists the inner loop under `holeEntityIds`, and ' +
-      'the inner loop is also its own region. Two concentric circles give ' +
-      'the ring `{ wireEntityIds: [outer], holeEntityIds: [inner] }` plus ' +
-      'the inner disc `{ wireEntityIds: [inner] }`. Extruding the ring makes ' +
-      'a tube; extruding ring + disc together makes the solid outer shape. ' +
-      'USE THIS when a sketch has MULTIPLE shapes and you need to pick ' +
-      'specific ones for extrude/revolve (e.g. extrude just the outer ' +
-      'rectangle, ignore the inner hole). For sketches with one obvious ' +
-      'region, you can usually omit `profiles` in `feature_extrude` and ' +
-      "let auto-detect handle it. Empty result means there's no closed " +
-      "loop yet — your geometry doesn't form a profile.",
-    inputSchema: {
-      type: 'object',
-      properties: {
-        sketchId: { type: 'string', description: 'The sketch feature id.' },
-      },
-      required: ['sketchId'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'sketch_pick_geometry',
-    description:
-      'Hit-test the sketch at a (x, y) sketch-space coordinate and return ' +
-      'the topmost geometry under it (or `null` if nothing within the ' +
-      'standard tolerance band). Returns `{ geometryId, type }` where ' +
-      'type is `line` | `circle` | `arc` | `ellipse`. ' +
-      'USE THIS before issuing `sketch_trim` / `sketch_extend` / ' +
-      '`sketch_offset` when you have a point on a curve but not its ' +
-      'geometry id — e.g. the user said "trim the segment near (12, 8)". ' +
-      'The same picker the in-app modify tools use; the same tolerance ' +
-      'window (~2 mm).',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        sketchId: { type: 'string', description: 'The sketch feature id.' },
-        x: { type: 'number', description: 'Sketch-space X coordinate (mm).' },
-        y: { type: 'number', description: 'Sketch-space Y coordinate (mm).' },
-      },
-      required: ['sketchId', 'x', 'y'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'sketch_trim',
-    description:
-      'Trim the picked geometry against its nearest intersections with ' +
-      'other sketch geometry. ' +
-      '`cursor` selects which side of the curve to remove (the piece ' +
-      'under the cursor is deleted). Behavior by type: ' +
-      '- line with 0–1 intersections → whole line removed; ≥2 → segment ' +
-      'between previous and next intersection that contains the cursor ' +
-      'is removed. ' +
-      '- arc with 0–1 → whole arc removed; ≥2 → CCW segment between ' +
-      'cursor-bracketing intersections removed. ' +
-      '- circle with 0–1 → whole circle removed; ≥2 → arc going CCW ' +
-      'from prevCW to nextCCW (the side NOT under the cursor) replaces ' +
-      'the circle. ' +
-      '- ellipse / spline / point → whole-delete. ' +
-      "Returns `{ ok: true }`. Use `sketch_pick_geometry` to find the " +
-      "`geometryId` if you only have a coordinate.",
-    inputSchema: {
-      type: 'object',
-      properties: {
-        sketchId: { type: 'string', description: 'The sketch feature id.' },
-        geometryId: { type: 'string', description: 'The sketch geometry id to trim.' },
-        cursor: {
-          type: 'array',
-          items: { type: 'number' },
-          minItems: 2,
-          maxItems: 2,
-          description: '[x, y] in sketch space — selects which piece to remove.',
-        },
-      },
-      required: ['sketchId', 'geometryId', 'cursor'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'sketch_extend',
-    description:
-      'Extend the picked LINE to the nearest other geometry along its ' +
-      'infinite extension. The closer endpoint is the one that moves. ' +
-      'Only operates on lines today (arc / spline / ellipse extend is a ' +
-      'follow-up). Returns `{ ok: true }`. No-op if no extension target ' +
-      'exists.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        sketchId: { type: 'string', description: 'The sketch feature id.' },
-        geometryId: { type: 'string', description: 'The line geometry id to extend.' },
-      },
-      required: ['sketchId', 'geometryId'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'sketch_fillet',
-    description:
-      'Round the corner between two lines that share an endpoint with a ' +
-      'tangent fillet arc. The corner is auto-detected (closest endpoint ' +
-      'pair). `radius` is optional — when omitted, defaults to ' +
-      'min(10, shorter-leg / 5). The two lines\' shared corner endpoints ' +
-      'are moved inward to the new tangent points and a fresh arc lands ' +
-      'on the bisector. Returns `{ filletId }` (the new arc geometry id) ' +
-      'or `null` if the operation was a no-op (lines parallel, no shared ' +
-      'corner, radius too large for the legs).',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        sketchId: { type: 'string', description: 'The sketch feature id.' },
-        geometryAId: { type: 'string', description: 'First line geometry id.' },
-        geometryBId: { type: 'string', description: 'Second line geometry id.' },
-        radius: {
-          type: 'number',
-          description: 'Optional fillet radius in mm. Auto-defaults from leg length.',
-        },
-      },
-      required: ['sketchId', 'geometryAId', 'geometryBId'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'sketch_offset',
-    description:
-      'Offset a curve by a fixed `distance`. A circle offsets ' +
-      'concentrically. A line, arc, Bézier or spline offsets together with ' +
-      'the chain of curves connected end-to-end with it (stopping at ' +
-      'branches), so picking any edge of a closed outline (rectangle, ' +
-      'imported SVG logo) offsets the whole outline: use it for borders, ' +
-      'outlined strokes and walls (the original plus a 1 mm offset is a ' +
-      '1 mm wall region). `cursor` picks the side: for a closed chain, ' +
-      'inside = inward and outside = outward; for an open chain, the side ' +
-      'of its nearest point. The result is lines, arcs and Béziers sharing ' +
-      'joint points; convex line corners stay sharp, other convex corners ' +
-      'are rounded, concave corners are trimmed. Set `chain: false` to ' +
-      'offset only the picked curve, `construction: true` to make ' +
-      'construction curves. Ellipse / point are not offsettable. Returns ' +
-      '`{ offsetIds }` (every new geometry id; empty on no-op, e.g. an ' +
-      'inward offset larger than the shape).',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        sketchId: { type: 'string', description: 'The sketch feature id.' },
-        geometryId: { type: 'string', description: 'Any curve of the chain to offset (or a circle).' },
-        distance: { type: 'number', description: 'Offset distance in mm (positive).' },
-        cursor: {
-          type: 'array',
-          items: { type: 'number' },
-          minItems: 2,
-          maxItems: 2,
-          description: '[x, y] in sketch space — picks which side to offset toward.',
-        },
-        construction: {
-          type: 'boolean',
-          description: 'Optional. When true, the offset copy is a construction curve.',
-        },
-        chain: {
-          type: 'boolean',
-          description: 'Optional, default true. When false, offset only the picked curve, not its connected chain.',
-        },
-      },
-      required: ['sketchId', 'geometryId', 'distance', 'cursor'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'sketch_mirror',
-    description:
-      'Mirror the listed geometries across a line defined by two points ' +
-      'in sketch coords (`axisA`, `axisB`). Lines / circles / arcs are ' +
-      'mirrored to fresh geometries with fresh points; other types are ' +
-      'skipped. Originals are NOT modified. Symmetric constraints ' +
-      'between paired points are not yet emitted (follow-up). Returns ' +
-      '`{ ok: true }`.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        sketchId: { type: 'string', description: 'The sketch feature id.' },
-        geometryIds: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Geometries to mirror. Unsupported types are silently skipped.',
-        },
-        axisA: {
-          type: 'array',
-          items: { type: 'number' },
-          minItems: 2,
-          maxItems: 2,
-          description: 'First point [x, y] on the mirror axis.',
-        },
-        axisB: {
-          type: 'array',
-          items: { type: 'number' },
-          minItems: 2,
-          maxItems: 2,
-          description: 'Second point [x, y] on the mirror axis.',
-        },
-      },
-      required: ['sketchId', 'geometryIds', 'axisA', 'axisB'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'sketch_move_point',
-    description:
-      'Move a single sketch point to new coordinates. Equivalent to a ' +
-      'drag-end in the editor: one CadCommand, one undo entry. The ' +
-      'solver re-runs with the moved point anchored — coincident or ' +
-      'connected geometry follows. ' +
-      'Use `sketch_move_points` instead when moving multiple points ' +
-      'atomically (dragging a whole rectangle, for instance) — N points ' +
-      'in one call collapse to one undo entry and the solver only runs ' +
-      'once. Returns `{ ok: true }`.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        sketchId: { type: 'string', description: 'The sketch feature id.' },
-        pointId: { type: 'string', description: 'The sketch point id to move.' },
-        to: {
-          type: 'array',
-          items: { type: 'number' },
-          minItems: 2,
-          maxItems: 2,
-          description: 'Destination [x, y] in sketch space.',
-        },
-      },
-      required: ['sketchId', 'pointId', 'to'],
+      required: ['sketch', 'constraint', 'value'],
       additionalProperties: false,
     },
   },
   {
     name: 'sketch_move_points',
     description:
-      'Atomically move several sketch points to new coordinates. The ' +
-      'moved set is anchored when the solver re-runs, so neighbours that ' +
-      'share coincident / parallel / etc. constraints follow the drag ' +
-      'without overriding the explicit positions. One CadCommand = one ' +
-      'undo entry, regardless of how many points moved. Empty `moves` is ' +
-      'a no-op (no undo entry recorded). Returns `{ ok: true }`.',
+      'Move sketch points to new positions and solve, as a drag ends: constrained geometry follows, and the solve may move a point ' +
+      'away from where it was asked to keep the constraints. Returns `{dof}`.',
     inputSchema: {
       type: 'object',
       properties: {
-        sketchId: { type: 'string', description: 'The sketch feature id.' },
+        sketch: sketchId,
         moves: {
           type: 'array',
+          minItems: 1,
           items: {
             type: 'object',
             properties: {
-              pointId: { type: 'string', description: 'The sketch point id.' },
-              to: {
-                type: 'array',
-                items: { type: 'number' },
-                minItems: 2,
-                maxItems: 2,
-                description: 'Destination [x, y] in sketch space.',
-              },
+              point: { type: 'string', description: 'Point id (pt_…).' },
+              to: vec2('New position [x, y] (mm).'),
             },
-            required: ['pointId', 'to'],
+            required: ['point', 'to'],
             additionalProperties: false,
           },
-          description: 'List of point-id + destination pairs to apply atomically.',
         },
       },
-      required: ['sketchId', 'moves'],
+      required: ['sketch', 'moves'],
       additionalProperties: false,
     },
   },
   {
-    name: 'wait_for_rebuild',
-    description:
-      'Block until the worker has finished its current rebuild. Call ' +
-      'this AFTER any geometry-creating tool (extrude, fillet, hole, ' +
-      'pattern, mirror, etc.) before reading `get_diagnostics` / ' +
-      '`list_bodies` / `list_faces` / `list_edges`. Reads come from the ' +
-      'viewport store, updated only after the worker settles. ' +
-      'Default timeout 10 s. Returns `{ waitedMs }`. ' +
-      'In practice `waitedMs` is often 0–1 ms because by the time the ' +
-      "MCP round-trip returns to you the worker has already finished — " +
-      'but call this anyway as cheap insurance. A waitedMs near the ' +
-      "timeout means the worker is hung; treat the build as failed and " +
-      'inspect `get_diagnostics`. ' +
-      'You do NOT need to call this after read-only tools or after ' +
-      'sketch_create / sketch_draw_* (those mutate document state only, ' +
-      "not the worker's body graph).",
+    name: 'sketch_set_construction',
+    description: 'Make sketch curves construction curves (not part of any profile), or normal ones again.',
     inputSchema: {
       type: 'object',
       properties: {
-        timeoutMs: {
-          type: 'number',
-          description: 'Optional. Max ms to wait before failing. Default 10000.',
+        sketch: sketchId,
+        curves: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'Curve ids (crv_…).' },
+        construction: { type: 'boolean' },
+      },
+      required: ['sketch', 'curves', 'construction'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'sketch_delete',
+    description:
+      "Delete sketch rows: curves, points and constraints by id. A curve's constraints go with it, and its points when nothing else uses them; " +
+      'a point goes with the curves that use it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sketch: sketchId,
+        ids: { type: 'array', items: { type: 'string' }, minItems: 1 },
+      },
+      required: ['sketch', 'ids'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'sketch_pick_geometry',
+    description:
+      'What lies at a point of a sketch, as the in-app picker finds it: a point within `tolerance` of `at` first, otherwise the nearest ' +
+      'curve within it (construction curves included). Use it to find a curve id for `sketch_trim`, `sketch_extend` or `sketch_offset` ' +
+      'from a position. Returns `{id, kind, distance}` (`kind` is `point` or the curve kind, `distance` in mm), or `{id: null}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sketch: sketchId,
+        at: vec2('The point [x, y] in sketch coordinates (mm).'),
+        tolerance: { type: 'number', description: 'How far from `at` a hit may lie (mm, more than 0; default 2).' },
+      },
+      required: ['sketch', 'at'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'sketch_trim',
+    description:
+      "Trim a curve where other curves cross it, removing the piece at `at`; the pieces left keep the curve's constraints that still fit. " +
+      'A curve nothing crosses is deleted; a circle needs two crossings. Returns `{dof}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sketch: sketchId,
+        curve: { type: 'string', description: 'The curve id (crv_…).' },
+        at: vec2('A point on the piece to remove [x, y].'),
+      },
+      required: ['sketch', 'curve', 'at'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'sketch_extend',
+    description:
+      'Extend a line or arc: its free end nearest `at` moves on to the first curve it meets. Returns `{dof}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sketch: sketchId,
+        curve: { type: 'string', description: 'The line or arc id.' },
+        at: vec2('A point near the end to move [x, y].'),
+      },
+      required: ['sketch', 'curve', 'at'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'sketch_fillet',
+    description:
+      'Round the corner two lines share with a tangent arc: give the corner point, or the two lines. The radius is a dimension, named ' +
+      'for use in expressions. Returns `{dof, name}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sketch: sketchId,
+        corner: { type: 'string', description: 'The corner point id.' },
+        lines: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 2,
+          maxItems: 2,
+          description: 'The two line ids, instead of the corner.',
+        },
+        radius: { type: 'number', description: 'Radius (mm), more than 0.' },
+      },
+      required: ['sketch', 'radius'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'sketch_offset',
+    description:
+      'Offset a curve and the chain of lines and arcs joined to it end to end (a circle alone), `distance` to the side `side` lies on. ' +
+      'The copies are held by offset constraints sharing one named distance. Returns `{dof, name}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sketch: sketchId,
+        curve: { type: 'string', description: 'A curve of the chain.' },
+        side: vec2('A point on the side to offset to [x, y].'),
+        distance: { type: 'number', description: 'Distance (mm), more than 0.' },
+      },
+      required: ['sketch', 'curve', 'side', 'distance'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'sketch_mirror',
+    description:
+      "Mirror curves across a line of the sketch, or the sketch's x or y axis; each copied point is held symmetric to its original. " +
+      'Returns `{dof}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sketch: sketchId,
+        curves: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'The curve ids to mirror.' },
+        axis: { type: 'string', description: "A line id, or 'xAxis' or 'yAxis'." },
+      },
+      required: ['sketch', 'curves', 'axis'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'sketch_project',
+    description:
+      "Bring model geometry into a sketch as external curves, which follow it when it changes: 'project' an edge onto the sketch plane, " +
+      "or 'intersect' a face or body with the plane. External curves bound regions and take constraints; the solve never moves them. " +
+      'Returns `{curves, dof}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sketch: sketchId,
+        entity: handle('An edge handle to project, or a face or body handle to intersect.'),
+        mode: { type: 'string', enum: ['project', 'intersect'] },
+      },
+      required: ['sketch', 'entity'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'get_sketch',
+    description:
+      'A sketch as it stands: its plane (frame in part coordinates), points with positions, curves with their points and whether ' +
+      'they are construction curves, constraints and dimensions with their values, the degrees of freedom left (0 is fully defined), ' +
+      'and the closed regions with a handle each (area, a point inside, the curves of the outer loop and of each hole). ' +
+      'A region inside another is a hole of it and also a region of its own. Waits for the newest rebuild.',
+    inputSchema: {
+      type: 'object',
+      properties: { sketch: sketchId },
+      required: ['sketch'],
+      additionalProperties: false,
+    },
+  },
+  // ---- Features ----
+  {
+    name: 'feature_extrude',
+    description:
+      "Extrude sketch regions along their sketch's normal. `profiles` are region handles from `get_sketch`; without them every region " +
+      'of `sketch` is used (a region and the region filling its hole together extrude solid; leave the inner one out to keep the hole). ' +
+      "`extent`: 'distance' (default; `distance`), 'symmetric' (`distance` is the total, half each side), 'twoSides' (`distance` and `second`), " +
+      "'throughAll', 'toFace' (`face`, a face or plane handle), 'toBody' (`body`), 'upToNext', 'upToLast'. " +
+      'The extrude starts on the sketch plane, or `startOffset` along the direction from it; with `startFace` it starts on that face or plane, ' +
+      'the profile projected onto it along the direction (a slanted or curved face gives the caps its shape), moved by `startOffset`. ' +
+      'Returns `{feature, status}`; a paused feature says why.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sketch: sketchId,
+        profiles: handles('Region handles, from one sketch.'),
+        extent: {
+          type: 'string',
+          enum: ['distance', 'symmetric', 'twoSides', 'throughAll', 'toFace', 'toBody', 'upToNext', 'upToLast'],
+        },
+        distance: expr('Length (mm) or expression; more than 0.'),
+        second: expr('The second side (twoSides), against the normal.'),
+        face: handle('For toFace: a face, construction plane or standard plane (xy, xz, yz).'),
+        body: handle('For toBody: a body handle.'),
+        startFace: handle(
+          'Start on this face, construction plane or standard plane (xy, xz, yz) instead of the sketch plane.',
+        ),
+        startOffset: expr('Move the start along the direction (mm); negative moves it back. Default 0.'),
+        reversed: { type: 'boolean', description: 'Run against the sketch normal. Default false.' },
+        taper: expr('Taper angle (deg); positive widens. Default 0.'),
+        operation: operation(['new', 'join', 'cut', 'intersect']),
+        targets,
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'feature_revolve',
+    description:
+      "Revolve sketch regions about an axis in the sketch's plane that does not cross them. `extent`: 'angle' (default; `angle`), " +
+      "'symmetric' (`angle` total), 'twoSides' (`angle` and `second`), 'full' (a whole turn). " +
+      'Returns `{feature, status}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sketch: sketchId,
+        profiles: handles('Region handles; default every region of `sketch`.'),
+        axis,
+        extent: { type: 'string', enum: ['angle', 'symmetric', 'twoSides', 'full'] },
+        angle: expr('Angle (deg).'),
+        second: expr('Second side angle (deg), for twoSides.'),
+        reversed: { type: 'boolean', description: 'Turn against the right hand about the axis.' },
+        operation: operation(['new', 'join', 'cut', 'intersect']),
+        targets,
+      },
+      required: ['axis'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'feature_loft',
+    description:
+      'Loft a solid through closed sections, in the order given: at least two region handles, from any sketches. ' +
+      '`ruled` joins them with straight segments; `closed` runs on from the last section back to the first (at least three). ' +
+      'Returns `{feature, status}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sections: handles('Region handles, in order.', 2),
+        ruled: { type: 'boolean', description: 'Straight segments between sections. Default false.' },
+        closed: { type: 'boolean', description: 'Close the loop from the last section to the first. Default false.' },
+        operation: operation(['new', 'join', 'cut', 'intersect']),
+        targets,
+      },
+      required: ['sections'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'feature_sweep',
+    description:
+      'Run sketch regions along a path. `path` is a chain of curve or edge handles, joined end to end, or one region handle standing for its outer loop; ' +
+      "corners are mitred. `orientation`: 'followPath' (default; the section turns with the path), 'fixed' (it keeps one orientation) or 'guide' (`guide` turns it). " +
+      'The section stands across the path where it starts. Returns `{feature, status}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sketch: sketchId,
+        profiles: handles('Region handles; default every region of `sketch`.'),
+        path: handles('Curve or edge handles, or one region handle.'),
+        orientation: { type: 'string', enum: ['followPath', 'fixed', 'guide'] },
+        guide: handles('For orientation guide: curve or edge handles.'),
+        operation: operation(['new', 'join', 'cut', 'intersect']),
+        targets,
+      },
+      required: ['path'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'feature_fillet',
+    description:
+      'Round edges with a constant radius. `edges` are edge handles, or face handles standing for their sharp edges. ' +
+      'A radius too big for the faces beside an edge pauses the feature. Returns `{feature, status}`.',
+    inputSchema: {
+      type: 'object',
+      properties: { edges: handles('Edge or face handles.'), radius: expr('Radius (mm).') },
+      required: ['edges', 'radius'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'feature_chamfer',
+    description:
+      'Bevel edges: `distance` on both faces, or `distance` and `second` (two distances), or `distance` and `angle` (deg, between 0 and 90). ' +
+      'With `angle`, `flipped` puts the distance on the other face of each edge. Returns `{feature, status}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        edges: handles('Edge or face handles.'),
+        distance: expr('Setback (mm).'),
+        second: expr('Second setback (mm), for two distances.'),
+        angle: expr('Angle (deg), with `distance`.'),
+        flipped: { type: 'boolean', description: 'With `angle`: the distance on the other face (default false).' },
+      },
+      required: ['edges', 'distance'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'feature_hole',
+    description:
+      'Drill holes into a planar face at positions in the face frame: origin = the part origin projected onto the face, ' +
+      "x = the part's X axis projected onto it (Y when the face faces ±X), y = normal × x; the hole runs into the material. " +
+      "The frame is returned as `frame`. `kind`: 'simple', 'counterbore' (counterboreDiameter, counterboreDepth), 'countersink' " +
+      '(countersinkDiameter, countersinkAngle). `depth` or `throughAll`; `tipAngle` gives a drill point (default flat). `from` measures a ' +
+      'position from up to two straight edges of the face: it then lies `distance` from each edge, into the face, and follows the edges ' +
+      'when the face changes; with one edge the coordinate along it stays as given. `thread` ' +
+      "('M5', or a fine pitch such as 'M8x1') taps the hole at the ISO tap drill. Returns `{feature, status, frame}`.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        face: handle('A planar face handle.'),
+        positions: { type: 'array', items: vec2('[x, y] in the face frame (mm).'), minItems: 1 },
+        from: {
+          type: 'array',
+          description: 'Edges the positions are measured from, at most two per position.',
+          items: {
+            type: 'object',
+            properties: {
+              position: { type: 'integer', minimum: 0, description: 'Index into `positions`.' },
+              edge: handle('A straight edge handle of the face.'),
+              distance: expr('Distance from the edge (mm), into the face.'),
+            },
+            required: ['position', 'edge', 'distance'],
+            additionalProperties: false,
+          },
+        },
+        diameter: expr('Hole diameter (mm).'),
+        depth: expr('Depth (mm), to where the full diameter ends.'),
+        throughAll: { type: 'boolean', description: 'Through everything; `depth` is not used.' },
+        tipAngle: expr('Drill point angle (deg), e.g. 118.'),
+        kind: { type: 'string', enum: ['simple', 'counterbore', 'countersink'] },
+        counterboreDiameter: expr('mm'),
+        counterboreDepth: expr('mm'),
+        countersinkDiameter: expr('mm'),
+        countersinkAngle: expr('Included angle (deg), default 90.'),
+        thread: { type: 'string', description: "ISO metric designation, e.g. 'M5' or 'M8x1'." },
+        threadClass: { type: 'string', description: "Thread class, default '6H'." },
+        modelled: { type: 'boolean', description: 'With `thread`: cut it into the bore. Default false: cosmetic.' },
+        hand: {
+          type: 'string',
+          enum: ['right', 'left'],
+          description: 'With `thread`: right-handed (default) or left-handed.',
         },
       },
+      required: ['face', 'positions', 'diameter'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'feature_shell',
+    description:
+      'Hollow bodies to a wall `thickness`, opening the faces given (face handles) on the bodies they lie on; `bodies` (body handles) ' +
+      "are hollowed with no opening, around a sealed void. Give `faces`, `bodies` or both, never a face and its own body. `direction` 'inside' " +
+      "(default) keeps the outside, 'outside' grows out, 'both' walls `thickness` in and `outsideThickness` out. Returns `{feature, status}`.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        faces: handles('Faces to remove.'),
+        bodies: handles('Bodies to hollow closed, with no face removed.'),
+        thickness: expr('Wall thickness (mm); with direction both, the inside wall.'),
+        direction: { type: 'string', enum: ['inside', 'outside', 'both'] },
+        outsideThickness: expr("Outside wall (mm), with direction 'both'."),
+      },
+      required: ['thickness'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'feature_pattern',
+    description:
+      "Copy bodies (body handles) or features (feature ids) in a pattern. `layout` 'linear': `direction` (axis or handle), `count`, " +
+      "`spacing` (step, may be negative), and optionally `direction2`, `count2`, `spacing2`; 'circular': `axis`, `count`, `angle` " +
+      '(the whole sweep, default 360; at a full turn the step is angle / count). `count` includes the original. `symmetric` ' +
+      '(`symmetric2` for the second direction) spreads the copies both ways from the original, `count` still taking in them all ' +
+      "and an even count's extra copy going the positive way; a symmetric circular `angle` is the whole spread, under 360. " +
+      'Returns `{feature, status}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        bodies: handles('Body handles to copy.'),
+        features: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 1,
+          description: 'Feature ids to copy, instead of bodies, all of one part; the pattern goes into that part.',
+        },
+        layout: { type: 'string', enum: ['linear', 'circular'] },
+        direction: axis,
+        count: expr('Number of copies, original included.'),
+        spacing: expr('Step between copies (mm).'),
+        direction2: axis,
+        count2: expr('Copies along the second direction.'),
+        spacing2: expr('Step along the second direction (mm).'),
+        symmetric: {
+          type: 'boolean',
+          description: 'Copies on both sides of the original: along `direction`, or about `axis`. Default false.',
+        },
+        symmetric2: { type: 'boolean', description: 'Copies on both sides along `direction2`. Default false.' },
+        axis,
+        angle: expr('Circular sweep (deg).'),
+        reversed: { type: 'boolean', description: 'Run against the direction or axis.' },
+        operation: operation(['new', 'join'], "'new'"),
+      },
+      required: ['layout', 'count'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'feature_mirror',
+    description: 'Mirror bodies (body handles) or features (feature ids) across a plane. Returns `{feature, status}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        bodies: handles('Body handles.'),
+        features: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 1,
+          description: 'Feature ids, instead of bodies, all of one part; the mirror goes into that part.',
+        },
+        plane,
+        operation: operation(['new', 'join'], "'join'"),
+      },
+      required: ['plane'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'feature_move',
+    description:
+      'Move bodies: a turn of `angle` about `rotateAxis` through the part origin, then a shift by `translate`. `copy` keeps the originals. ' +
+      'Returns `{feature, status}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        bodies: handles('Body handles.'),
+        translate: vec3('Shift [x, y, z] (mm or expressions).'),
+        rotateAxis: vec3('Turn axis direction [x, y, z], default [0, 0, 1].'),
+        angle: expr('Turn angle (deg), default 0.'),
+        copy: { type: 'boolean' },
+      },
+      required: ['bodies'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'feature_boolean',
+    description:
+      'Combine bodies: the `target` body joined with, cut by, or intersected with the `tools` bodies. Returns `{feature, status}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: handle('The body that keeps its identity.'),
+        tools: handles('The tool bodies; they are used up unless `keepTools`.'),
+        op: { type: 'string', enum: ['join', 'cut', 'intersect'] },
+        keepTools: {
+          type: 'boolean',
+          description: 'Keep the tool bodies as they are after the operation. Default false.',
+        },
+      },
+      required: ['target', 'tools', 'op'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'feature_primitive',
+    description:
+      "Add a primitive solid centred on `position`, its axis along part Z: 'box' (width along X, depth along Y, height along Z), " +
+      "'cylinder' (radius, height), 'sphere' (radius), 'cone' (bottomRadius, topRadius, height; the bottom at −Z), 'torus' " +
+      '(majorRadius, minorRadius). Returns `{feature, status}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        shape: { type: 'string', enum: ['box', 'cylinder', 'sphere', 'cone', 'torus'] },
+        width: expr('mm'),
+        depth: expr('mm'),
+        height: expr('mm'),
+        radius: expr('mm'),
+        bottomRadius: expr('mm'),
+        topRadius: expr('mm'),
+        majorRadius: expr('mm'),
+        minorRadius: expr('mm'),
+        position: vec3('Centre [x, y, z] (mm), default the origin.'),
+        operation: operation(['new', 'join', 'cut', 'intersect']),
+        part: partField,
+      },
+      required: ['shape'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'feature_thread',
+    description:
+      'Thread a cylindrical face, ISO metric: a cosmetic thread, data on the face with no change to the geometry, or with `modelled` ' +
+      'the groove cut into the body, which is slower to rebuild and leaves many faces. ' +
+      'Without `designation` and `threadClass` the size follows the face: a shaft takes the size of its diameter (class 6g), a bore ' +
+      'the size whose tap drill it is (6H). Classes in capitals are internal. Returns `{feature, status, designation, threadClass}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        face: handle('A cylindrical face handle.'),
+        designation: { type: 'string', description: "e.g. 'M6' (coarse) or 'M8x1' (fine, ISO 261)." },
+        threadClass: { type: 'string', description: "e.g. '6H' (internal) or '6g' (external)." },
+        modelled: { type: 'boolean', description: 'Cut the thread into the body. Default false: cosmetic.' },
+        hand: { type: 'string', enum: ['right', 'left'], description: 'Right-handed (default) or left-handed.' },
+      },
+      required: ['face'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'feature_construction',
+    description:
+      "Add construction geometry: a plane, axis, point or frame, whose frame is attached to supports. Modes: 'plane' (one plane or flat " +
+      "face; plane, axis, frame), 'planeAtPoint' (a plane, then a point; axis, point), 'threePoints' (origin, a point along x, a point in " +
+      "the plane; plane, frame), 'twoPoints' (origin, a point the z axis runs towards; axis), 'point' (one point, the part's axes; point, " +
+      "frame), 'alongLine' (a straight edge, sketch line, construction axis or 'x', 'y', 'z'; z along it from its start; axis, plane), " +
+      "'midplane' (two planes or flat faces; halfway between them, or bisecting where they meet; plane), 'faceAxis' (a cylindrical, " +
+      "conical or toroidal face; its axis; axis), 'center' (a circular edge, sphere or torus face; its centre; point), " +
+      "'fixed' (at `position` in part coordinates; point, frame). A plane is the frame's xy plane, an axis its z " +
+      'axis, a point its origin. `offset` moves it along the frame normal (mm), `angle` turns it about its x axis, `flip` turns it over. ' +
+      'Points are vertex, sketch point or construction point handles. Returns `{feature, status}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['plane', 'axis', 'point', 'frame'] },
+        mode: {
+          type: 'string',
+          enum: [
+            'plane',
+            'planeAtPoint',
+            'threePoints',
+            'twoPoints',
+            'point',
+            'alongLine',
+            'midplane',
+            'faceAxis',
+            'center',
+            'fixed',
+          ],
+        },
+        supports: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 1,
+          description: "Handles, or standard planes 'xy', 'xz', 'yz', in the mode's order.",
+        },
+        offset: expr('Along the frame normal (mm).'),
+        angle: expr('Turn about the frame x axis (deg).'),
+        flip: { type: 'boolean' },
+        position: vec3('For fixed: [x, y, z] (mm).'),
+        part: { type: 'string', description: `Optional: the part, for fixed; default ${WORKING_PART}.` },
+      },
+      required: ['kind'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'feature_remove_body',
+    description: 'Remove bodies from the part from here on (they stay in earlier states). Returns `{feature, status}`.',
+    inputSchema: {
+      type: 'object',
+      properties: { bodies: handles('Body handles.') },
+      required: ['bodies'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'feature_freeze',
+    description:
+      "Freeze a feature of a part's timeline: its result is stored as it last built, so later edits before it no longer change it " +
+      '(the link to its inputs is broken). `frozen: false` makes it build from its inputs again. Sketches, measures and ' +
+      'assembly features are never frozen; a feature that paused has nothing to store. A frozen feature whose input body an earlier ' +
+      "edit changed is listed as 'blocked' with why, and still shows what it stored. Returns `{feature, frozen, status}`.",
+    inputSchema: {
+      type: 'object',
+      properties: { feature: featureId(), frozen: { type: 'boolean', description: 'Default true.' } },
+      required: ['feature'],
+      additionalProperties: false,
+    },
+  },
+  // ---- Assemblies ----
+  {
+    name: 'get_assembly',
+    description:
+      'An assembly: its instances (id, label such as "Bracket:1", what each places, grounded, where the pose solve puts it), joints (id, ' +
+      'label, kind, solved values in mm and deg), motion links, rigid groups, contact sets, positions (and the active one), exploded views, ' +
+      'its features that copy instances (patterns, mirrors, replicates, with how many copies each placed), ' +
+      'and the captured contexts of its parts that are out of date, with why. Waits for the newest rebuild.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        assembly: {
+          type: 'string',
+          description: 'Optional: the assembly (asm_…); default the one shown, else the root, else the only one.',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'assembly_create',
+    description:
+      'Make an assembly holding instances of `parts` (the first grounded at the origin). In a document whose root is a part it becomes ' +
+      'the root unless `root` is false. Returns the assembly as `get_assembly` does.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        parts: { type: 'array', items: { type: 'string' }, description: 'Part ids (part_…) to place, in order.' },
+        root: { type: 'boolean', description: 'Make it the document root. Default: when the root is a part.' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'assembly_insert',
+    description:
+      'Place an instance of a part, another assembly or a library component of this document in `assembly`, at `position` (mm) turned ' +
+      '`angle` deg about Z. Give one of `part`, `subassembly`, `component`. Joints then move it; a grounded instance stays. ' +
+      'Returns `{instance, label, assembly}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        assembly: {
+          type: 'string',
+          description: 'Optional: the assembly the instance goes into; default as get_assembly.',
+        },
+        part: { type: 'string', description: 'A part id (part_…) to place.' },
+        subassembly: { type: 'string', description: 'An assembly id (asm_…) to place, as a subassembly.' },
+        component: { type: 'string', description: 'A library entry id (lib_…) of an embedded component document.' },
+        position: {
+          type: 'array',
+          items: { type: 'number' },
+          minItems: 3,
+          maxItems: 3,
+          description: '[x, y, z] in mm. Default the origin.',
+        },
+        angle: { type: 'number', description: 'Turn about Z, deg. Default 0.' },
+        grounded: { type: 'boolean', description: 'Fix it where it is placed. Default false.' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'assembly_joint',
+    description:
+      'Join two instances: each end is a flat face (its centre, z its outward normal) or a round edge (its centre, ' +
+      "on the flat face it bounds) of an instance, `{instance, at}` with `at` a face or edge handle listed from that instance's part, or " +
+      "`{standard: 'xy' | 'xz' | 'yz'}` for a plane of the assembly. With every value 0 the ends coincide; `faceToFace` (default true) " +
+      'turns the second end to face the first, so two faces mate. Kinds and their degrees of freedom: rigid (none), revolute (rz), ' +
+      'slider (tz), cylindrical (tz, rz), pinSlot (tx, rz), planar (tx, ty, rz), ball (rz, ry, rx). The pose solve moves the instances; ' +
+      'returns `{joint, label, assembly}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        assembly: { type: 'string' },
+        kind: { type: 'string', enum: ['rigid', 'revolute', 'slider', 'cylindrical', 'pinSlot', 'planar', 'ball'] },
+        a: { type: 'object', description: '{instance: inst_…, at: handle} or {standard: plane}.' },
+        b: {
+          type: 'object',
+          description: '{instance: inst_…, at: handle} or {standard: plane}: the end that moves onto `a`.',
+        },
+        faceToFace: { type: 'boolean' },
+        offset: { type: 'number', description: "Along the first end's normal, mm. Default 0." },
+        angle: { type: 'number', description: "About the first end's normal, deg. Default 0." },
+        limits: {
+          type: 'object',
+          description: 'Optional: degree of freedom → [min, max] (mm or deg), e.g. {"rz": [0, 90]}.',
+        },
+      },
+      required: ['kind', 'a', 'b'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'assembly_drive',
+    description:
+      "Set (drive) a joint's values: degree of freedom → number (mm or deg). The instances move as the solve places them.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        assembly: { type: 'string' },
+        joint: { type: 'string', description: 'The joint id (jnt_…).' },
+        values: { type: 'object', description: 'e.g. {"rz": 45}.' },
+      },
+      required: ['joint', 'values'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'assembly_move_instance',
+    description:
+      'Move an instance to `position` (mm) turned `angle` deg about Z. A joint or grounding may hold it where the solve puts it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        assembly: { type: 'string' },
+        instance: { type: 'string', description: 'The instance id (inst_…).' },
+        position: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 },
+        angle: { type: 'number' },
+      },
+      required: ['instance', 'position'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'assembly_set_instance',
+    description: 'Ground or unground an instance, or suppress or unsuppress it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        assembly: { type: 'string' },
+        instance: { type: 'string' },
+        grounded: { type: 'boolean' },
+        suppressed: { type: 'boolean' },
+      },
+      required: ['instance'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'assembly_set_joint',
+    description:
+      'Rename a joint, lock or unlock it (lock motion: a locked joint holds where it stands; drive, drag and the active position leave it ' +
+      'alone), or suppress or unsuppress it. An empty `name` gives the joint its numbered label again.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        assembly: { type: 'string' },
+        joint: { type: 'string', description: 'The joint id (jnt_…).' },
+        name: { type: 'string' },
+        locked: { type: 'boolean' },
+        suppressed: { type: 'boolean' },
+      },
+      required: ['joint'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'assembly_delete',
+    description:
+      'Delete a row of an assembly by id: an instance (with the joints, joint origins and group memberships that stand on it), a joint (with ' +
+      'its motion links and the joint origins no other joint uses), a motion link, a group, a position or an exploded view.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        assembly: { type: 'string' },
+        row: { type: 'string', description: 'inst_…, jnt_…, rel_…, grp_…, set_…, pos_… or exp_….' },
+      },
+      required: ['row'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'assembly_relation',
+    description:
+      'A motion link between joints; the first drives. gear: two turning joints, the second turns `ratio` times the first (negative turns ' +
+      'the other way). rackPinion: a turning joint drives a sliding one, `ratio` mm per deg. screw: one cylindrical joint whose slide follows its turn, `ratio` mm per deg.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        assembly: { type: 'string' },
+        kind: { type: 'string', enum: ['gear', 'rackPinion', 'screw'] },
+        joints: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 2 },
+        ratio: { type: 'number' },
+      },
+      required: ['kind', 'joints', 'ratio'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'assembly_group',
+    description:
+      'A rigid group (the instances move as one) or a contact set (instances that touch while dragged) of two or more instances.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        assembly: { type: 'string' },
+        kind: { type: 'string', enum: ['rigid', 'contact'] },
+        instances: { type: 'array', items: { type: 'string' }, minItems: 2 },
+      },
+      required: ['kind', 'instances'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'assembly_position',
+    description:
+      "Positions: 'capture' saves every joint's current values under `name`; 'activate' poses the assembly in `position`; " +
+      "'current' goes back to the joints' own values; 'update' overwrites `position` with the current values.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        assembly: { type: 'string' },
+        action: { type: 'string', enum: ['capture', 'activate', 'current', 'update'] },
+        position: { type: 'string', description: 'For activate and update: pos_….' },
+        name: { type: 'string', description: 'For capture.' },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'assembly_exploded_view',
+    description:
+      'An exploded view: steps applied in order, each moving its instances by `move` [x, y, z] mm. It does not change the pose; `show` ' +
+      '(default true) draws the assembly in it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        assembly: { type: 'string' },
+        name: { type: 'string' },
+        steps: {
+          type: 'array',
+          items: { type: 'object' },
+          minItems: 1,
+          description: '[{instances: [inst_…], move: [x, y, z]}].',
+        },
+        show: { type: 'boolean' },
+      },
+      required: ['steps'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'feature_derive',
+    description:
+      "Bring another part's, an assembly's or a library component's bodies into a part as a derive feature: offset by [x, y, z] mm, " +
+      'optionally mirrored in a standard plane (an opposite-hand part), as new bodies or joined. Give one of `fromPart`, `fromAssembly`, `fromComponent`. Returns `{feature, status}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        part: { type: 'string', description: `Optional: the part that takes them; default ${WORKING_PART}.` },
+        fromPart: { type: 'string' },
+        fromAssembly: { type: 'string' },
+        fromComponent: { type: 'string', description: 'A library entry id (lib_…).' },
+        offset: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 },
+        mirror: { type: 'string', enum: ['none', 'xy', 'xz', 'yz'] },
+        operation: { type: 'string', enum: ['new', 'join'] },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'assembly_update_contexts',
+    description:
+      "Re-capture captured contexts that are out of date (a part that uses another part's geometry through an assembly, as a hole " +
+      'through several parts does): all of them, or the one named. Returns what was updated and what is still out of date.',
+    inputSchema: {
+      type: 'object',
+      properties: { context: { type: 'string', description: 'Optional: the context id (ctx_…).' } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'assembly_hole_through',
+    description:
+      "A hole through several parts: it starts on a flat face of `instance` (a face handle of that instance's part), at `points` [x, y] " +
+      "in the face's placement frame (its origin the part origin projected on it, x the part's x), and goes through the parts of the " +
+      'instances in `through`. Each part gets its own hole, one document parameter sizing them all, and the other parts follow the first ' +
+      'through their contexts. Each part must be placed once and be a part of this document.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        assembly: { type: 'string' },
+        instance: { type: 'string', description: 'The instance the hole starts in.' },
+        face: { type: 'string', description: 'A flat face handle of its part.' },
+        points: { type: 'array', items: { type: 'array', items: { type: 'number' } }, minItems: 1 },
+        diameter: { type: ['number', 'string'], description: 'mm, or an expression.' },
+        through: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'The other instances.' },
+      },
+      required: ['instance', 'face', 'points', 'diameter', 'through'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'assembly_pattern',
+    description:
+      "Copy instances in a pattern: 'linear' along one or two directions (`directions`: " +
+      "[{axis, count, spacing}], count including the original, spacing in mm between neighbours), or 'circular' about `axis` " +
+      "(`count` copies spread over `angle` deg, 360 by default). An axis is 'x', 'y' or 'z' of the assembly, or {instance, at} with " +
+      "`at` a straight edge handle of that instance's part. The copies follow their originals when those move. Give `feature` (an " +
+      "existing pattern's id) to edit it: fields left out keep their values. Returns `{feature, copies, status, assembly}`.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        assembly: { type: 'string' },
+        feature: { type: 'string', description: 'Optional: the pattern to edit (feat_…).' },
+        instances: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 1,
+          description: 'The instances to copy (inst_…).',
+        },
+        layout: { type: 'string', enum: ['linear', 'circular'] },
+        directions: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 2,
+          items: { type: 'object' },
+          description:
+            "For linear: [{axis, count, spacing, reversed?, symmetric?}]; count and spacing take numbers or expressions; symmetric spreads them both ways from the original, count still taking in them all and an even count's extra copy going the positive way.",
+        },
+        axis: { type: ['string', 'object'], description: "For circular: 'x', 'y', 'z' or {instance, at}." },
+        count: { type: ['number', 'string'], description: 'For circular: how many, the original included.' },
+        angle: { type: ['number', 'string'], description: 'For circular: the whole sweep in deg; default 360.' },
+        reversed: { type: 'boolean', description: 'For circular: turn the other way.' },
+        symmetric: {
+          type: 'boolean',
+          description:
+            'For circular: copies both ways from the original, `count` in all and `angle` (under 360) the whole spread.',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'assembly_mirror',
+    description:
+      "Mirror instances in a plane: `plane` is 'xy', 'xz' or 'yz' of the assembly, or {instance, at} " +
+      "with `at` a flat face handle of that instance's part. 'same' hand (default) places each original's own part turned to face the " +
+      "mirror; 'opposite' makes a new part per original, a derive of its part reflected, placed where the reflection lands. Give " +
+      '`feature` to edit an existing mirror. Returns `{feature, copies, status, assembly}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        assembly: { type: 'string' },
+        feature: { type: 'string', description: 'Optional: the mirror to edit (feat_…).' },
+        instances: { type: 'array', items: { type: 'string' }, minItems: 1 },
+        plane: { type: ['string', 'object'], description: "'xy', 'xz', 'yz' or {instance, at}." },
+        hand: { type: 'string', enum: ['same', 'opposite'] },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'assembly_replicate',
+    description:
+      'Place copies of instances at other places like the one they sit at, as a bolt in every hole like the first: `seed` is where they ' +
+      'sit and each of `targets` a place a copy goes, each {instance, at} with `at` a flat face (its centre) or round edge (its centre) ' +
+      "handle of that instance's part, or {standard: plane}. Each copy stands to its target as the originals stand to the seed. Give " +
+      '`feature` to edit an existing replicate. Returns `{feature, copies, status, assembly}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        assembly: { type: 'string' },
+        feature: { type: 'string', description: 'Optional: the replicate to edit (feat_…).' },
+        instances: { type: 'array', items: { type: 'string' }, minItems: 1 },
+        seed: { type: 'object', description: '{instance, at} or {standard}.' },
+        targets: { type: 'array', items: { type: 'object' }, minItems: 1 },
+      },
+      additionalProperties: false,
+    },
+  },
+  // ---- What the model is built into ----
+  {
+    name: 'list_bodies',
+    description:
+      'The bodies a part shows after the newest rebuild: a handle each, its name, the feature that made it, its bounding box ' +
+      '(min, max in part coordinates, mm) and volume (mm³). Handles name the body by its identity, so they keep working after ' +
+      'later edits for as long as the body exists. Waits for the newest rebuild.',
+    inputSchema: {
+      type: 'object',
+      properties: { part: partField },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'list_faces',
+    description:
+      "A body's faces: a handle each, its surface ('plane', 'cylinder', 'cone', 'sphere', 'torus', …), area (mm²), centroid, and a plane's " +
+      "outward normal or a cylinder's axis and radius. Filters narrow the list: `surface`, and `normal` (planar faces whose outward normal is within " +
+      '1° of it). Waits for the newest rebuild.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        body: handle('A body handle.'),
+        surface: { type: 'string', description: "Only faces of this surface kind, e.g. 'plane'." },
+        normal: vec3('Only planar faces facing this way, e.g. [0, 1, 0] for upward faces.'),
+      },
+      required: ['body'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'list_edges',
+    description:
+      "A body's edges: a handle each, its curve ('line', 'circle', …), length (mm), end points, midpoint, a circle's centre and radius, " +
+      'and the handles of the two faces it lies between. Filters: `face` (edges of that face), `between` (the edge between two faces), ' +
+      '`curve`, `parallel` (straight edges along this direction), `minLength`, `maxLength`. Waits for the newest rebuild.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        body: handle('A body handle.'),
+        face: handle('Only edges of this face.'),
+        between: handles('Only the edges between these two faces.', 2),
+        curve: { type: 'string', description: "Only edges of this curve kind, e.g. 'line' or 'circle'." },
+        parallel: vec3('Only straight edges along this direction.'),
+        minLength: { type: 'number' },
+        maxLength: { type: 'number' },
+      },
+      required: ['body'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'list_vertices',
+    description:
+      "A body's vertices: a handle and a position each, for construction geometry through points. Waits for the newest rebuild.",
+    inputSchema: {
+      type: 'object',
+      properties: { body: handle('A body handle.') },
+      required: ['body'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'list_construction',
+    description:
+      'The construction planes, axes, points and frames a part shows, and the three standard planes: a handle each (standard ones by ' +
+      'name), with the frame (origin, x, y, normal).',
+    inputSchema: {
+      type: 'object',
+      properties: { part: partField },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'measure',
+    description:
+      "Measure between entities (handles): 'distance' (the least distance between two), 'length' (edges or curves, summed), 'area' (faces), " +
+      "'volume' (bodies), 'angle' (between two lines, axes or planar faces), 'radius' (a circle, arc, cylinder or sphere). " +
+      'Returns `{value, quantity}` in mm, mm², mm³ or deg.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['distance', 'length', 'area', 'volume', 'angle', 'radius'] },
+        entities: handles('The handles to measure.'),
+      },
+      required: ['kind', 'entities'],
+      additionalProperties: false,
+    },
+  },
+  // ---- The view ----
+  {
+    name: 'view_fit_all',
+    description: 'Frame the camera on everything shown.',
+    inputSchema: empty,
+  },
+  {
+    name: 'view_set_standard',
+    description: 'Turn the camera to a standard view: front, back, top, bottom, left, right, or home (the iso view).',
+    inputSchema: {
+      type: 'object',
+      properties: { view: { type: 'string', enum: ['front', 'back', 'top', 'bottom', 'left', 'right', 'home'] } },
+      required: ['view'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'view_zoom',
+    description: 'Zoom the camera one step in or out.',
+    inputSchema: {
+      type: 'object',
+      properties: { direction: { type: 'string', enum: ['in', 'out'] } },
+      required: ['direction'],
       additionalProperties: false,
     },
   },
   {
     name: 'view_screenshot',
     description:
-      'Capture a JPEG screenshot of the current viewport and return it ' +
-      'as an image you can SEE in your reasoning. Use this to verify ' +
-      'visual results: that an extrude landed in the right spot, that a ' +
-      'fillet looks reasonable, that the topology matches the user\'s ' +
-      'intent. Downscaled to max 768px on the long edge at JPEG q=0.6 ' +
-      "— payload is ~25-60 KB base64, fits comfortably in any MCP " +
-      'client\'s tool-result budget. Prefer calling `view_fit_all` ' +
-      '(or `view_set_standard`) before capturing so the image actually ' +
-      'shows what you want to inspect.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      additionalProperties: false,
-    },
+      'A JPEG of the viewport as the user sees it, returned as an image you can look at, at most 768 px on its long side. ' +
+      'Call `view_fit_all` or `view_set_standard` first so it shows what you want to check. Waits for the newest rebuild.',
+    inputSchema: empty,
   },
 ] as const);
 
-/** Lookup helper: tool by name, or `undefined` if not registered. */
+/** The tool of that name, or `undefined`. */
 export function findTool(name: string): CadToolDefinition | undefined {
   return CAD_TOOLS.find((t) => t.name === name);
 }
 
-/** Type guard: is this string a known tool name? */
+/** Whether a tool of that name exists. */
 export function isToolName(name: string): boolean {
   return CAD_TOOLS.some((t) => t.name === name);
 }

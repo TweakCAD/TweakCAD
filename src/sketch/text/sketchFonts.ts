@@ -26,7 +26,12 @@ export interface SketchFontDef {
 export const SKETCH_FONTS: readonly SketchFontDef[] = [
   { id: 'lilita-one', label: 'Lilita One', file: 'LilitaOne-Regular.ttf', url: lilitaOneUrl },
   { id: 'bebas-neue', label: 'Bebas Neue', file: 'BebasNeue-Regular.ttf', url: bebasNeueUrl },
-  { id: 'atkinson-bold', label: 'Atkinson Hyperlegible Bold', file: 'AtkinsonHyperlegible-Bold.ttf', url: atkinsonBoldUrl },
+  {
+    id: 'atkinson-bold',
+    label: 'Atkinson Hyperlegible Bold',
+    file: 'AtkinsonHyperlegible-Bold.ttf',
+    url: atkinsonBoldUrl,
+  },
 ];
 
 export const DEFAULT_SKETCH_FONT: SketchFontId = 'lilita-one';

@@ -1,0 +1,31 @@
+{
+ "parts": [
+  {
+   "name": "Plate with hole pattern",
+   "bodies": [
+    {
+     "volume": 29395.06,
+     "min": [
+      0,
+      0,
+      0
+     ],
+     "max": [
+      80,
+      50,
+      8
+     ],
+     "faces": 18,
+     "edges": 44
+    }
+   ],
+   "threads": [
+    "M6 6H internal",
+    "M6 6H internal",
+    "M6 6H internal"
+   ]
+  }
+ ],
+ "assemblies": [],
+ "pauses": []
+}

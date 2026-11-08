@@ -24,11 +24,11 @@ ENV PATH=$PNPM_HOME:$PATH
 ENV CI=true
 # Pin pnpm to the version in package.json's `packageManager` so the image
 # build matches local/CI (Node 24's corepack otherwise resolves a newer pnpm).
-RUN corepack enable && corepack prepare pnpm@11.1.2 --activate
+RUN corepack enable && corepack prepare pnpm@12.3.4 --activate
 WORKDIR /app
 
 # Manifests + lockfile, then install — cached unless these change.
-COPY package.json pnpm-lock.yaml .npmrc pnpm-workspace.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 # Full source, then build. CAD_BASE controls the asset base (vite.config.ts):

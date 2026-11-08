@@ -25,11 +25,7 @@
  * Timing works out because the user has to notice the toolbar and open the
  * modal before the list is needed, which is far longer than the request takes.
  */
-import {
-  BetterAuthIdentityProvider,
-  type SocialCaptcha,
-  type SocialProvider,
-} from '@tweakcad/cloud-providers';
+import { BetterAuthIdentityProvider, type SocialCaptcha, type SocialProvider } from '@tweakcad/cloud-providers';
 
 export type { SocialCaptcha, SocialProvider };
 

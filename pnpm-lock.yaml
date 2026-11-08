@@ -120,15 +120,15 @@ importers:
       '@salusoft89/planegcs':
         specifier: 1.3.0
         version: 1.3.0
-      '@xstate/react':
-        specifier: 6.1.0
-        version: 6.1.0(@types/react@19.3.0)(react@19.3.1)(xstate@5.33.3)
       comlink:
         specifier: 4.4.2
         version: 4.4.2
       fflate:
         specifier: 0.8.3
         version: 0.8.3
+      fzstd:
+        specifier: 0.1.1
+        version: 0.1.1
       immer:
         specifier: 11.2.9
         version: 11.2.9
@@ -136,8 +136,8 @@ importers:
         specifier: 1.61.0
         version: 1.61.0(@types/react@19.3.0)(react@19.3.1)
       occt-wasm:
-        specifier: 5.14.0
-        version: 5.14.0
+        specifier: npm:@tweakcad/occt-wasm@5.16.0-tweakcad.1
+        version: '@tweakcad/occt-wasm@5.16.0-tweakcad.1'
       opentype.js:
         specifier: 2.0.0
         version: 2.0.0
@@ -150,9 +150,6 @@ importers:
       three:
         specifier: 0.186.1
         version: 0.186.1
-      xstate:
-        specifier: 5.33.3
-        version: 5.33.3
       zod:
         specifier: 3.25.76
         version: 3.25.76
@@ -181,6 +178,9 @@ importers:
       eslint-plugin-react-hooks:
         specifier: 7.1.1
         version: 7.1.1(eslint@10.13.0)
+      prettier:
+        specifier: 3.9.10
+        version: 3.9.10
       typescript:
         specifier: 5.9.3
         version: 5.9.3
@@ -786,6 +786,9 @@ packages:
   '@swc/wasm@1.15.40':
     resolution: {integrity: sha512-FVS3SEJXBxjpxVUGSzaTaCdJjnXUalRftA/6hILMAJIcYHBoiBfJlxuH6s47iajlAJZP25e5Kf4HNHvvwyOEgw==}
 
+  '@tweakcad/occt-wasm@5.16.0-tweakcad.1':
+    resolution: {integrity: sha512-ZgyVrs7bFUpo+c8IpWlNAtUxV6+w+tKTyzgissvWgNq3L866mVh6DcFGcK+yGVC39iAVcSG3M/CwjPe628faZQ==}
+
   '@tweenjs/tween.js@23.1.3':
     resolution: {integrity: sha512-vJmvvwFxYuGnF2axRtPYocag6Clbb5YS7kLL+SO/TeVFzHqDIWrNKYtcsPMibjDx9O+bu+psAy9NKfWklassUA==}
 
@@ -929,15 +932,6 @@ packages:
 
   '@vitest/utils@4.1.12':
     resolution: {integrity: sha512-Q3awXrwOfEV+qc3WmO5ONyE0yO7Q1gQ9/oyHxGLZ/pl7N3NO/ZztqQwKLuwMkV+CA1JYSIeO3gkHnRDIo4AVaA==}
-
-  '@xstate/react@6.1.0':
-    resolution: {integrity: sha512-ep9F0jGTI63B/jE8GHdMpUqtuz7yRebNaKv8EMUaiSi29NOglywc2X2YSOV/ygbIK+LtmgZ0q9anoEA2iBSEOw==}
-    peerDependencies:
-      react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
-      xstate: ^5.28.0
-    peerDependenciesMeta:
-      xstate:
-        optional: true
 
   acorn-jsx@5.3.2:
     resolution: {integrity: sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ==}
@@ -1122,6 +1116,9 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
+  fzstd@0.1.1:
+    resolution: {integrity: sha512-dkuVSOKKwh3eas5VkJy1AW1vFpet8TA/fGmVA5krThl8YcOVE/8ZIoEA1+U1vEn5ckxxhLirSdY837azmbaNHA==}
+
   gensync@1.0.0-beta.2:
     resolution: {integrity: sha512-3hN7NaskYvMDLQY55gnW3NQ+mesEAepTqlg+VEbj7zzqEMBVNhzcGYYeqFo/TlYz6eQiFcp1HcsCZO+nGgS8zg==}
     engines: {node: '>=6.9.0'}
@@ -1243,9 +1240,6 @@ packages:
     resolution: {integrity: sha512-XrsrhT5sybtKI6wakr2SPOlGZWWYbUXZ7a0jT8/QOeAPau+1X/bSegNe5YR75oJmEZQbKningirmGOEJCIk61Q==}
     engines: {node: '>=12.20.0'}
 
-  occt-wasm@5.14.0:
-    resolution: {integrity: sha512-9JQvloZ84HTiS7MO+zPxpi/G7X63CEHierazEoxzp7Otqo2LROXAyNF3/JOgQZ/Vym9mPGoJ8kjcSKzbGrYL9A==}
-
   opentype.js@2.0.0:
     resolution: {integrity: sha512-kCyjv6xdDY1W/jLWZ/L3QhhTlKUqDZMQ5+Jdlw12b3dXkKNpYBqqlMMj0YDQPShWFTMwgZI1hG14kN3XUDSg/A==}
     hasBin: true
@@ -1287,6 +1281,11 @@ packages:
   prelude-ls@1.2.1:
     resolution: {integrity: sha512-vkcDPrRZo1QZLbn5RLGPpg/WmIQ65qoWWhcGKf/b5eplkkarX0m9z8ppCat4mlOqUsWpyNuYgO3VRyrYHSzX5g==}
     engines: {node: '>= 0.8.0'}
+
+  prettier@3.9.10:
+    resolution: {integrity: sha512-skGHTH1Yb9QvaTC4hWnRTzEYtCpApF0UMBPz+t/0ZPzP8ihefo/btKd+QA7pUE0fEwA1SbS/NmhyEcstdXOIdA==}
+    engines: {node: '>=14'}
+    hasBin: true
 
   punycode@2.3.1:
     resolution: {integrity: sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==}
@@ -1395,15 +1394,6 @@ packages:
 
   uri-js@4.4.1:
     resolution: {integrity: sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==}
-
-  use-isomorphic-layout-effect@1.2.1:
-    resolution: {integrity: sha512-tpZZ+EX0gaghDAiFR37hj5MgY6ZN55kLiPkJsKxBMZ6GZdOSPJXiOzPM984oPYZ5AnehYx5WQp1+ME8I/P/pRA==}
-    peerDependencies:
-      '@types/react': '*'
-      react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
-    peerDependenciesMeta:
-      '@types/react':
-        optional: true
 
   use-sync-external-store@1.6.0:
     resolution: {integrity: sha512-Pp6GSwGP/NrPIrxVFAIkOQeyw8lFenOHijQWkUTrDvrF4ALqylP2C/KCkeS9dpUM3KvYRQhna5vt7IL95+ZQ9w==}
@@ -1518,9 +1508,6 @@ packages:
   word-wrap@1.2.5:
     resolution: {integrity: sha512-BN22B5eaMMI9UMtjrGd5g5eCYPpCPDUy0FJXbYsaT5zYxjFOckS53SQDE3pWkVoWpHXVb3BrYcEN4Twa55B5cA==}
     engines: {node: '>=0.10.0'}
-
-  xstate@5.33.3:
-    resolution: {integrity: sha512-AnDRjS/GyKHmbA1PyhVCYBqYsA7EGe3KGgeD0ht3NFsXzoz7leX/HQDFX9QlHFJ/ltLHPsgChJYwPzRvB/0b4g==}
 
   yallist@3.1.1:
     resolution: {integrity: sha512-a4UGQaWPH59mOXUYnAG2ewncQS4i4F43Tv3JoAM+s2VDAmS9NsK8GpDMLrCHPksFT7h3K6TOoUNn2pb7RoXx4g==}
@@ -1986,6 +1973,10 @@ snapshots:
 
   '@swc/wasm@1.15.40': {}
 
+  '@tweakcad/occt-wasm@5.16.0-tweakcad.1':
+    dependencies:
+      comlink: 4.4.2
+
   '@tweenjs/tween.js@23.1.3': {}
 
   '@types/babel__core@7.20.5':
@@ -2188,16 +2179,6 @@ snapshots:
       '@vitest/pretty-format': 4.1.12
       convert-source-map: 2.0.0
       tinyrainbow: 3.1.1
-
-  '@xstate/react@6.1.0(@types/react@19.3.0)(react@19.3.1)(xstate@5.33.3)':
-    dependencies:
-      react: 19.3.1
-      use-isomorphic-layout-effect: 1.2.1(@types/react@19.3.0)(react@19.3.1)
-      use-sync-external-store: 1.6.0(react@19.3.1)
-    optionalDependencies:
-      xstate: 5.33.3
-    transitivePeerDependencies:
-      - '@types/react'
 
   acorn-jsx@5.3.2(acorn@8.18.0):
     dependencies:
@@ -2410,6 +2391,8 @@ snapshots:
   fsevents@2.3.3:
     optional: true
 
+  fzstd@0.1.1: {}
+
   gensync@1.0.0-beta.2: {}
 
   glob-parent@6.0.2:
@@ -2499,10 +2482,6 @@ snapshots:
 
   obug@2.2.1: {}
 
-  occt-wasm@5.14.0:
-    dependencies:
-      comlink: 4.4.2
-
   opentype.js@2.0.0: {}
 
   optionator@0.9.4:
@@ -2539,6 +2518,8 @@ snapshots:
       source-map-js: 1.2.2
 
   prelude-ls@1.2.1: {}
+
+  prettier@3.9.10: {}
 
   punycode@2.3.1: {}
 
@@ -2650,15 +2631,10 @@ snapshots:
     dependencies:
       punycode: 2.3.1
 
-  use-isomorphic-layout-effect@1.2.1(@types/react@19.3.0)(react@19.3.1):
-    dependencies:
-      react: 19.3.1
-    optionalDependencies:
-      '@types/react': 19.3.0
-
   use-sync-external-store@1.6.0(react@19.3.1):
     dependencies:
       react: 19.3.1
+    optional: true
 
   uuid@11.1.1: {}
 
@@ -2723,8 +2699,6 @@ snapshots:
       stackback: 0.0.2
 
   word-wrap@1.2.5: {}
-
-  xstate@5.33.3: {}
 
   yallist@3.1.1: {}
 

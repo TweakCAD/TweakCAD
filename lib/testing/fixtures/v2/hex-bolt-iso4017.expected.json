@@ -1,0 +1,29 @@
+{
+ "parts": [
+  {
+   "name": "Hex bolt ISO 4017",
+   "bodies": [
+    {
+     "volume": 1185.487,
+     "min": [
+      -5.774,
+      -5,
+      -30
+     ],
+     "max": [
+      5.774,
+      5,
+      4
+     ],
+     "faces": 17,
+     "edges": 35
+    }
+   ],
+   "threads": [
+    "M6 6g external"
+   ]
+  }
+ ],
+ "assemblies": [],
+ "pauses": []
+}

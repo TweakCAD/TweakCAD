@@ -16,18 +16,15 @@ import { returnPath } from './SignInModal.tsx';
 
 describe('returnPath', () => {
   it('keeps the project id across the round trip', () => {
-    expect(returnPath({ pathname: '/cad', search: '?project=proj_abc123' }))
-      .toBe('/cad?project=proj_abc123');
+    expect(returnPath({ pathname: '/cad', search: '?project=proj_abc123' })).toBe('/cad?project=proj_abc123');
   });
 
   it('keeps a local document id too', () => {
-    expect(returnPath({ pathname: '/cad', search: '?local=doc_42' }))
-      .toBe('/cad?local=doc_42');
+    expect(returnPath({ pathname: '/cad', search: '?local=doc_42' })).toBe('/cad?local=doc_42');
   });
 
   it('keeps every parameter, not just the first', () => {
-    expect(returnPath({ pathname: '/cad', search: '?project=p1&panel=history' }))
-      .toBe('/cad?project=p1&panel=history');
+    expect(returnPath({ pathname: '/cad', search: '?project=p1&panel=history' })).toBe('/cad?project=p1&panel=history');
   });
 
   it('is unchanged when there is no query string', () => {
@@ -83,8 +80,7 @@ describe('returnPath cannot leave the origin', () => {
 
   it('leaves an ordinary path untouched', () => {
     // The guard must not mangle the normal case it exists to protect.
-    expect(returnPath({ pathname: '/cad', search: '?local=doc_1' }))
-      .toBe('/cad?local=doc_1');
+    expect(returnPath({ pathname: '/cad', search: '?local=doc_1' })).toBe('/cad?local=doc_1');
     expect(returnPath({ pathname: '/', search: '' })).toBe('/');
   });
 });

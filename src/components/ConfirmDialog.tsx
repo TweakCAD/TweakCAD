@@ -60,12 +60,7 @@ export function ConfirmDialog({ open, options, onConfirm, onCancel }: DialogProp
   const confirmHoverBg = tone === 'danger' ? '#b91c1c' : '#1557a0';
 
   return (
-    <dialog
-      ref={ref}
-      onClick={onDialogClick}
-      onCancel={onDialogCancel}
-      style={styles.dialog}
-    >
+    <dialog ref={ref} onClick={onDialogClick} onCancel={onDialogCancel} style={styles.dialog}>
       <div style={styles.body}>
         <h2 style={styles.title}>{options.title}</h2>
         {options.message && <p style={styles.message}>{options.message}</p>}

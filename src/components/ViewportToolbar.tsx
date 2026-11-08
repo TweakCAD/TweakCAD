@@ -4,10 +4,16 @@
  * Standard views are handled by the ViewCube (the 3D orientation cube).
  */
 
-import type { ViewportController } from '@tweakcad/viewport/src/ViewportController.ts';
+/** The view controls the toolbar drives. */
+export interface ViewportToolbarController {
+  resetView(): void;
+  fitToView(): void;
+  zoomIn(): void;
+  zoomOut(): void;
+}
 
 interface ViewportToolbarProps {
-  controller: ViewportController | null;
+  controller: ViewportToolbarController | null;
   /**
    * Override for the Home button. When provided (e.g. while sketch mode is
    * active), it replaces the default `controller.resetView()` so Home can
@@ -24,44 +30,37 @@ export function ViewportToolbar({ controller, onHome }: ViewportToolbarProps) {
   return (
     <div style={styles.container}>
       <div style={styles.group}>
-        <ToolbarButton
-          label="Home"
-          onClick={() => (onHome ? onHome() : controller.resetView())}
-        >
+        <ToolbarButton label="Home" onClick={() => (onHome ? onHome() : controller.resetView())}>
           {/* Home icon - house shape */}
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M8 1L1 7h2v6h4v-4h2v4h4V7h2L8 1z" fill="currentColor"/>
+            <path d="M8 1L1 7h2v6h4v-4h2v4h4V7h2L8 1z" fill="currentColor" />
           </svg>
         </ToolbarButton>
-        <ToolbarButton
-          label="Fit All"
-          onClick={() => controller.fitToView()}
-        >
+        <ToolbarButton label="Fit All" onClick={() => controller.fitToView()}>
           {/* Fit icon - expand arrows */}
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M1 5V1h4M11 1h4v4M15 11v4h-4M5 15H1v-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-            <rect x="5" y="5" width="6" height="6" rx="1" stroke="currentColor" strokeWidth="1.2"/>
+            <path
+              d="M1 5V1h4M11 1h4v4M15 11v4h-4M5 15H1v-4"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+            />
+            <rect x="5" y="5" width="6" height="6" rx="1" stroke="currentColor" strokeWidth="1.2" />
           </svg>
         </ToolbarButton>
         <div style={styles.separator} />
-        <ToolbarButton
-          label="Zoom In"
-          onClick={() => controller.zoomIn()}
-        >
+        <ToolbarButton label="Zoom In" onClick={() => controller.zoomIn()}>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5"/>
-            <path d="M11 11l3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-            <path d="M5 7h4M7 5v4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+            <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M11 11l3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            <path d="M5 7h4M7 5v4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
           </svg>
         </ToolbarButton>
-        <ToolbarButton
-          label="Zoom Out"
-          onClick={() => controller.zoomOut()}
-        >
+        <ToolbarButton label="Zoom Out" onClick={() => controller.zoomOut()}>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5"/>
-            <path d="M11 11l3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-            <path d="M5 7h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+            <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M11 11l3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            <path d="M5 7h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
           </svg>
         </ToolbarButton>
       </div>

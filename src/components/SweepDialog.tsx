@@ -44,31 +44,31 @@ interface SweepDialogProps {
   onCancel: () => void;
 }
 
-export function SweepDialog({
-  availableSketches,
-  initialValues,
-  onConfirm,
-  onCancel,
-}: SweepDialogProps) {
-  const [profileSketchId, setProfileSketchId] = useState<string>(
-    initialValues?.profileSketchId ?? '',
-  );
-  const [pathSketchId, setPathSketchId] = useState<string>(
-    initialValues?.pathSketchId ?? '',
-  );
+export function SweepDialog({ availableSketches, initialValues, onConfirm, onCancel }: SweepDialogProps) {
+  const [profileSketchId, setProfileSketchId] = useState<string>(initialValues?.profileSketchId ?? '');
+  const [pathSketchId, setPathSketchId] = useState<string>(initialValues?.pathSketchId ?? '');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onCancel();
+      }
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
   }, [onCancel]);
 
   const handleConfirm = useCallback(() => {
-    if (!profileSketchId) { setError('Pick a profile sketch'); return; }
-    if (!pathSketchId) { setError('Pick a path sketch'); return; }
+    if (!profileSketchId) {
+      setError('Pick a profile sketch');
+      return;
+    }
+    if (!pathSketchId) {
+      setError('Pick a path sketch');
+      return;
+    }
     if (profileSketchId === pathSketchId) {
       setError('Profile and path must be different sketches');
       return;
@@ -76,26 +76,33 @@ export function SweepDialog({
     onConfirm({ profileSketchId, pathSketchId });
   }, [profileSketchId, pathSketchId, onConfirm]);
 
-  const canConfirm =
-    profileSketchId !== '' &&
-    pathSketchId !== '' &&
-    profileSketchId !== pathSketchId;
+  const canConfirm = profileSketchId !== '' && pathSketchId !== '' && profileSketchId !== pathSketchId;
 
   return (
     <div style={styles.overlay}>
       <div style={styles.panel}>
-        <PanelHeader title="Sweep" icon={<PatternIcon size={14} color="#eab308" />} onClose={onCancel} closeTitle="Cancel (Esc)" />
+        <PanelHeader
+          title="Sweep"
+          icon={<PatternIcon size={14} color="#eab308" />}
+          onClose={onCancel}
+          closeTitle="Cancel (Esc)"
+        />
 
         <div style={styles.section}>
           <div style={styles.sectionLabel}>Profile (Closed Sketch)</div>
           <select
             value={profileSketchId}
-            onChange={e => { setProfileSketchId(e.target.value); setError(null); }}
+            onChange={(e) => {
+              setProfileSketchId(e.target.value);
+              setError(null);
+            }}
             style={styles.select}
           >
             <option value="">— Select sketch —</option>
-            {availableSketches.map(s => (
-              <option key={s.sketchId} value={s.sketchId}>{s.label}</option>
+            {availableSketches.map((s) => (
+              <option key={s.sketchId} value={s.sketchId}>
+                {s.label}
+              </option>
             ))}
           </select>
         </div>
@@ -104,19 +111,24 @@ export function SweepDialog({
           <div style={styles.sectionLabel}>Path (Closed Sketch)</div>
           <select
             value={pathSketchId}
-            onChange={e => { setPathSketchId(e.target.value); setError(null); }}
+            onChange={(e) => {
+              setPathSketchId(e.target.value);
+              setError(null);
+            }}
             style={styles.select}
           >
             <option value="">— Select sketch —</option>
-            {availableSketches.map(s => (
-              <option key={s.sketchId} value={s.sketchId}>{s.label}</option>
+            {availableSketches.map((s) => (
+              <option key={s.sketchId} value={s.sketchId}>
+                {s.label}
+              </option>
             ))}
           </select>
         </div>
 
         <div style={styles.hint}>
-          V1 supports closed paths only (e.g., circle profile + circle
-          path = torus). Open-wire paths are a v2 follow-up.
+          V1 supports closed paths only (e.g., circle profile + circle path = torus). Open-wire paths are a v2
+          follow-up.
         </div>
 
         {error && <div style={styles.error}>{error}</div>}
@@ -125,8 +137,12 @@ export function SweepDialog({
           <button
             style={styles.cancelBtn}
             onClick={onCancel}
-            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#eee'; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#f5f5f5'; }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = '#eee';
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = '#f5f5f5';
+            }}
           >
             Cancel
           </button>
@@ -138,10 +154,10 @@ export function SweepDialog({
             }}
             onClick={handleConfirm}
             disabled={!canConfirm}
-            onMouseEnter={e => {
+            onMouseEnter={(e) => {
               if (canConfirm) (e.currentTarget as HTMLButtonElement).style.background = '#ca8a04';
             }}
-            onMouseLeave={e => {
+            onMouseLeave={(e) => {
               if (canConfirm) (e.currentTarget as HTMLButtonElement).style.background = '#eab308';
             }}
             title={canConfirm ? 'Apply sweep' : 'Pick two different sketches for profile and path'}
@@ -157,55 +173,95 @@ export function SweepDialog({
 const styles: Record<string, React.CSSProperties> = {
   overlay: { position: 'absolute', top: 12, right: 12, zIndex: 50, pointerEvents: 'auto' },
   panel: {
-    background: '#fff', border: '1px solid #d0d0d0', borderRadius: 10,
-    boxShadow: '0 4px 20px rgba(0,0,0,0.12)', width: 320, padding: 0, overflow: 'hidden',
+    background: '#fff',
+    border: '1px solid #d0d0d0',
+    borderRadius: 10,
+    boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
+    width: 320,
+    padding: 0,
+    overflow: 'hidden',
   },
   header: {
-    display: 'flex', alignItems: 'center', gap: 8,
-    padding: '10px 12px', borderBottom: '1px solid #e8e8e8', background: '#fafafa',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '10px 12px',
+    borderBottom: '1px solid #e8e8e8',
+    background: '#fafafa',
   },
   headerTitle: { flex: 1, fontSize: 13, fontWeight: 600, color: '#333' },
   closeBtn: {
-    width: 24, height: 24,
-    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    border: 'none', background: 'transparent', borderRadius: 4,
-    color: '#888', cursor: 'pointer', padding: 0,
+    width: 24,
+    height: 24,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    border: 'none',
+    background: 'transparent',
+    borderRadius: 4,
+    color: '#888',
+    cursor: 'pointer',
+    padding: 0,
     transition: 'background 0.1s',
   },
   section: { padding: '10px 12px', borderBottom: '1px solid #f0f0f0' },
   sectionLabel: {
-    fontSize: 11, fontWeight: 600, color: '#888',
-    textTransform: 'uppercase', letterSpacing: 0.3, marginBottom: 6,
+    fontSize: 11,
+    fontWeight: 600,
+    color: '#888',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+    marginBottom: 6,
   },
   select: {
-    width: '100%', height: 30, padding: '0 8px',
-    border: '1px solid #d0d0d0', borderRadius: 5,
-    fontSize: 13, color: '#333', background: '#fff',
-    outline: 'none', cursor: 'pointer',
+    width: '100%',
+    height: 30,
+    padding: '0 8px',
+    border: '1px solid #d0d0d0',
+    borderRadius: 5,
+    fontSize: 13,
+    color: '#333',
+    background: '#fff',
+    outline: 'none',
+    cursor: 'pointer',
   },
   hint: {
-    fontSize: 11, color: '#888', fontStyle: 'italic',
+    fontSize: 11,
+    color: '#888',
+    fontStyle: 'italic',
     padding: '8px 12px',
-    background: '#fffbeb', borderTop: '1px solid #fde68a',
+    background: '#fffbeb',
+    borderTop: '1px solid #fde68a',
   },
   error: { fontSize: 11, color: '#dc2626', padding: '6px 12px' },
   actions: {
-    display: 'flex', gap: 8,
+    display: 'flex',
+    gap: 8,
     padding: '8px 12px 12px',
-    justifyContent: 'flex-end', borderTop: '1px solid #e8e8e8',
+    justifyContent: 'flex-end',
+    borderTop: '1px solid #e8e8e8',
   },
   cancelBtn: {
-    height: 30, padding: '0 14px',
-    border: '1px solid #d0d0d0', borderRadius: 5,
-    background: '#f5f5f5', color: '#555',
-    cursor: 'pointer', fontSize: 12, fontWeight: 500,
+    height: 30,
+    padding: '0 14px',
+    border: '1px solid #d0d0d0',
+    borderRadius: 5,
+    background: '#f5f5f5',
+    color: '#555',
+    cursor: 'pointer',
+    fontSize: 12,
+    fontWeight: 500,
     transition: 'background 0.1s',
   },
   okBtn: {
-    height: 30, padding: '0 20px',
-    border: 'none', borderRadius: 5,
-    background: '#eab308', color: '#fff',
-    fontSize: 12, fontWeight: 600,
+    height: 30,
+    padding: '0 20px',
+    border: 'none',
+    borderRadius: 5,
+    background: '#eab308',
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 600,
     transition: 'background 0.1s, opacity 0.1s',
   },
 };

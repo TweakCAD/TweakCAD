@@ -10,7 +10,7 @@
  *   error        — last attempt failed or socket closed unexpectedly. Red dot
  *                  with hover tooltip carrying the error message.
  *
- * No actual networking lives here; that's `mcpBridgeClient.ts`. This
+ * No networking lives here; that is `bridgeClient.ts`. This
  * module is a tiny pub/sub so the React tree can render the status
  * without prop-drilling.
  */

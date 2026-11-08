@@ -22,15 +22,7 @@ export type ToastProps = {
   onDismiss?: () => void;
 };
 
-export function Toast({
-  id,
-  title,
-  message,
-  tone = 'info',
-  action,
-  durationMs = 8_000,
-  onDismiss,
-}: ToastProps) {
+export function Toast({ id, title, message, tone = 'info', action, durationMs = 8_000, onDismiss }: ToastProps) {
   const [visible, setVisible] = useState(true);
 
   // Reset visibility when id changes (new toast). Adjusted during render

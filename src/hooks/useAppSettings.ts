@@ -5,11 +5,7 @@
  * to e.g. the AI bridge status indicator without prop drilling).
  */
 import { useSyncExternalStore } from 'react';
-import {
-  getAppSettings,
-  subscribeAppSettings,
-  type AppSettings,
-} from '../storage/appSettings.ts';
+import { getAppSettings, subscribeAppSettings, type AppSettings } from '../storage/appSettings.ts';
 
 export function useAppSettings(): Readonly<AppSettings> {
   return useSyncExternalStore(subscribeAppSettings, getAppSettings, getAppSettings);

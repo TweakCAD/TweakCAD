@@ -1,0 +1,27 @@
+{
+ "parts": [
+  {
+   "name": "Dowel pin",
+   "bodies": [
+    {
+     "volume": 559.153,
+     "min": [
+      -3,
+      -3,
+      0
+     ],
+     "max": [
+      3,
+      3,
+      20
+     ],
+     "faces": 5,
+     "edges": 7
+    }
+   ],
+   "threads": []
+  }
+ ],
+ "assemblies": [],
+ "pauses": []
+}

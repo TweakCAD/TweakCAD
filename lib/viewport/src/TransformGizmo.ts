@@ -82,11 +82,7 @@ export class TransformGizmo {
   }
 
   /** Attach to an object and show the handles. Replaces any prior target. */
-  attach(
-    target: THREE.Object3D,
-    config: TransformGizmoConfig = {},
-    handlers: TransformGizmoHandlers = {},
-  ): void {
+  attach(target: THREE.Object3D, config: TransformGizmoConfig = {}, handlers: TransformGizmoHandlers = {}): void {
     this.handlers = handlers;
     this.control.attach(target);
     this.control.setMode(config.mode ?? 'translate');

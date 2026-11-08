@@ -70,8 +70,10 @@ describe('nothing named', () => {
   });
 
   it('once this tab has chosen offline, it stops asking', () => {
-    expect(decideBoot(signals({ saas: SIGNED_OUT, offlineChosen: true })))
-      .toEqual({ kind: 'document', mode: 'offline' });
+    expect(decideBoot(signals({ saas: SIGNED_OUT, offlineChosen: true }))).toEqual({
+      kind: 'document',
+      mode: 'offline',
+    });
   });
 
   it('choosing offline does not leak into a signed-in window', () => {

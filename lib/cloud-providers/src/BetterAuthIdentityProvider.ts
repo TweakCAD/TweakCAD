@@ -88,11 +88,7 @@ export class BetterAuthIdentityProvider {
 
   /** Returns the current session or null when signed out. */
   async getSession(): Promise<SessionResponse> {
-    const res = await this.api.request(
-      'GET',
-      '/api/v1/auth/get-session',
-      SessionResponse,
-    );
+    const res = await this.api.request('GET', '/api/v1/auth/get-session', SessionResponse);
     if (!res.ok) {
       if (res.error.code === 'unauthenticated') return null;
       throw new Error(`${res.error.code}: ${res.error.message}`);
@@ -138,9 +134,7 @@ export class BetterAuthIdentityProvider {
       return { ok: false, message: (err as Error).message || 'Network error' };
     }
     if (res.ok) return { ok: true };
-    const body = (await res.json().catch(() => null)) as
-      | { message?: string }
-      | null;
+    const body = (await res.json().catch(() => null)) as { message?: string } | null;
     return {
       ok: false,
       message: body?.message ?? `Sign-in failed (${res.status})`,
@@ -248,9 +242,7 @@ export class BetterAuthIdentityProvider {
         message: (err as Error).message || 'Network error',
       };
     }
-    const body = (await res.json().catch(() => null)) as
-      | { url?: string; message?: string }
-      | null;
+    const body = (await res.json().catch(() => null)) as { url?: string; message?: string } | null;
     if (res.ok && body?.url) {
       window.location.href = body.url;
       return { redirected: true };

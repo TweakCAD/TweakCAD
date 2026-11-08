@@ -177,48 +177,34 @@ export function SignInModal({
   }
 
   return (
-    <dialog
-      ref={ref}
-      onClick={onDialogClick}
-      onCancel={onDialogCancel}
-      style={styles.dialog}
-    >
+    <dialog ref={ref} onClick={onDialogClick} onCancel={onDialogCancel} style={styles.dialog}>
       <form onSubmit={onSubmit} style={styles.body}>
         <div>
           <h2 style={styles.title}>Sign in</h2>
-          <p style={styles.subtitle}>
-            Sign in to sync this project with your cloud account.
-          </p>
+          <p style={styles.subtitle}>Sign in to sync this project with your cloud account.</p>
         </div>
 
         {socialProviders.length > 0 && (
           <div style={styles.socialGroup}>
             {captcha.required && (
-              <Turnstile
-                siteKey={captcha.siteKey}
-                onToken={onCaptchaToken}
-                resetKey={captchaNonce}
-              />
+              <Turnstile siteKey={captcha.siteKey} onToken={onCaptchaToken} resetKey={captchaNonce} />
             )}
             {socialProviders.map((p) => {
-              const blocked =
-                submitting || redirecting !== null || (captcha.required && !captchaToken);
+              const blocked = submitting || redirecting !== null || (captcha.required && !captchaToken);
               return (
-              <button
-                key={p.id}
-                type="button"
-                disabled={blocked}
-                onClick={() => void onSocial(p.id, p.label)}
-                style={{
-                  ...styles.socialBtn,
-                  cursor: redirecting !== null ? 'wait' : 'pointer',
-                  opacity: blocked ? 0.6 : 1,
-                }}
-              >
-                {redirecting === p.label
-                  ? `Redirecting to ${p.label}...`
-                  : `Continue with ${p.label}`}
-              </button>
+                <button
+                  key={p.id}
+                  type="button"
+                  disabled={blocked}
+                  onClick={() => void onSocial(p.id, p.label)}
+                  style={{
+                    ...styles.socialBtn,
+                    cursor: redirecting !== null ? 'wait' : 'pointer',
+                    opacity: blocked ? 0.6 : 1,
+                  }}
+                >
+                  {redirecting === p.label ? `Redirecting to ${p.label}...` : `Continue with ${p.label}`}
+                </button>
               );
             })}
             <div style={styles.divider}>
@@ -229,21 +215,8 @@ export function SignInModal({
           </div>
         )}
 
-        <Field
-          label="Email"
-          type="email"
-          value={email}
-          onChange={setEmail}
-          autoFocus
-          required
-        />
-        <Field
-          label="Password"
-          type="password"
-          value={password}
-          onChange={setPassword}
-          required
-        />
+        <Field label="Email" type="email" value={email} onChange={setEmail} autoFocus required />
+        <Field label="Password" type="password" value={password} onChange={setPassword} required />
 
         {error && <div style={styles.error}>{error}</div>}
 

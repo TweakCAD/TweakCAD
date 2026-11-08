@@ -1,8 +1,6 @@
 // GENERATED — DO NOT EDIT HERE.
-// Client-safe subset vendored from the private TweakCAD-Site repo. This repo
-// has no sync script and cannot regenerate this file. To propose a change,
-// open an issue/PR here; a maintainer updates the source in TweakCAD-Site and
-// re-syncs. Local edits are overwritten on the next sync.
+// The site API's types, as the site defines them. Local edits are overwritten
+// when they are copied in again; to propose a change, open an issue or a PR.
 
 import { z } from 'zod';
 

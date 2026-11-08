@@ -41,7 +41,7 @@ jobs:
       # script); kept last so a type or test failure reports sooner.
       - run: pnpm build
 
-  # A gate like `ci`: any lint error fails the run. Warnings are reported
+  # A gate like `ci`: any lint error or unformatted source fails the run. Warnings are reported
   # but don't fail it.
   lint:
     runs-on: ubuntu-latest
@@ -57,3 +57,4 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
+      - run: pnpm format:check

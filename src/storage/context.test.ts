@@ -98,7 +98,9 @@ describe('rememberLocalIdInUrl', () => {
 
   it('survives a history API that refuses', () => {
     const f = install('https://tweakcad.com/cad');
-    f.win.history.replaceState = () => { throw new Error('blocked'); };
+    f.win.history.replaceState = () => {
+      throw new Error('blocked');
+    };
     expect(() => rememberLocalIdInUrl('doc_abc')).not.toThrow();
   });
 

@@ -87,8 +87,7 @@ describe('listComponents', () => {
   });
 
   it('passes cursor and category through', async () => {
-    const url =
-      'https://api.example.com/api/v1/components?cursor=2026-05-01T00%3A00%3A00.000Z&category=cat_fasteners';
+    const url = 'https://api.example.com/api/v1/components?cursor=2026-05-01T00%3A00%3A00.000Z&category=cat_fasteners';
     const { fetch } = mockFetch({
       [url]: { json: { items: [], nextCursor: null } },
     });
@@ -126,9 +125,7 @@ describe('getComponentBySlug', () => {
       manifest: {
         schemaVersion: 1,
         standard: 'ISO 4017',
-        parameters: [
-          { name: 'length', label: 'Length', type: 'number', default: 20, range: [6, 120] },
-        ],
+        parameters: [{ name: 'length', label: 'Length', type: 'number', default: 20, range: [6, 120] }],
         installHint: 'Snaps head-down onto a face.',
       },
       reviewedAt: null,
@@ -146,9 +143,7 @@ describe('getComponentBySlug', () => {
       expect(result.value.manifest.parameters[0]!.name).toBe('length');
       expect(result.value.manifest.installHint).toBe('Snaps head-down onto a face.');
     }
-    expect(calls[0]!.url).toBe(
-      'https://api.example.com/api/v1/components/iso-4017-hex-bolt-m3',
-    );
+    expect(calls[0]!.url).toBe('https://api.example.com/api/v1/components/iso-4017-hex-bolt-m3');
   });
 
   it('URL-encodes slugs that contain special characters', async () => {

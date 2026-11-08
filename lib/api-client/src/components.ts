@@ -44,15 +44,8 @@ export function listComponents(
   return client.request('GET', buildListPath(opts), ListComponentsResponse);
 }
 
-export function getComponentBySlug(
-  client: ApiClient,
-  slug: string,
-): Promise<ApiResult<ComponentDetailT>> {
-  return client.request(
-    'GET',
-    `/api/v1/components/${encodeURIComponent(slug)}`,
-    ComponentDetail,
-  );
+export function getComponentBySlug(client: ApiClient, slug: string): Promise<ApiResult<ComponentDetailT>> {
+  return client.request('GET', `/api/v1/components/${encodeURIComponent(slug)}`, ComponentDetail);
 }
 
 /**
@@ -63,13 +56,6 @@ export function getComponentBySlug(
  * feature instead of rejecting the file — a Zod schema here would be a
  * second, weaker definition of the same thing, and the two would drift.
  */
-export function getComponentDocument(
-  client: ApiClient,
-  slug: string,
-): Promise<ApiResult<unknown>> {
-  return client.request(
-    'GET',
-    `/api/v1/components/${encodeURIComponent(slug)}/document`,
-    z.unknown(),
-  );
+export function getComponentDocument(client: ApiClient, slug: string): Promise<ApiResult<unknown>> {
+  return client.request('GET', `/api/v1/components/${encodeURIComponent(slug)}/document`, z.unknown());
 }

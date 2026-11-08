@@ -8,7 +8,18 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { generateProjectName, WORD_LISTS } from './projectName.ts';
+import { generateProjectName, unusedProjectName, WORD_LISTS } from './projectName.ts';
+
+describe('unusedProjectName', () => {
+  it('draws again while the name is taken, whatever its case, and gives up after a few tries', () => {
+    const draws = [0, 0, 0.5];
+    const random = () => draws.shift() ?? 0.5;
+    const first = generateProjectName(() => 0);
+    const third = generateProjectName(() => 0.5);
+    expect(unusedProjectName([` ${first.toUpperCase()} `], random)).toBe(third);
+    expect(unusedProjectName([first], () => 0)).toBe(first);
+  });
+});
 
 describe('generateProjectName', () => {
   it('is two lowercase words joined by a hyphen', () => {
@@ -60,9 +71,29 @@ describe('word lists obey their own rules', () => {
   // assumes the document holds a flange.
   it('contain no mechanical part vocabulary', () => {
     const PARTS = [
-      'bolt', 'nut', 'screw', 'washer', 'flange', 'gear', 'shaft', 'bearing',
-      'bracket', 'plate', 'hinge', 'spring', 'gasket', 'pulley', 'sprocket',
-      'rivet', 'pin', 'clamp', 'coupling', 'valve', 'piston', 'cam', 'spline',
+      'bolt',
+      'nut',
+      'screw',
+      'washer',
+      'flange',
+      'gear',
+      'shaft',
+      'bearing',
+      'bracket',
+      'plate',
+      'hinge',
+      'spring',
+      'gasket',
+      'pulley',
+      'sprocket',
+      'rivet',
+      'pin',
+      'clamp',
+      'coupling',
+      'valve',
+      'piston',
+      'cam',
+      'spline',
     ];
     for (const part of PARTS) expect(all).not.toContain(part);
   });

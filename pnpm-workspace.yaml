@@ -2,6 +2,12 @@
 # via tsconfig paths + vite aliases, not as workspace packages.
 packages:
   - '.'
+# pnpm hardening.
+strictPeerDependencies: true
+autoInstallPeers: true
+preferFrozenLockfile: true
+verifyStoreIntegrity: true
+resolutionMode: highest
 # Transitive-dependency overrides. Every one is a build/test-time dependency
 # pulled in deep by a plugin; none ships in the browser bundle. Each pins a
 # patched version for an advisory the direct dependency can't reach — the
@@ -34,9 +40,9 @@ allowBuilds:
 # Each entry here is a deliberate waiver of that protection, so each one needs a
 # reason and should be removed once the version ages past the window.
 minimumReleaseAgeExclude:
-  # occt-wasm 5.14.0 published 2026-11-02, adopted the same day. Taken hours old
-  # for edge history in EvolutionData (5.13.0), which stable edge naming needs
-  # to follow edges through an operation instead of by walk order.
-  # Single-publisher package, scanned clean by check-supply-chain-all.mjs.
+  # The kernel is our own build of occt-wasm (TweakCAD/occt-wasm, branch
+  # tweakcad: upstream 5.16.0 plus our patches), published 2026-11-08 and
+  # adopted the same day. We build it from source and take a published tarball
+  # only when it matches our build byte for byte, which waiting adds nothing to.
   # Drop this entry once it is no longer new.
-  - occt-wasm@5.14.0
+  - '@tweakcad/occt-wasm@5.16.0-tweakcad.1'

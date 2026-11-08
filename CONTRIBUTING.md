@@ -45,13 +45,12 @@ in the PR description; the bar is higher than "it would be convenient".
 
 ## The invariants
 
-`TweakCAD-Site/plans/cad-architecture.md` §2 lists them in full. The ones that
-most often trip up a first PR:
+The ones that most often trip up a first PR:
 
 - **`.cadjson` is the source of truth.** Meshes and kernel shapes are a
   disposable cache, never canonical state.
 - **The UI never calls the kernel.** Everything goes
-  `CommandBus → DocumentStore → RebuildScheduler → Worker → Kernel → Viewport`.
+  `Editor → DocumentStore → RebuildScheduler → Worker → Kernel → Viewport`.
 - **Every document mutation is a serializable command.** No closures, no class
   instances crossing a boundary.
 - **Workers own kernel handles.** The main thread sees meshes, ids and
@@ -62,16 +61,11 @@ most often trip up a first PR:
 
 ## Keep the docs in step
 
-**If your change makes a doc wrong, fix the doc in the same PR.** This is not
-a nicety — a stale architecture doc is worse than no doc, because it actively
-misleads the next reader into building on something that is not there. The
-triggers: new or removed commands, schema fields, constraint types, kernel
-methods, or any behavioural change in the solver, kernel, undo, rebuild or
-persistence.
-
-Counts that are derivable from source (tool count, command count, constraint
-variants) are machine-checked inside `<!-- AUTOGEN -->` markers. Prose accuracy
-is on you; no script can tell whether a paragraph went stale.
+**If your change makes a README, this file or a code comment wrong, fix it in
+the same PR.** A stale description is worse than none, because it misleads the
+next reader into building on something that is not there. The triggers: new or
+removed commands, schema fields, constraint types, kernel methods, or any
+behavioural change in the solver, kernel, undo, rebuild or persistence.
 
 If something **is not built**, say so where it is described rather than
 describing it in the present tense.
@@ -89,16 +83,10 @@ four must be green. Lint errors fail the run; warnings are reported but don't.
 
 ## Where the design lives
 
-The architecture docs are not in this repo (they live alongside the server
-project, which is not open source). The ones worth knowing about:
-
-- `cad-architecture.md` — the big one: document model, commands, kernel,
-  worker, rebuild, viewport, sketch, features.
-- `sketch-editor-architecture.md`, `topology-naming.md`,
-  `parametric-components-architecture.md` — focused sub-docs.
-
-If you need a design decision explained and can't see the rationale in the
-code, ask in an issue. The answer usually exists; it just isn't public.
+The `.cadjson` document format is specified in [docs/format.md](./docs/format.md);
+code comments cite its sections by number. The rest of the design is described
+in the code. If you need a design decision explained and can't see the
+rationale there, ask in an issue.
 
 ## Security
 

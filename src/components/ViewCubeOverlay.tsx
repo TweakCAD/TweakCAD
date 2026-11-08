@@ -35,34 +35,34 @@ const QUARTER = PI / 4;
 
 const VIEWS: Record<string, { theta: number; phi: number }> = {
   // Faces
-  FRONT:  { theta: 0,        phi: HALF },
-  BACK:   { theta: PI,       phi: HALF },
-  TOP:    { theta: 0,        phi: 0.001 },
-  BOTTOM: { theta: 0,        phi: PI - 0.001 },
-  RIGHT:  { theta: HALF,     phi: HALF },
-  LEFT:   { theta: -HALF,    phi: HALF },
+  FRONT: { theta: 0, phi: HALF },
+  BACK: { theta: PI, phi: HALF },
+  TOP: { theta: 0, phi: 0.001 },
+  BOTTOM: { theta: 0, phi: PI - 0.001 },
+  RIGHT: { theta: HALF, phi: HALF },
+  LEFT: { theta: -HALF, phi: HALF },
   // Edges (between two adjacent faces)
-  'FRONT-TOP':    { theta: 0,        phi: QUARTER },
-  'FRONT-BOTTOM': { theta: 0,        phi: PI - QUARTER },
-  'FRONT-RIGHT':  { theta: QUARTER,  phi: HALF },
-  'FRONT-LEFT':   { theta: -QUARTER, phi: HALF },
-  'BACK-TOP':     { theta: PI,       phi: QUARTER },
-  'BACK-BOTTOM':  { theta: PI,       phi: PI - QUARTER },
-  'BACK-RIGHT':   { theta: HALF + QUARTER, phi: HALF },
-  'BACK-LEFT':    { theta: -(HALF + QUARTER), phi: HALF },
-  'TOP-RIGHT':    { theta: HALF,     phi: QUARTER },
-  'TOP-LEFT':     { theta: -HALF,    phi: QUARTER },
-  'BOTTOM-RIGHT': { theta: HALF,     phi: PI - QUARTER },
-  'BOTTOM-LEFT':  { theta: -HALF,    phi: PI - QUARTER },
+  'FRONT-TOP': { theta: 0, phi: QUARTER },
+  'FRONT-BOTTOM': { theta: 0, phi: PI - QUARTER },
+  'FRONT-RIGHT': { theta: QUARTER, phi: HALF },
+  'FRONT-LEFT': { theta: -QUARTER, phi: HALF },
+  'BACK-TOP': { theta: PI, phi: QUARTER },
+  'BACK-BOTTOM': { theta: PI, phi: PI - QUARTER },
+  'BACK-RIGHT': { theta: HALF + QUARTER, phi: HALF },
+  'BACK-LEFT': { theta: -(HALF + QUARTER), phi: HALF },
+  'TOP-RIGHT': { theta: HALF, phi: QUARTER },
+  'TOP-LEFT': { theta: -HALF, phi: QUARTER },
+  'BOTTOM-RIGHT': { theta: HALF, phi: PI - QUARTER },
+  'BOTTOM-LEFT': { theta: -HALF, phi: PI - QUARTER },
   // Corners (where 3 faces meet)
-  'FRONT-TOP-RIGHT':    { theta: QUARTER,             phi: QUARTER + 0.15 },
-  'FRONT-TOP-LEFT':     { theta: -QUARTER,            phi: QUARTER + 0.15 },
-  'FRONT-BOTTOM-RIGHT': { theta: QUARTER,             phi: PI - QUARTER - 0.15 },
-  'FRONT-BOTTOM-LEFT':  { theta: -QUARTER,            phi: PI - QUARTER - 0.15 },
-  'BACK-TOP-RIGHT':     { theta: HALF + QUARTER,      phi: QUARTER + 0.15 },
-  'BACK-TOP-LEFT':      { theta: -(HALF + QUARTER),   phi: QUARTER + 0.15 },
-  'BACK-BOTTOM-RIGHT':  { theta: HALF + QUARTER,      phi: PI - QUARTER - 0.15 },
-  'BACK-BOTTOM-LEFT':   { theta: -(HALF + QUARTER),   phi: PI - QUARTER - 0.15 },
+  'FRONT-TOP-RIGHT': { theta: QUARTER, phi: QUARTER + 0.15 },
+  'FRONT-TOP-LEFT': { theta: -QUARTER, phi: QUARTER + 0.15 },
+  'FRONT-BOTTOM-RIGHT': { theta: QUARTER, phi: PI - QUARTER - 0.15 },
+  'FRONT-BOTTOM-LEFT': { theta: -QUARTER, phi: PI - QUARTER - 0.15 },
+  'BACK-TOP-RIGHT': { theta: HALF + QUARTER, phi: QUARTER + 0.15 },
+  'BACK-TOP-LEFT': { theta: -(HALF + QUARTER), phi: QUARTER + 0.15 },
+  'BACK-BOTTOM-RIGHT': { theta: HALF + QUARTER, phi: PI - QUARTER - 0.15 },
+  'BACK-BOTTOM-LEFT': { theta: -(HALF + QUARTER), phi: PI - QUARTER - 0.15 },
 };
 
 // ---- Colors ----
@@ -79,7 +79,7 @@ export function ViewCubeOverlay({ onViewChange, getMainCameraQuaternion, size = 
     renderer: THREE.WebGLRenderer;
     scene: THREE.Scene;
     camera: THREE.OrthographicCamera;
-    allHitTargets: THREE.Mesh[];  // faces + edges + corners for raycasting
+    allHitTargets: THREE.Mesh[]; // faces + edges + corners for raycasting
     meshToView: Map<string, string>;
     hoveredMesh: THREE.Mesh | null;
     hoveredOrigColor: number;
@@ -116,12 +116,12 @@ export function ViewCubeOverlay({ onViewChange, getMainCameraQuaternion, size = 
 
     // ---- Build 6 faces ----
     const faceData: { name: string; pos: [number, number, number]; rot: [number, number, number] }[] = [
-      { name: 'FRONT',  pos: [0, 0, S],   rot: [0, 0, 0] },
-      { name: 'BACK',   pos: [0, 0, -S],  rot: [0, PI, 0] },
-      { name: 'TOP',    pos: [0, S, 0],   rot: [-HALF, 0, 0] },
-      { name: 'BOTTOM', pos: [0, -S, 0],  rot: [HALF, 0, 0] },
-      { name: 'RIGHT',  pos: [S, 0, 0],   rot: [0, HALF, 0] },
-      { name: 'LEFT',   pos: [-S, 0, 0],  rot: [0, -HALF, 0] },
+      { name: 'FRONT', pos: [0, 0, S], rot: [0, 0, 0] },
+      { name: 'BACK', pos: [0, 0, -S], rot: [0, PI, 0] },
+      { name: 'TOP', pos: [0, S, 0], rot: [-HALF, 0, 0] },
+      { name: 'BOTTOM', pos: [0, -S, 0], rot: [HALF, 0, 0] },
+      { name: 'RIGHT', pos: [S, 0, 0], rot: [0, HALF, 0] },
+      { name: 'LEFT', pos: [-S, 0, 0], rot: [0, -HALF, 0] },
     ];
 
     const faceSize = S * 2 - E * 2; // face slightly smaller than full to leave room for edges
@@ -143,20 +143,20 @@ export function ViewCubeOverlay({ onViewChange, getMainCameraQuaternion, size = 
     const edgeGeo = new THREE.BoxGeometry(edgeLen, E, E);
     const edgeDefs: { name: string; pos: [number, number, number]; rotZ: number; rotY: number }[] = [
       // Top edges (y = S)
-      { name: 'FRONT-TOP',    pos: [0, S, S],    rotZ: 0, rotY: 0 },
-      { name: 'BACK-TOP',     pos: [0, S, -S],   rotZ: 0, rotY: 0 },
-      { name: 'TOP-RIGHT',    pos: [S, S, 0],    rotZ: 0, rotY: HALF },
-      { name: 'TOP-LEFT',     pos: [-S, S, 0],   rotZ: 0, rotY: HALF },
+      { name: 'FRONT-TOP', pos: [0, S, S], rotZ: 0, rotY: 0 },
+      { name: 'BACK-TOP', pos: [0, S, -S], rotZ: 0, rotY: 0 },
+      { name: 'TOP-RIGHT', pos: [S, S, 0], rotZ: 0, rotY: HALF },
+      { name: 'TOP-LEFT', pos: [-S, S, 0], rotZ: 0, rotY: HALF },
       // Bottom edges (y = -S)
-      { name: 'FRONT-BOTTOM', pos: [0, -S, S],   rotZ: 0, rotY: 0 },
-      { name: 'BACK-BOTTOM',  pos: [0, -S, -S],  rotZ: 0, rotY: 0 },
-      { name: 'BOTTOM-RIGHT', pos: [S, -S, 0],   rotZ: 0, rotY: HALF },
-      { name: 'BOTTOM-LEFT',  pos: [-S, -S, 0],  rotZ: 0, rotY: HALF },
+      { name: 'FRONT-BOTTOM', pos: [0, -S, S], rotZ: 0, rotY: 0 },
+      { name: 'BACK-BOTTOM', pos: [0, -S, -S], rotZ: 0, rotY: 0 },
+      { name: 'BOTTOM-RIGHT', pos: [S, -S, 0], rotZ: 0, rotY: HALF },
+      { name: 'BOTTOM-LEFT', pos: [-S, -S, 0], rotZ: 0, rotY: HALF },
       // Vertical edges
-      { name: 'FRONT-RIGHT',  pos: [S, 0, S],    rotZ: HALF, rotY: 0 },
-      { name: 'FRONT-LEFT',   pos: [-S, 0, S],   rotZ: HALF, rotY: 0 },
-      { name: 'BACK-RIGHT',   pos: [S, 0, -S],   rotZ: HALF, rotY: 0 },
-      { name: 'BACK-LEFT',    pos: [-S, 0, -S],  rotZ: HALF, rotY: 0 },
+      { name: 'FRONT-RIGHT', pos: [S, 0, S], rotZ: HALF, rotY: 0 },
+      { name: 'FRONT-LEFT', pos: [-S, 0, S], rotZ: HALF, rotY: 0 },
+      { name: 'BACK-RIGHT', pos: [S, 0, -S], rotZ: HALF, rotY: 0 },
+      { name: 'BACK-LEFT', pos: [-S, 0, -S], rotZ: HALF, rotY: 0 },
     ];
 
     for (const edge of edgeDefs) {
@@ -172,14 +172,14 @@ export function ViewCubeOverlay({ onViewChange, getMainCameraQuaternion, size = 
     // ---- Build 8 corners ----
     const cornerGeo = new THREE.BoxGeometry(E, E, E);
     const cornerDefs: { name: string; pos: [number, number, number] }[] = [
-      { name: 'FRONT-TOP-RIGHT',    pos: [S, S, S] },
-      { name: 'FRONT-TOP-LEFT',     pos: [-S, S, S] },
+      { name: 'FRONT-TOP-RIGHT', pos: [S, S, S] },
+      { name: 'FRONT-TOP-LEFT', pos: [-S, S, S] },
       { name: 'FRONT-BOTTOM-RIGHT', pos: [S, -S, S] },
-      { name: 'FRONT-BOTTOM-LEFT',  pos: [-S, -S, S] },
-      { name: 'BACK-TOP-RIGHT',     pos: [S, S, -S] },
-      { name: 'BACK-TOP-LEFT',      pos: [-S, S, -S] },
-      { name: 'BACK-BOTTOM-RIGHT',  pos: [S, -S, -S] },
-      { name: 'BACK-BOTTOM-LEFT',   pos: [-S, -S, -S] },
+      { name: 'FRONT-BOTTOM-LEFT', pos: [-S, -S, S] },
+      { name: 'BACK-TOP-RIGHT', pos: [S, S, -S] },
+      { name: 'BACK-TOP-LEFT', pos: [-S, S, -S] },
+      { name: 'BACK-BOTTOM-RIGHT', pos: [S, -S, -S] },
+      { name: 'BACK-BOTTOM-LEFT', pos: [-S, -S, -S] },
     ];
 
     for (const corner of cornerDefs) {
@@ -263,8 +263,13 @@ export function ViewCubeOverlay({ onViewChange, getMainCameraQuaternion, size = 
       frameId = requestAnimationFrame(animate);
 
       const quat = getMainCameraQuaternion();
-      if (quat && (quat.x !== camera.quaternion.x || quat.y !== camera.quaternion.y
-        || quat.z !== camera.quaternion.z || quat.w !== camera.quaternion.w)) {
+      if (
+        quat &&
+        (quat.x !== camera.quaternion.x ||
+          quat.y !== camera.quaternion.y ||
+          quat.z !== camera.quaternion.z ||
+          quat.w !== camera.quaternion.w)
+      ) {
         const dir = new THREE.Vector3(0, 0, 1).applyQuaternion(quat);
         camera.position.copy(dir.multiplyScalar(5));
         camera.quaternion.copy(quat);
@@ -339,28 +344,31 @@ export function ViewCubeOverlay({ onViewChange, getMainCameraQuaternion, size = 
   }, []);
 
   // ---- Click ----
-  const handleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    const state = stateRef.current;
-    if (!state) return;
+  const handleClick = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      const state = stateRef.current;
+      if (!state) return;
 
-    const rect = (e.target as HTMLCanvasElement).getBoundingClientRect();
-    const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-    const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      const rect = (e.target as HTMLCanvasElement).getBoundingClientRect();
+      const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
 
-    state.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), state.camera);
-    const hits = state.raycaster.intersectObjects(state.allHitTargets);
+      state.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), state.camera);
+      const hits = state.raycaster.intersectObjects(state.allHitTargets);
 
-    if (hits.length > 0) {
-      const mesh = hits[0]!.object as THREE.Mesh;
-      const viewName = state.meshToView.get(mesh.uuid);
-      if (viewName) {
-        const view = VIEWS[viewName];
-        if (view) {
-          onViewChange(view.theta, view.phi);
+      if (hits.length > 0) {
+        const mesh = hits[0]!.object as THREE.Mesh;
+        const viewName = state.meshToView.get(mesh.uuid);
+        if (viewName) {
+          const view = VIEWS[viewName];
+          if (view) {
+            onViewChange(view.theta, view.phi);
+          }
         }
       }
-    }
-  }, [onViewChange]);
+    },
+    [onViewChange],
+  );
 
   return (
     <canvas

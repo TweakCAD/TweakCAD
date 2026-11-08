@@ -1,9 +1,8 @@
 # Dependencies
 node_modules/
-**/node_modules/
 .pnpm-store/
 
-# Build outputs
+# Build output
 dist/
 build/
 out/
@@ -14,31 +13,20 @@ coverage/
 .tmp/
 tmp/
 
-# Generated WASM copied from node_modules by `pnpm sync-planegcs-wasm`
-public/planegcs/*.wasm
-
-# TypeScript and tooling artifacts
+# Tooling
 *.tsbuildinfo
 *.eslintcache
 
 # Logs
 logs/
 *.log
-npm-debug.log*
-pnpm-debug.log*
 
-# Environment files
+# Environment
 .env
 .env.*
 !.env.example
-!.env.*.example
 
-# Filled-in k8s Secret manifests (real credentials) — only *.example.yaml is committed
-**/deploy/k8s/secret.yaml
-**/deploy/k8s/secret.*.yaml
-!**/deploy/k8s/secret.example.yaml
-
-# Editor and OS files
+# Editors and OS
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json
@@ -48,18 +36,25 @@ Thumbs.db
 *.swp
 *.swo
 
-# Local editor / tooling config (per-user, not committed)
+# Local assistant config
 .claude/
 .codex/
 .cursor/
 .agents/
+.kilo/
 .mcp.json
 AGENTS.md
 CLAUDE.md
 
-# Internal supply-chain allowlist — maintained outside this repo. Guard against
-# committing it here.
-mini-shai-hulud-packages.csv
-
-# Throwaway scripts and captured tool output; never part of a change.
+# Scratch
 .scratch/
+.worktrees/
+__pycache__/
+
+# Design files
+*.f3d
+*.f3z
+
+# FreeCAD backups, left when fixtures are saved again
+*.FCBak
+*.FCStd1

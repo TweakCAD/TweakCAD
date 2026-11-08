@@ -7,10 +7,7 @@
  * With no plane under the cursor the face is reported either way, so the
  * picker can still show it as not sketchable.
  */
-export function faceTakesPick(
-  face: { distance: number; flat: boolean } | null,
-  planeDistance: number | null,
-): boolean {
+export function faceTakesPick(face: { distance: number; flat: boolean } | null, planeDistance: number | null): boolean {
   if (!face) return false;
   if (planeDistance === null) return true;
   return face.flat && face.distance < planeDistance;
