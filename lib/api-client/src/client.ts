@@ -65,6 +65,21 @@ export class ApiClient {
       };
     }
 
+    // A host that answers every path with its page (a static server's fallback to
+    // index.html) is not the API, however its status reads: only JSON, or an empty
+    // 204, comes from the API.
+    if (!isJson && response.status !== 204) {
+      return {
+        ok: false,
+        error: {
+          code: 'internal',
+          message: 'Not an API response',
+          retryable: false,
+          requestId: response.headers.get('x-request-id') ?? 'unknown',
+        },
+      };
+    }
+
     const parsed = responseSchema.safeParse(raw);
     if (!parsed.success) {
       return {
