@@ -46,7 +46,16 @@ format is specified in [docs/format.md](./docs/format.md).
 
 ## Quick start
 
-Requires Node 24 (see `engines`) and [pnpm](https://pnpm.io/) — `corepack
+With Docker, no build needed:
+
+```bash
+docker run --rm -p 8080:8080 ghcr.io/tweakcad/tweakcad:latest
+```
+
+Then open http://localhost:8080. Documents are saved in the browser and to
+files; the cloud features need the hosted site.
+
+From source, it requires Node 24 (see `engines`) and [pnpm](https://pnpm.io/) — `corepack
 enable` picks up the pinned version from `packageManager`.
 
 ```bash
@@ -95,10 +104,11 @@ vite aliases.
 pnpm typecheck   # tsc --noEmit
 pnpm test:unit   # vitest — runs the real solver and kernel WASM, no browser
 pnpm lint        # eslint src/ lib/
+pnpm format      # prettier; CI runs pnpm format:check
 ```
 
 Tests are co-located (`name.test.ts` next to the source they cover). CI runs
-typecheck, the unit suite, the build and lint on every push (see
+typecheck, the unit suite, the build, lint and the formatting check on every push (see
 [CONTRIBUTING.md](./CONTRIBUTING.md)).
 
 Contributions welcome — start with [CONTRIBUTING.md](./CONTRIBUTING.md). To
