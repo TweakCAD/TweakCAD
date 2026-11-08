@@ -17,6 +17,7 @@
  * The SSE parsing here is intentionally inline (no `eventsource-parser`
  * dep) — the format is simple enough for a 30-line state machine.
  */
+import { z } from 'zod';
 
 // ---- Wire types — must match the SSE event shapes emitted by the
 //      server's provider layer. Duplicated here so the web app doesn't
@@ -37,6 +38,38 @@ export type ChatStreamEvent =
       };
       error?: { message: string; code?: string };
     };
+
+/** The shape every stream event must have; an event that does not is dropped. */
+const ChatStreamEventSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('meta'), source: z.enum(['user', 'org', 'platform', 'env']), model: z.string() }),
+  z.object({ type: z.literal('text'), delta: z.string() }),
+  z.object({ type: z.literal('tool_call'), id: z.string(), name: z.string(), input: z.unknown() }),
+  z.object({
+    type: z.literal('done'),
+    stopReason: z.enum(['end_turn', 'tool_use', 'max_tokens', 'stop_sequence', 'error']),
+    usage: z
+      .object({
+        inputTokens: z.number(),
+        outputTokens: z.number(),
+        cacheReadInputTokens: z.number().optional(),
+        cacheCreationInputTokens: z.number().optional(),
+      })
+      .optional(),
+    error: z.object({ message: z.string(), code: z.string().optional() }).optional(),
+  }),
+]);
+
+/** A stream event's data, or null when it is not JSON or not the shape of an event. */
+export function streamEvent(raw: string): ChatStreamEvent | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const parsed = ChatStreamEventSchema.safeParse(value);
+  return parsed.success ? (parsed.data as ChatStreamEvent) : null;
+}
 
 export type ToolResultBlock = { type: 'text'; text: string } | { type: 'image'; mimeType: string; data: string };
 
@@ -184,11 +217,8 @@ export class SSEParser {
       if (this.data.length === 0) return;
       const raw = this.data.join('\n');
       this.data = [];
-      try {
-        out.push(JSON.parse(raw) as ChatStreamEvent);
-      } catch {
-        // Not JSON: not an event of this endpoint.
-      }
+      const event = streamEvent(raw);
+      if (event) out.push(event);
       return;
     }
     // The spec allows one space after the colon.

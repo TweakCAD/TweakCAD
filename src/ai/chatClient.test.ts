@@ -3,6 +3,7 @@ import {
   listAvailableModels,
   pickModelId,
   streamChat,
+  streamEvent,
   type AvailableModel,
   type ChatStreamEvent,
 } from './chatClient.ts';
@@ -125,5 +126,25 @@ describe('streamChat', () => {
     ];
     expect(chunks.join('')).toBe(body);
     expect(await events(chunks)).toEqual([text, done]);
+  });
+});
+
+describe('stream events', () => {
+  it('keeps an event of a known shape', () => {
+    expect(streamEvent('{"type":"text","delta":"hi"}')).toEqual({ type: 'text', delta: 'hi' });
+    expect(streamEvent('{"type":"done","stopReason":"end_turn"}')).toEqual({ type: 'done', stopReason: 'end_turn' });
+  });
+
+  it('drops what is not JSON or not the shape of an event', () => {
+    const bad = [
+      '<html>',
+      '{"type":"text"}',
+      '{"type":"text","delta":5}',
+      '{"type":"nope"}',
+      'null',
+      '[]',
+      '{"type":"done","stopReason":"later"}',
+    ];
+    for (const raw of bad) expect(streamEvent(raw), raw).toBeNull();
   });
 });

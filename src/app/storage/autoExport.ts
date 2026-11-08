@@ -53,7 +53,14 @@ export async function runAutoExport(o: AutoExportOptions): Promise<void> {
     o.onStatus({ kind: 'done' });
     return;
   }
-  const { versionLabel } = (await version.json()) as { versionLabel: string };
+  const body: unknown = await version.json().catch(() => null);
+  const versionLabel =
+    typeof body === 'object' && body !== null ? (body as { versionLabel?: unknown }).versionLabel : undefined;
+  if (typeof versionLabel !== 'string' || versionLabel === '') {
+    o.onStatus({ kind: 'failed', format: 'stl', message: 'The current version could not be read.' });
+    o.onStatus({ kind: 'done' });
+    return;
+  }
   for (const format of AUTO_EXPORT_FORMATS) {
     o.onStatus({ kind: 'start', format });
     try {

@@ -242,14 +242,36 @@ export class BetterAuthIdentityProvider {
         message: (err as Error).message || 'Network error',
       };
     }
-    const body = (await res.json().catch(() => null)) as { url?: string; message?: string } | null;
-    if (res.ok && body?.url) {
-      window.location.href = body.url;
+    const body: unknown = await res.json().catch(() => null);
+    const field = (key: string): string | undefined => {
+      const v = typeof body === 'object' && body !== null ? (body as Record<string, unknown>)[key] : undefined;
+      return typeof v === 'string' ? v : undefined;
+    };
+    const target = res.ok ? redirectTarget(field('url')) : null;
+    if (target) {
+      window.location.href = target;
       return { redirected: true };
     }
     return {
       redirected: false,
-      message: body?.message ?? `Sign-in failed (${res.status})`,
+      message: field('message') ?? `Sign-in failed (${res.status})`,
     };
   }
+}
+
+/**
+ * The address a sign-in may send the page to: an https URL, or an http one on
+ * this machine (a development server). Anything else, `javascript:` and
+ * `data:` included, is refused.
+ */
+export function redirectTarget(url: string | undefined): string | null {
+  if (!url) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  const local = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '[::1]';
+  return parsed.protocol === 'https:' || (parsed.protocol === 'http:' && local) ? parsed.href : null;
 }
