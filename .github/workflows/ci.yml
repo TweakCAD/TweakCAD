@@ -19,9 +19,10 @@ permissions:
   contents: read
 
 # A second push to the same branch cancels the first: the WASM-heavy test
-# job is slow enough that queued duplicates are worth dropping.
+# job is slow enough that queued duplicates are worth dropping. The workflow
+# name keeps the checks image.yml runs apart from the branch's own CI.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ inputs.ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
