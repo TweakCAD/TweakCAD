@@ -227,6 +227,38 @@ describe('keys', () => {
     expect(() => adapter.addShape(shape)).toThrow(expect.objectContaining({ code: 'collision' }));
   });
 
+  it('tells apart sub-shapes of two shapes that share a hash', () => {
+    const a = box(0, 0, 0, 10, 10, 10);
+    const b = box(30, 0, 0, 10, 10, 10);
+    const KINDS = ['vertex', 'edge', 'wire', 'face', 'shell', 'solid'] as const;
+    const hashes = (shape: ShapeHandle, bound: number) =>
+      KINDS.map((kind) => {
+        const subs = k.getSubShapes(shape, kind);
+        const out = subs.map((s) => k.hashCode(s, bound));
+        for (const s of subs) k.release(s);
+        return out;
+      });
+    // A bound under which each box is clean on its own but a vertex, edge or face of one shares a hash with the other's.
+    let bound = 0;
+    for (let m = 50; m < 5000 && bound === 0; m++) {
+      const [ha, hb] = [hashes(a, m), hashes(b, m)];
+      const clean = (h: number[][]) => h.every((kind) => new Set(kind).size === kind.length);
+      const shared = ha.some((kind, i) => kind.some((h) => (hb[i] as number[]).includes(h)));
+      if (clean(ha) && clean(hb) && shared) bound = m;
+    }
+    expect(bound).toBeGreaterThan(0);
+    start(bound);
+    const [ra, rb] = [adapter.addShape(a), adapter.addShape(b)];
+    k.release(a);
+    k.release(b);
+    const [fa, fb] = [adapter.topology(ra).faces, adapter.topology(rb).faces];
+    expect([fa.length, fb.length]).toEqual([6, 6]);
+    expect(fa.filter((f) => fb.includes(f))).toEqual([]);
+    const area = (faces: ShapeKey[]) => faces.reduce((sum, f) => sum + (adapter.measures(f).area as number), 0);
+    expect(area(fa)).toBeCloseTo(600, 6);
+    expect(area(fb)).toBeCloseTo(600, 6);
+  });
+
   it('releases every handle a refused shape took, once disposed', () => {
     start(2);
     const shape = box(0, 0, 0, 10, 10, 10);

@@ -11,8 +11,10 @@
  *
  * Keys. A `ShapeKey` is handed out per sub-shape and stays the same for every
  * shape that holds that sub-shape. Kernel hashes are remainders below 2³¹ and
- * can collide, so a hash only finds a candidate: `isSame` confirms it, and a
- * mismatch is an error, never a merge.
+ * can collide, so a hash only finds candidates: `isSame` picks the one that is
+ * the same sub-shape, and two different sub-shapes are never merged. Within one
+ * shape, two sub-shapes of a kind that share a hash are an error, since the
+ * kernel reports history by hash and could not tell them apart.
  *
  * Orientation. A hash ignores orientation, but a kept face can turn over: a
  * cutter's floor left in a pocket, a profile that became an extrusion's start
@@ -473,12 +475,11 @@ export class NamingAdapter implements KernelFacts {
     walk.byHash[entry.kind].set(entry.hash, entry);
   }
 
-  /** The entry already standing for this sub-shape, if any. A same-kind hash match that differs is a collision. */
+  /** The entry already standing for this sub-shape, if any; an entry of another shape that only shares its hash is passed over. */
   private find(kind: Kind, hash: number, handle: ShapeHandle, orientation: string): Entry | undefined {
     let found: Entry | undefined;
     for (const entry of this.byHash.get(hash) ?? []) {
-      if (entry.kind !== kind) continue;
-      this.requireSame(entry, handle);
+      if (entry.kind !== kind || !this.k.isSame(entry.handle, handle)) continue;
       if (entry.orientation === orientation) found = entry;
     }
     return found;
