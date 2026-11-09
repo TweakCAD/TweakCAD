@@ -24,7 +24,7 @@
     "fzstd": "0.1.1",
     "immer": "11.2.9",
     "lucide-react": "1.61.0",
-    "occt-wasm": "npm:@tweakcad/occt-wasm@5.16.0-tweakcad.1",
+    "occt-wasm": "npm:@tweakcad/occt-wasm@5.17.0-tweakcad.1",
     "opentype.js": "2.0.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
