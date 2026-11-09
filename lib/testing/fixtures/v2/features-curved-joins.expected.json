@@ -1,0 +1,42 @@
+{
+ "parts": [
+  {
+   "name": "Curved walls joined",
+   "bodies": [
+    {
+     "volume": 1426.308,
+     "min": [
+      35,
+      -5,
+      0
+     ],
+     "max": [
+      56.471,
+      9.027,
+      6
+     ],
+     "faces": 8,
+     "edges": 18
+    },
+    {
+     "volume": 4439.441,
+     "min": [
+      -10,
+      -10,
+      -10
+     ],
+     "max": [
+      10,
+      22,
+      10
+     ],
+     "faces": 4,
+     "edges": 11
+    }
+   ],
+   "threads": []
+  }
+ ],
+ "assemblies": [],
+ "pauses": []
+}
