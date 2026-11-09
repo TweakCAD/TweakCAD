@@ -76,11 +76,13 @@ pnpm preview    # serve the build locally
 ## Run with Docker
 
 Every release is published as `ghcr.io/tweakcad/tweakcad`, tagged with its
-version (for example `0.2.2`) and `latest`, for linux/amd64. The container
-serves the app on port 8080.
+version and `latest`, for linux/amd64. The container serves the app on port
+8080. To stay on one release, use its version tag from the
+[package page](https://github.com/TweakCAD/TweakCAD/pkgs/container/tweakcad)
+in place of `latest`.
 
 ```bash
-docker run -d --name tweakcad --restart unless-stopped -p 8080:8080 ghcr.io/tweakcad/tweakcad:0.2.2
+docker run -d --name tweakcad --restart unless-stopped -p 8080:8080 ghcr.io/tweakcad/tweakcad:latest
 ```
 
 Open http://localhost:8080. To use another port, change the left side, e.g.
@@ -89,7 +91,7 @@ Open http://localhost:8080. To use another port, change the left side, e.g.
 ```yaml
 services:
   tweakcad:
-    image: ghcr.io/tweakcad/tweakcad:0.2.2
+    image: ghcr.io/tweakcad/tweakcad:latest
     ports:
       - '8080:8080'
     restart: unless-stopped
