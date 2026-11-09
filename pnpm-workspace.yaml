@@ -41,8 +41,8 @@ allowBuilds:
 # reason and should be removed once the version ages past the window.
 minimumReleaseAgeExclude:
   # The kernel is our own build of occt-wasm (TweakCAD/occt-wasm, branch
-  # tweakcad: upstream 5.17.0 under our package name), published 2026-11-08 and
-  # adopted the same day. We build it from source and take a published tarball
-  # only when it matches our build byte for byte, which waiting adds nothing to.
+  # tweakcad: upstream 5.17.0 plus our face-merge fix), published 2026-11-09 by
+  # the fork's release workflow with npm provenance and adopted the same day,
+  # after its tarball passed our tests. Waiting adds nothing to that.
   # Drop this entry once it is no longer new.
-  - '@tweakcad/occt-wasm@5.17.0-tweakcad.1'
+  - '@tweakcad/occt-wasm@5.17.0-tweakcad.3'
