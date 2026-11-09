@@ -1008,6 +1008,43 @@ function expectGroove(
   expect(removed / grooveVolume(groove)).toBeCloseTo(1, 3);
 }
 
+/**
+ * Joins of walls that are neither planes nor elementary surfaces: an ellipse
+ * extruded into a sphere, whose wall the join splits and the face merge
+ * rejoins into one face, and a closed spline extruded into a box.
+ */
+async function curvedJoins(kernel: Kernel): Promise<Doc> {
+  const t = await session(kernel, 'Curved walls joined', 206);
+  await ok(t.call('feature_primitive', { shape: 'sphere', radius: 10, position: [0, 0, 0], operation: 'new' }));
+  const ear = await t.call<{ sketch: string }>('sketch_create', { on: 'xy' });
+  await t.call('sketch_draw_ellipse', { sketch: ear.sketch, center: [6, 12], majorEnd: [6, 22], minorRadius: 3.5 });
+  await ok(t.call('feature_extrude', { sketch: ear.sketch, extent: 'symmetric', distance: 3, operation: 'join' }));
+  await ok(
+    t.call('feature_primitive', {
+      shape: 'box',
+      width: 10,
+      depth: 10,
+      height: 6,
+      position: [40, 0, 3],
+      operation: 'new',
+    }),
+  );
+  const lobe = await t.call<{ sketch: string }>('sketch_create', { on: 'xy' });
+  await t.call('sketch_draw_spline', {
+    sketch: lobe.sketch,
+    points: [
+      [56, 4],
+      [50, 9],
+      [43, 6],
+      [42, -2],
+      [52, -4],
+    ],
+    closed: true,
+  });
+  await ok(t.call('feature_extrude', { sketch: lobe.sketch, distance: 6, operation: 'join' }));
+  return done(t);
+}
+
 export const FIXTURES: Fixture[] = [
   {
     name: 'features-extrude',
@@ -1037,6 +1074,12 @@ export const FIXTURES: Fixture[] = [
     proves:
       'Box, cylinder, sphere, cone and torus primitives; construction plane, axis, point and frame; a sketch on a construction plane with a slot, an ellipse, a closed spline and an arc closed by a line, extruded.',
     build: constructionAndSketches,
+  },
+  {
+    name: 'features-curved-joins',
+    proves:
+      'An extruded ellipse joined into a sphere keeps its wall one face, the merge rejoining the pieces the join split; a closed spline extruded and joined into a box.',
+    build: curvedJoins,
   },
   {
     name: 'washer-iso7089',
