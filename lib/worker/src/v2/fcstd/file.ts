@@ -220,12 +220,14 @@ ${data}
     );
   }
 
+  /** FreeCAD reads a `Camera` after the view providers and fails the file without one; an empty one keeps its own view. */
   private guiXml(): string {
     return `<?xml version='1.0' encoding='utf-8'?>
 <Document SchemaVersion="1">
 <ViewProviderData Count="${this.views.length}">
 ${this.views.join('\n')}
 </ViewProviderData>
+<Camera settings=""/>
 </Document>
 `;
   }

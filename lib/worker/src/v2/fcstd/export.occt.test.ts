@@ -12,6 +12,7 @@ import { strFromU8, unzipSync } from 'fflate';
 import { OcctKernel } from 'occt-wasm';
 import { seededIds } from '@tweakcad/editor';
 import { complete, importFcstd } from '@tweakcad/fcstd-import';
+import { findChild, parseXml } from '../../../../fcstd-import/src/xml';
 import { EvaluationService } from '../service/service';
 import type { Display } from '../service/types';
 
@@ -20,6 +21,44 @@ type Json = Record<string, unknown>;
 const here = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = resolvePath(here, '../../../../testing/fixtures/v2');
 const OUT = process.env.FCSTD_EXPORT_OUT;
+
+/**
+ * What FreeCAD would stop at reading `gui`, in the order its GUI document
+ * reader takes: a Document of schema 1, a ViewProviderData holding as many
+ * ViewProviders as it counts, each naming an object of the file with its
+ * properties counted, then a Camera. Null when it reads through.
+ */
+function guiProblem(gui: string, documentXml: string): string | null {
+  const parsed = parseXml(gui);
+  if (!parsed.ok) return parsed.error;
+  const root = parsed.value;
+  if (root.name !== 'Document' || root.attrs.SchemaVersion !== '1') return 'no Document of schema 1';
+  const [data, camera] = root.children;
+  if (data?.name !== 'ViewProviderData') return 'no ViewProviderData first';
+  if (Number(data.attrs.Count) !== data.children.length || data.children.some((c) => c.name !== 'ViewProvider')) {
+    return 'ViewProviderData does not hold as many view providers as it counts';
+  }
+  const objects = new Set([...documentXml.matchAll(/<Object type="[^"]+" name="([^"]+)"/g)].map((m) => m[1]));
+  for (const view of data.children) {
+    if (!objects.has(view.attrs.name)) return `a view provider names ${view.attrs.name}, which is not in the file`;
+    const props = findChild(view, 'Properties');
+    if (!props || Number(props.attrs.Count) !== props.children.filter((c) => c.name === 'Property').length) {
+      return `the properties of ${view.attrs.name} are not as counted`;
+    }
+  }
+  if (camera?.name !== 'Camera' || camera.attrs.settings === undefined) return 'no Camera after the view providers';
+  return null;
+}
+
+/** The pads and pockets of `documentXml` that set Midplane, which FreeCAD 1.1 warns of on opening. */
+function midplaneExtrudes(documentXml: string): string[] {
+  const extrudes = new Set(
+    [...documentXml.matchAll(/<Object type="PartDesign::(?:Pad|Pocket)" name="([^"]+)"/g)].map((m) => m[1]),
+  );
+  return [...documentXml.matchAll(/<Object name="([^"]+)"[^>]*>([\s\S]*?)<\/Object>/g)]
+    .filter((m) => extrudes.has(m[1]) && /<Property name="Midplane"/.test(m[2] as string))
+    .map((m) => m[1] as string);
+}
 
 let k: OcctKernel;
 let gcs: GcsWrapper;
@@ -156,6 +195,11 @@ describe('FreeCAD export', { timeout: 120_000 }, () => {
       const display = service.evaluate(doc);
       const want = volume(service, display, doc);
       const out = service.exportFreeCad();
+      const archive = unzipSync(out.bytes);
+      const documentXml = strFromU8(archive['Document.xml'] as Uint8Array);
+      const gui = archive['GuiDocument.xml'];
+      if (gui) expect(guiProblem(strFromU8(gui), documentXml)).toBeNull();
+      expect(midplaneExtrudes(documentXml)).toEqual([]);
       if (OUT) {
         const stem = file.replace(/\.cadjson$/, '');
         writeFileSync(join(OUT, `${stem}.FCStd`), out.bytes);

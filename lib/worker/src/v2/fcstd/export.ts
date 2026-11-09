@@ -651,7 +651,7 @@ class PartWriter {
       const d = this.num(symmetric.d);
       out.length('Length', measure === 'total' ? d : 2 * d);
       if (measure === 'total') this.ex.bind(out, 'Length', symmetric.d);
-      out.bool('Midplane', true);
+      // FreeCAD 1.1 reads a symmetric pad or pocket from SideType and treats Midplane as deprecated.
       out.enumeration('SideType', 2);
       out.enumeration('Type', 0);
     } else {
