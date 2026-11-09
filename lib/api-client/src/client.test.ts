@@ -9,6 +9,51 @@ function answering(body: string, init: ResponseInit): ApiClient {
 
 const Session = z.object({ user: z.object({ id: z.string() }).nullable() }).nullable();
 
+describe('request bodies', () => {
+  /** A client that records what one request sent. */
+  function recording() {
+    const seen: { body?: Uint8Array; contentType?: string | null } = {};
+    const api = new ApiClient({
+      baseUrl: 'http://host',
+      fetch: async (_url, init) => {
+        const request = new Request('http://host/', {
+          method: 'PUT',
+          body: init?.body ?? null,
+          headers: init?.headers,
+        });
+        seen.body = new Uint8Array(await request.arrayBuffer());
+        seen.contentType = request.headers.get('content-type');
+        return new Response('null', { status: 200, headers: { 'content-type': 'application/json' } });
+      },
+    });
+    return { api, seen };
+  }
+  const bytes = new Uint8Array([0, 1, 2, 250, 251, 252, 123, 125]);
+
+  it('sends a blob as its bytes, with its type', async () => {
+    const { api, seen } = recording();
+    await api.request('PUT', '/x', z.null(), new Blob([bytes], { type: 'model/stl' }));
+    expect(seen.body).toEqual(bytes);
+    expect(seen.contentType).toBe('model/stl');
+  });
+
+  it('sends typed arrays and array buffers as their bytes', async () => {
+    for (const body of [bytes, bytes.buffer]) {
+      const { api, seen } = recording();
+      await api.request('PUT', '/x', z.null(), body);
+      expect(seen.body).toEqual(bytes);
+      expect(seen.contentType).toBe('application/octet-stream');
+    }
+  });
+
+  it('sends anything else as JSON', async () => {
+    const { api, seen } = recording();
+    await api.request('PUT', '/x', z.null(), { name: 'a' });
+    expect(new TextDecoder().decode(seen.body)).toBe('{"name":"a"}');
+    expect(seen.contentType).toBe('application/json');
+  });
+});
+
 describe('answers that are not the API', () => {
   it('refuses a page served in place of the API, though its status is 200', async () => {
     const page = answering('<!doctype html><title>App</title>', {
