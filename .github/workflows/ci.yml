@@ -1,10 +1,11 @@
 name: CI
 
-# Branch pushes and pull requests. A version tag runs these checks as the
-# first job of image.yml, which builds the image only if they pass.
+# Pull requests, and pushes to main. A pull request's branch is checked once,
+# as merged into main. A version tag runs these checks as the first job of
+# image.yml, which builds the image only if they pass.
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
   workflow_call:
     inputs:
