@@ -49,6 +49,13 @@ export interface ImportedShape {
 
 const OPEN_MESH = 'This STL mesh is not closed: it has holes or loose triangles, so it bounds no solid.';
 
+/** What an import is doing, as it reports it: each stage once, and each solid of an STL as it is made. */
+export type ImportProgress =
+  | { stage: 'reading' }
+  | { stage: 'sewing'; triangles: number }
+  | { stage: 'solids'; done: number; total: number }
+  | { stage: 'naming'; faces: number };
+
 /** Refusals a user reads: the file is not one this importer can make solids of. */
 export class ImportRefusal extends Error {}
 
@@ -119,6 +126,7 @@ function solidsOf(
   root: ShapeHandle,
   format: ImportFormat,
   made: ShapeHandle[],
+  report: (p: ImportProgress) => void,
 ): { solids: ShapeHandle[]; skipped: number } {
   if (format === 'stl') {
     const triangles = k.subShapeCount(root, 'face');
@@ -127,13 +135,16 @@ function solidsOf(
         `This STL file has ${triangles} triangles; TweakCAD reads meshes of up to ${MAX_STL_TRIANGLES}.`,
       );
     }
+    report({ stage: 'sewing', triangles });
     const sewn = k.sew([root], 1e-6);
     made.push(sewn);
     const solids: ShapeHandle[] = [];
     let faces = 0;
     let skipped = 0;
-    for (const shell of k.getSubShapes(sewn, 'shell')) {
-      made.push(shell);
+    const shells = k.getSubShapes(sewn, 'shell');
+    made.push(...shells);
+    for (const [i, shell] of shells.entries()) {
+      report({ stage: 'solids', done: i, total: shells.length });
       const solid = closedSolid(k, shell, made);
       if (!solid) {
         skipped++;
@@ -162,7 +173,7 @@ function solidsOf(
 /**
  * Reads `bytes` as `format` into the stored shape of the `core.import`
  * feature `feature`. Refuses a file with no solids. `name` is the file's
- * name, kept on its asset row.
+ * name, kept on its asset row. `report` hears each stage as it starts.
  */
 export function importShape(
   k: OcctKernel,
@@ -170,13 +181,15 @@ export function importShape(
   format: ImportFormat,
   feature: string,
   name: string,
+  report: (p: ImportProgress) => void = () => undefined,
 ): ImportedShape {
   const made: ShapeHandle[] = [];
   const adapter = new NamingAdapter(k);
   try {
+    report({ stage: 'reading' });
     const root = read(k, bytes, format);
     made.push(root);
-    const { solids, skipped } = solidsOf(k, root, format, made);
+    const { solids, skipped } = solidsOf(k, root, format, made, report);
     if (solids.length === 0) {
       throw new ImportRefusal(
         format === 'stl'
@@ -206,6 +219,7 @@ export function importShape(
       facesFromEdge: new Map(),
     };
     const topology = adapter.topology(ref);
+    report({ stage: 'naming', faces: topology.faces.length });
     const names = new NameTable();
     const namer = startFeature(NamedState.empty(), { feature, ordinal: 0 }, adapter, names);
     namer.step(history, {

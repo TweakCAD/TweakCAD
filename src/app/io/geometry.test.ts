@@ -4,6 +4,7 @@ import { Editor, seededIds, type Json } from '@tweakcad/editor';
 import type { ImportedShape } from '@tweakcad/worker/src/v2/service/client';
 import { Docs } from '@tweakcad/worker/src/v2/assemblyDocs';
 import { importGeometry, type GeometryClient } from './geometry';
+import { ImportCancelled } from './importJobs';
 
 const BYTES = new TextEncoder().encode('ISO-10303-21; a block');
 const HASH = contentHash(BYTES);
@@ -52,7 +53,15 @@ describe('importing a file', () => {
     expect(editor.dispatch({ type: 'removePart', part: arm }).ok).toBe(true);
     const before = editor.save();
     finish();
-    expect(await pending).toEqual({ ok: false, message: 'The part the file was imported into is gone' });
+    expect(await pending).toEqual({ ok: false, dropped: true, message: 'The part the file was imported into is gone' });
     expect(editor.save()).toBe(before);
+  });
+
+  it('adds nothing, and warns of nothing, when the import is cancelled', async () => {
+    const { editor, arm, timeline } = twoParts();
+    const client: GeometryClient = { importFile: () => Promise.reject(new ImportCancelled()) };
+    const outcome = await importGeometry(editor, client, { name: 'block.step', bytes: BYTES }, 'step', arm);
+    expect(outcome).toEqual({ ok: false, dropped: true, message: 'The import was cancelled' });
+    expect(timeline(arm)).toEqual([]);
   });
 });

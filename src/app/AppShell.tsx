@@ -55,6 +55,7 @@ import { componentTimelines } from './assembly/componentTimelines';
 import { freezeFeature, unfreezeFeature } from './modeling/freeze';
 import { useDocument, useHistory, useSlice } from './hooks';
 import { BuildBadge } from './display/BuildBadge';
+import { ImportBadges } from './io/ImportBadges';
 import { editFeature, startExtrude, startPanel, startProfileFeature, workIn } from './modeling/commands';
 import { FREE_PANELS } from './modeling/panelTypes';
 import { exportDrawing, importDrawingSketch } from './modeling/sketchFiles';
@@ -603,7 +604,12 @@ export function AppShell(props: AppShellProps) {
         redoLabel={history.redoLabel}
         onUndo={() => editor.undo()}
         onRedo={() => editor.redo()}
-        rebuilding={<BuildBadge store={displayStore} />}
+        rebuilding={
+          <>
+            <ImportBadges />
+            <BuildBadge store={displayStore} />
+          </>
+        }
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={() => app.setState({ sidebarCollapsed: !sidebarCollapsed })}
         onNew={props.onNew}

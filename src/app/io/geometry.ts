@@ -9,6 +9,7 @@ import type { ImportFormat, ImportedShape } from '@tweakcad/worker/src/v2/servic
 import { partOf } from '../features';
 import { featureRow, insertionPoint, literal, nextFeatureName } from '../modeling/common';
 import type { FileKind, PickedFile } from './files';
+import { ImportCancelled } from './importJobs';
 
 export const GEOMETRY_FILES: Record<ImportFormat, FileKind> = {
   step: { description: 'STEP file (.step, .stp)', extensions: ['.step', '.stp'], mediaType: 'model/step' },
@@ -22,7 +23,10 @@ export interface GeometryClient {
 }
 
 export type ImportOutcome =
-  { ok: true; feature: string; name: string; bodies: number; skipped: number } | { ok: false; message: string };
+  | { ok: true; feature: string; name: string; bodies: number; skipped: number }
+  | { ok: false; message: string }
+  /** Cancelled, or its document closed while the file was read: nothing to warn about. */
+  | { ok: false; dropped: true; message: string };
 
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -49,11 +53,12 @@ export async function importGeometry(
   try {
     shape = await client.importFile(file.bytes, format, feature, file.name);
   } catch (e) {
+    if (e instanceof ImportCancelled) return { ok: false, dropped: true, message: e.message };
     return { ok: false, message: messageOf(e) };
   }
   const doc = editor.document;
   // The part went while the file was read: another document opened, or the part was deleted.
-  if (!partOf(doc, part)) return { ok: false, message: 'The part the file was imported into is gone' };
+  if (!partOf(doc, part)) return { ok: false, dropped: true, message: 'The part the file was imported into is gone' };
   const name = baseName(file.name) || nextFeatureName(doc, part, 'Import');
   const row = featureRow(editor, feature, 'core.import', name, {
     source: { file: { asset: shape.source } },
