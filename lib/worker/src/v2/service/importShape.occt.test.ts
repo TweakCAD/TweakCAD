@@ -128,6 +128,41 @@ describe('importing a file as a stored shape', { timeout: 60_000 }, () => {
     ]);
   });
 
+  it('merges triangles that are coplanar only to float precision', () => {
+    // A 10 mm cube with one corner 2e-5 mm off: its three faces there are flat only as an STL's floats are.
+    const stl = new Uint8Array(k.exportStl(k.makeBox(10, 10, 10), 0.5));
+    const view = new DataView(stl.buffer, stl.byteOffset, stl.byteLength);
+    for (let i = 0; i < view.getUint32(80, true); i++) {
+      for (let j = 0; j < 3; j++) {
+        const at = 84 + 50 * i + 12 + 12 * j;
+        const [x, y, z] = [0, 4, 8].map((o) => view.getFloat32(at + o, true));
+        if (x === 10 && y === 10 && z === 10) view.setFloat32(at + 8, 10.00002, true);
+      }
+    }
+    const shape = service.importFile(stl, 'stl', 'cube.stl');
+    const stored = k.fromBREP(storedText(shape));
+    expect(k.subShapeCount(stored, 'face')).toBe(6);
+    expect(k.isValid(stored)).toBe(true);
+    k.release(stored);
+  });
+
+  it('draws the sharp edges of an STL, not the seams between the facets of a curved surface', () => {
+    const cylinder = k.makeCylinder(10, 20);
+    const stl = new Uint8Array(k.exportStl(cylinder, 0.1));
+    k.release(cylinder);
+    const { doc } = importDoc(stl, 'stl');
+    const display = service.evaluate(doc);
+    const [body] = display.definitions[0]?.bodies ?? [];
+    const segments = body?.mesh.segments ?? new Float32Array(0);
+    expect(segments.length).toBeGreaterThan(0);
+    // Only the two rims are drawn: every segment runs at one height, none along a facet seam.
+    for (let i = 0; i < segments.length; i += 6)
+      expect(Math.abs(segments[i + 2]! - segments[i + 5]!)).toBeLessThan(1e-4);
+    const heights = new Set<number>();
+    for (let i = 2; i < segments.length; i += 3) heights.add(Math.round(segments[i]!));
+    expect([...heights].sort((a, b) => a - b)).toEqual([0, 20]);
+  });
+
   it('refuses an STL mesh with a hole in it, rather than making an open shell a body', () => {
     // A 10 mm cube's twelve triangles, outward, less the two of its top.
     const p = (i: number): [number, number, number] => [(i & 1) * 10, ((i >> 1) & 1) * 10, ((i >> 2) & 1) * 10];

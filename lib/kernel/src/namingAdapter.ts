@@ -105,6 +105,8 @@ interface Entry {
   /** Compound of this entity's wires or shells, for boundary distances. */
   boundary?: ShapeHandle;
   sample?: Vec3 | null;
+  /** A face's plane normal, or null off a plane; read once. */
+  planeNormal?: Vec3 | null;
 }
 
 interface ShapeRecord {
@@ -376,6 +378,20 @@ export class NamingAdapter implements KernelFacts {
       default:
         return { volume: this.k.getVolume(entry.handle), bbox: this.bbox(entry) };
     }
+  }
+
+  /**
+   * The normal of a face's plane, up to sign, or null for a face on any other
+   * surface: its surface alone is read, not the face's area, centre or
+   * vertices as `measures` reads them.
+   */
+  planeNormal(face: ShapeKey): Vec3 | null {
+    const entry = this.entryOf(face, 'face');
+    if (entry.planeNormal === undefined) {
+      const surface = this.k.surfaceType(entry.handle) === 'plane' ? this.surface(entry) : undefined;
+      entry.planeNormal = surface?.kind === 'plane' ? surface.normal : null;
+    }
+    return entry.planeNormal;
   }
 
   samplePoint(entity: ShapeKey): Vec3 | null {
