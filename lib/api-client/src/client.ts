@@ -29,8 +29,12 @@ export class ApiClient {
     headers.set('Accept', 'application/json');
     let bodyInit: BodyInit | null = null;
 
-    if (body instanceof FormData) {
+    if (body instanceof FormData || body instanceof Blob) {
+      // Sent as they are: fetch sets a form's boundary and a blob's type.
       bodyInit = body;
+    } else if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
+      headers.set('Content-Type', 'application/octet-stream');
+      bodyInit = body as BodyInit;
     } else if (body !== undefined) {
       headers.set('Content-Type', 'application/json');
       bodyInit = JSON.stringify(body);
