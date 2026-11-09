@@ -3,6 +3,7 @@ import {
   NamingAdapterError,
   buildOperationHistory,
   decodeRunLength,
+  type HeldKey,
   type HistoryLists,
   type InputIndex,
   type ResultIndex,
@@ -11,17 +12,27 @@ import {
 const head = { result: 'out', inputs: [{ shape: 'in', use: 'target' as const }] };
 const noLists: HistoryLists = { modified: [], generated: [], edgeModified: [], edgeGenerated: [] };
 
-function index(pairs: readonly [number, number][]): Map<number, number> {
-  return new Map(pairs);
+/** A key, or a key and the `same` id it shares with another key of its sub-shape. */
+type Held = number | readonly [key: number, same: number];
+
+const held = (h: Held): HeldKey => (typeof h === 'number' ? { key: h, same: h } : { key: h[0], same: h[1] });
+
+/** Pairs of hash and key, into buckets; a hash given twice is a collision. */
+function index(pairs: readonly (readonly [number, Held])[]): Map<number, HeldKey[]> {
+  const map = new Map<number, HeldKey[]>();
+  for (const [hash, h] of pairs) map.set(hash, [...(map.get(hash) ?? []), held(h)]);
+  return map;
 }
 
-function input(faces: readonly [number, number[]][], edges: readonly [number, number[]][] = []): InputIndex {
-  return { faces: new Map(faces), edges: new Map(edges) };
+function input(faces: readonly [number, Held[]][], edges: readonly [number, Held[]][] = []): InputIndex {
+  const spread = (lists: readonly [number, Held[]][]) =>
+    index(lists.flatMap(([hash, keys]) => keys.map((key) => [hash, key] as const)));
+  return { faces: spread(faces), edges: spread(edges) };
 }
 
 function result(
-  faces: readonly [number, number][],
-  edges: readonly [number, number][] = [],
+  faces: readonly [number, Held][],
+  edges: readonly [number, Held][] = [],
   others: number[] = [],
 ): ResultIndex {
   return { faces: index(faces), edges: index(edges), others: new Set(others) };
@@ -159,7 +170,7 @@ describe('buildOperationHistory', () => {
   });
 
   it('reports a face held the other way round as modified into its new key', () => {
-    const h = buildOperationHistory(noLists, input([[10, [1]]]), result([[10, 2]]), head);
+    const h = buildOperationHistory(noLists, input([[10, [1]]]), result([[10, [2, 1]]]), head);
     expect(h.faces.kept).toEqual([]);
     expect(h.faces.modified).toEqual(new Map([[1, [2]]]));
     expect(h.faces.added).toEqual([]);
@@ -187,10 +198,77 @@ describe('buildOperationHistory', () => {
     const lists = { ...noLists, generated: [10, 1, 21] };
     const build = () => buildOperationHistory(lists, input([[10, [1]]]), result([[21, 5]], [[21, 6]]), head);
     expect(build).toThrow(NamingAdapterError);
-    expect(build).toThrow(/several kinds/);
+    expect(build).toThrow(/several sub-shapes of the result/);
     expect(() => buildOperationHistory(lists, input([[10, [1]]]), result([[21, 5]], [], [21]), head)).toThrow(
-      /several kinds/,
+      /several sub-shapes of the result/,
     );
+  });
+
+  it('refuses a listed hash that two faces of the result share', () => {
+    const faces: [number, Held][] = [
+      [21, 5],
+      [21, 6],
+    ];
+    expect(() =>
+      buildOperationHistory({ ...noLists, modified: [10, 1, 21] }, input([[10, [1]]]), result(faces), head),
+    ).toThrow(expect.objectContaining({ code: 'collision' }));
+  });
+
+  it('refuses a listed input hash that two different input faces or edges share', () => {
+    expect(() =>
+      buildOperationHistory({ ...noLists, modified: [10, 1, 21] }, input([[10, [1, 2]]]), result([[21, 5]]), head),
+    ).toThrow(/several input faces/);
+    expect(() =>
+      buildOperationHistory(
+        { ...noLists, edgeGenerated: [30, 1, 21] },
+        input([], [[30, [3, 4]]]),
+        result([[21, 5]]),
+        head,
+      ),
+    ).toThrow(/several input edges/);
+  });
+
+  it('gives both keys of a face held both ways round the images listed for its hash', () => {
+    const h = buildOperationHistory(
+      { ...noLists, modified: [10, 1, 21] },
+      input([
+        [
+          10,
+          [
+            [1, 1],
+            [2, 1],
+          ],
+        ],
+      ]),
+      result([[21, 5]]),
+      head,
+    );
+    expect(h.faces.modified).toEqual(
+      new Map([
+        [1, [5]],
+        [2, [5]],
+      ]),
+    );
+  });
+
+  it('sorts out sub-shapes that share a hash nothing lists', () => {
+    const h = buildOperationHistory(
+      { ...noLists, modified: [11, 1, 22] },
+      input([
+        [10, [1, 2]],
+        [11, [3]],
+      ]),
+      result([
+        [10, 1],
+        [10, 7],
+        [22, 5],
+      ]),
+      head,
+    );
+    expect(h.faces.kept).toEqual([1]);
+    expect(h.faces.deleted).toEqual([2]);
+    expect(h.faces.modified).toEqual(new Map([[3, [5]]]));
+    expect(h.faces.added).toEqual([7]);
   });
 
   it('allows a hash shared across kinds when nothing lists it', () => {

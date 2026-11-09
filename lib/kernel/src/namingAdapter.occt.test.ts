@@ -221,10 +221,36 @@ describe('kernel behaviour the adapter relies on', () => {
 });
 
 describe('keys', () => {
-  it('refuses a shape whose sub-shapes collide', () => {
-    start(2);
-    const shape = box(0, 0, 0, 10, 10, 10);
-    expect(() => adapter.addShape(shape)).toThrow(expect.objectContaining({ code: 'collision' }));
+  it('walks and reads a shape whose sub-shapes all share one hash, as with every hash apart', () => {
+    // A plate with a hole: an inner loop, and a seam used twice by the hole's wall.
+    const hole = k.located(k.makeCylinder(3, 20), [1, 0, 0, 10, 0, 1, 0, 10, 0, 0, 1, -5]);
+    const shape = k.cutWithHistory(box(0, 0, 0, 30, 20, 5), hole, [], HASH_BOUND).result;
+    const reference = new NamingAdapter(k);
+    try {
+      const want = reference.addShape(shape);
+      start(1);
+      const ref = adapter.addShape(shape);
+      const topology = adapter.topology(ref);
+      expect(adapter.subShapes(ref)).toEqual(reference.subShapes(want));
+      expect(topology).toEqual(reference.topology(want));
+      expect(topology.faces).toHaveLength(7);
+      expect(topology.edges.filter((e) => e.form === 'seam')).toHaveLength(1);
+      for (const face of topology.faces) {
+        expect(adapter.faceGeometry(face)).toEqual(reference.faceGeometry(face));
+        expect(adapter.measures(face)).toEqual(reference.measures(face));
+        expect(adapter.keyIn(ref, adapter.handleOf(face))).toBe(face);
+      }
+      for (const { edge } of topology.edges) {
+        expect(adapter.edgeGeometry(edge)).toEqual(reference.edgeGeometry(edge));
+        expect(adapter.keyIn(ref, adapter.handleOf(edge))).toBe(edge);
+      }
+      expect(adapter.measures(topology.solids[0]?.solid as ShapeKey).volume).toBeCloseTo(3000 - 45 * Math.PI, 6);
+
+      // A second shape holding the same sub-shapes takes them over by key, colliding hashes or not.
+      expect(adapter.topology(adapter.addShape(shape))).toEqual(topology);
+    } finally {
+      reference.dispose();
+    }
   });
 
   it('tells apart sub-shapes of two shapes that share a hash', () => {
@@ -259,13 +285,87 @@ describe('keys', () => {
     expect(area(fb)).toBeCloseTo(600, 6);
   });
 
-  it('releases every handle a refused shape took, once disposed', () => {
-    start(2);
+  it('releases every handle of a shape whose sub-shapes collide, once disposed', () => {
+    start(1);
     const shape = box(0, 0, 0, 10, 10, 10);
     const held = k.shapeCount;
-    expect(() => adapter.addShape(shape)).toThrow(expect.objectContaining({ code: 'collision' }));
+    adapter.addShape(shape);
+    expect(k.shapeCount).toBeGreaterThan(held);
     adapter.dispose();
     expect(k.shapeCount).toBe(held);
+  });
+
+  /** A box with a slot cut across it, its history read by an adapter with `bound`. */
+  function slotCut(bound: number): { history: OperationHistory; collided: boolean } {
+    const a = box(0, 0, 0, 30, 10, 10);
+    const b = box(10, -1, 5, 5, 12, 6);
+    start(bound);
+    const refs = [adapter.addShape(a), adapter.addShape(b)];
+    const evolution = k.cutWithHistory(a, b, adapter.faceHashes(refs), bound);
+    // Faces or edges of one kind that share a hash, across the inputs or within the result.
+    const repeats = (hashes: number[]) => new Set(hashes).size < hashes.length;
+    const collided = (['face', 'edge'] as const).some(
+      (kind) =>
+        repeats([...k.subShapeHashes(a, kind, bound), ...k.subShapeHashes(b, kind, bound)]) ||
+        repeats(k.subShapeHashes(evolution.result, kind, bound)),
+    );
+    const history = adapter.history(evolution, [
+      { shape: refs[0] as ShapeRef, use: 'target' },
+      { shape: refs[1] as ShapeRef, use: 'tool' },
+    ]);
+    return { history, collided };
+  }
+
+  /** A history with each key replaced by where its face or edge is, so two adapters' histories compare. */
+  function located(history: OperationHistory): unknown {
+    const at = (key: ShapeKey): string => {
+      const m = adapter.measures(key);
+      const point = m.centroid ?? m.midpoint ?? m.center;
+      return JSON.stringify([...(point as Vec3), m.area ?? m.length].map((v) => Math.round((v as number) * 1e6)));
+    };
+    const list = (keys: readonly ShapeKey[]) => keys.map(at).sort();
+    const map = (m: ReadonlyMap<ShapeKey, readonly ShapeKey[]>) =>
+      [...m].map(([from, to]) => [at(from), list(to)] as const).sort((x, y) => (x[0] < y[0] ? -1 : 1));
+    const side = (h: OperationHistory['faces']) => ({
+      kept: list(h.kept),
+      modified: map(h.modified),
+      deleted: list(h.deleted),
+      added: list(h.added),
+    });
+    return {
+      faces: side(history.faces),
+      edges: side(history.edges),
+      facesFromFace: map(history.facesFromFace),
+      facesFromEdge: map(history.facesFromEdge),
+    };
+  }
+
+  it('reads a history as with every hash apart when its listed hashes stand for one sub-shape each', () => {
+    const want = located(slotCut(HASH_BOUND).history);
+    adapter.dispose();
+    k.releaseAll();
+    // A bound under which faces or edges share hashes but no hash the history lists is shared.
+    let found = false;
+    for (let bound = 1000; bound < 20000 && !found; bound++) {
+      try {
+        const read = slotCut(bound);
+        if (!read.collided) continue;
+        found = true;
+        expectKeysExist(read.history);
+        expectInputsPartitioned(read.history);
+        expect(located(read.history)).toEqual(want);
+      } catch (e) {
+        if (!(e instanceof NamingAdapterError && e.code === 'collision')) throw e;
+      } finally {
+        adapter.dispose();
+        k.releaseAll();
+      }
+    }
+    expect(found).toBe(true);
+  });
+
+  it('refuses a history whose listed hash stands for several sub-shapes', () => {
+    expect(() => slotCut(1)).toThrow(expect.objectContaining({ code: 'collision' }));
   });
 
   it('keeps one key for a sub-shape across shapes', () => {
