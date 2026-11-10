@@ -51,7 +51,7 @@ describe('an imported body through the cloud', { timeout: 60_000 }, () => {
     expect(bodies(before, d.partId)).toEqual({ count: 1, volume: expect.closeTo(1000, 6) as unknown as number });
 
     const site = new FakeSite();
-    const cloud = new CloudProjects(site, site);
+    const cloud = new CloudProjects(site);
     const { id } = await cloud.create('Imported');
     await cloud.save(id, loaded.document);
     const [hash] = Object.keys(fixture.assets);
@@ -62,7 +62,7 @@ describe('an imported body through the cloud', { timeout: 60_000 }, () => {
     const alone = service.evaluate(stored.document);
     expect(alone.pauses.map((p) => p.message).join(' ')).toMatch(/not loaded/);
 
-    const opened = await new CloudProjects(site, site).open(id);
+    const opened = await new CloudProjects(site).open(id);
     expect(opened.missing).toEqual([]);
     const after = service.evaluate(opened.doc!);
     expect(after.pauses).toEqual([]);

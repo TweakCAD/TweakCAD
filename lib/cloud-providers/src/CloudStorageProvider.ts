@@ -15,7 +15,8 @@ const ListResponse = PageResponse(ProjectSummary);
 
 const GetResponse = z.object({
   project: ProjectSummary,
-  downloadUrl: z.string().nullable(),
+  /** Whether there is a live document; its text comes from `loadDocument`. */
+  hasDocument: z.boolean(),
   etag: z.string().nullable(),
   sizeBytes: z.number().int(),
 });
@@ -50,12 +51,6 @@ const RevisionPage = z.object({
 });
 type RevisionPage = z.infer<typeof RevisionPage>;
 
-const RevisionUrlResponse = z.object({
-  revisionId: z.string(),
-  downloadUrl: z.string(),
-  expiresInSeconds: z.number().int(),
-});
-
 /**
  * `restoredFrom` echoes the revision asked for; `snapshotVersionId` is the
  * revision the server minted of the pre-restore state, so the UI can offer
@@ -71,12 +66,6 @@ type RestoreResponse = z.infer<typeof RestoreResponse>;
 const PutReferenceResponse = z.object({
   stored: z.boolean(),
   bytes: z.number().int(),
-});
-
-const ReferenceUrlResponse = z.object({
-  hash: z.string(),
-  downloadUrl: z.string(),
-  expiresInSeconds: z.number().int(),
 });
 
 /** Thrown when `If-Match` fails: the project moved under us. */
@@ -149,9 +138,8 @@ export class CloudStorageProvider {
    * served. The caller reads it with the format's strict reader, which needs
    * the text as written.
    *
-   * Read through the app rather than `downloadUrl`: that is a signed bucket
-   * URL on another origin, and a cross-origin `fetch()` of it needs bucket
-   * CORS the editor cannot count on. The etag comes from this response, not
+   * Read through the app, like every private object: the editor is never
+   * given a storage address. The etag comes from this response, not
    * from {@link load}, so it describes exactly the bytes returned even when
    * an autosave lands between the two requests.
    */
@@ -249,15 +237,13 @@ export class CloudStorageProvider {
     return res.value;
   }
 
-  /** Short-lived signed URL for one revision's bytes, for a read-only preview. */
-  async revisionUrl(projectId: string, revisionId: string): Promise<string> {
-    const res = await this.api.request(
-      'GET',
+  /** One revision's document text, for a read-only preview. */
+  async loadRevision(projectId: string, revisionId: string): Promise<string> {
+    const response = await this.read(
       `/api/v1/projects/${encodeURIComponent(projectId)}/revisions/${encodeURIComponent(revisionId)}`,
-      RevisionUrlResponse,
+      'application/json',
     );
-    if (!res.ok) throw apiError(res.error);
-    return res.value.downloadUrl;
+    return response.text();
   }
 
   /**
@@ -306,15 +292,34 @@ export class CloudStorageProvider {
     if (!res.ok) throw apiError(res.error);
   }
 
-  /** Short-lived signed URL for one stored import. */
-  async referenceUrl(projectId: string, hash: string): Promise<string> {
-    const res = await this.api.request(
-      'GET',
+  /** One stored import's bytes. */
+  async loadReference(projectId: string, hash: string): Promise<Uint8Array> {
+    const response = await this.read(
       `/api/v1/projects/${encodeURIComponent(projectId)}/references/${encodeURIComponent(hash)}`,
-      ReferenceUrlResponse,
+      'application/octet-stream',
     );
-    if (!res.ok) throw apiError(res.error);
-    return res.value.downloadUrl;
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
+  /**
+   * A private object's bytes, read through the site, which checks ownership:
+   * the editor is never given a storage address. A refusal comes back as the
+   * site's error body.
+   */
+  private async read(path: string, accept: string): Promise<Response> {
+    const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      method: 'GET',
+      headers: { Accept: accept },
+      credentials: 'include',
+    });
+    if (!response.ok) {
+      const raw: unknown = await response.json().catch(() => null);
+      const parsed = ApiError.safeParse(raw);
+      throw apiError(
+        parsed.success ? parsed.data : { code: 'internal', message: `Request failed (${response.status})` },
+      );
+    }
+    return response;
   }
 
   async delete(projectId: string): Promise<void> {

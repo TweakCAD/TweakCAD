@@ -44,7 +44,7 @@ import { bootApp, type AppServices } from './services';
 import { AutoExportPanel } from './storage/AutoExportPanel';
 import { runAutoExport, shouldAutoExport, type AutoExportStatus } from './storage/autoExport';
 import { resolveBoot } from './storage/boot';
-import { CloudProjects, cloudLimitNotice, fetchUrls } from './storage/cloud';
+import { CloudProjects, cloudLimitNotice } from './storage/cloud';
 import { download, openFileFromDisk, safeFileName } from './storage/disk';
 import { HistoryPanel } from './storage/HistoryPanel';
 import { SaveAsPicker } from './storage/SaveAsPicker';
@@ -123,10 +123,7 @@ export function App() {
   const viewportRef = useRef<Viewport | null>(null);
   const ids = useMemo(() => randomIds(), []);
   const workingCopy = useMemo(() => defaultWorkingCopy(), []);
-  const cloud = useMemo(
-    () => new CloudProjects(new CloudStorageProvider({ baseUrl: '' }), fetchUrls, captureThumbnail),
-    [],
-  );
+  const cloud = useMemo(() => new CloudProjects(new CloudStorageProvider({ baseUrl: '' }), captureThumbnail), []);
   /** Boots the services on `boot`; set once the worker is spawned. */
   const startRef = useRef<((boot: BootResult) => Promise<void>) | null>(null);
   /** Opens a file in place of the document: what a restored session's "Re-open original" does. */

@@ -191,7 +191,7 @@ describe('bootApp', () => {
 
   it('boots a cloud project bound to it: edits reach its working copy and the project', async () => {
     const site = new FakeSite();
-    const cloud = new CloudProjects(site, site);
+    const cloud = new CloudProjects(site);
     const { id } = await cloud.create('Plate');
     const workingCopy = new MemoryWorkingCopy();
     const ids = seededIds(5);
@@ -245,7 +245,7 @@ describe('a revision previewed in the app', () => {
   /** A cloud project booted in the app with one revision ("Kept") and a live document edited past it ("Live"), not yet written. */
   async function previewable() {
     const site = new FakeSite();
-    const cloud = new CloudProjects(site, site);
+    const cloud = new CloudProjects(site);
     const { id } = await cloud.create('Plate');
     const workingCopy = new MemoryWorkingCopy();
     const ids = seededIds(9);

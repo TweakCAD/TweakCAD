@@ -43,7 +43,7 @@ const assetData = (doc: Doc, hash: string) =>
 
 function site(): { api: FakeSite; cloud: CloudProjects } {
   const api = new FakeSite();
-  return { api, cloud: new CloudProjects(api, api) };
+  return { api, cloud: new CloudProjects(api) };
 }
 
 const noDisk: DiskApi = {
@@ -98,7 +98,7 @@ describe('CloudProjects', () => {
     if (!stored.ok) return;
     expect(assetData(stored.document, STEP_HASH)).toEqual({ external: {} });
 
-    const other = new CloudProjects(api, api);
+    const other = new CloudProjects(api);
     const opened = await other.open(id);
     expect(opened.missing).toEqual([]);
     // Byte for byte, under the name the first save sent to the site.
@@ -396,7 +396,7 @@ describe('what a window opens at boot', () => {
     const { api, cloud } = site();
     const { id } = await cloud.create('Plate');
     await cloud.save(id, plateWithFile());
-    const outcome = await resolveBoot(options({ projectId: id, cloud: new CloudProjects(api, api) }));
+    const outcome = await resolveBoot(options({ projectId: id, cloud: new CloudProjects(api) }));
     expect(outcome.kind).toBe('document');
     if (outcome.kind !== 'document') return;
     // The first save sent the document's name to the site.
