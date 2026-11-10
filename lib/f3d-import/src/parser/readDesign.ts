@@ -6,6 +6,7 @@ import { readParameters } from './parameters';
 import { readSketches } from './sketches';
 import { readFeatures } from './features';
 import { FaceIndex, readBrepFaces } from './brep';
+import { readUpAxis } from './upAxis';
 import { readFeatureBodies } from './bodies';
 import { readComponentPlacement } from './components';
 import { STORED_BODY, UNLINKED, type F3dComponent, type F3dDesign, type F3dLink } from './types';
@@ -107,5 +108,6 @@ function readStreams(
     recordOfOp: bodies.recordOfOp,
     storedBodies,
     links,
+    upAxis: readUpAxis(index),
   };
 }

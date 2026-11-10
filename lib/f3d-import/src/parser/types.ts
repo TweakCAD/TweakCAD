@@ -331,6 +331,8 @@ export type F3dDesign = {
   storedBodies: Map<number | null, number>;
   /** The designs this one links to. */
   links: F3dLink[];
+  /** The axis the design was modelled with up, from its saved views; null when it has none. */
+  upAxis: 'y' | 'z' | null;
   /** The component each feature works in, for those that name bodies. */
   componentOf: Map<number, number>;
   /** The record behind an operation id. */

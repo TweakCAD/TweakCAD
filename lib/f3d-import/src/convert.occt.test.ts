@@ -157,6 +157,7 @@ const design = (sketch: F3dSketch, features: F3dFeature[], faces = new FaceIndex
   leftOut: {},
   storedBodies: new Map(),
   links: [],
+  upAxis: null,
   components: [],
   componentOf: new Map(),
   recordOfOp: (op) => OPS.get(Math.abs(op)),
@@ -310,6 +311,29 @@ describe('extrudes', { timeout: 60_000 }, () => {
       ),
     );
     expect(r.max[2]).toBeCloseTo(40);
+  });
+
+  it('stops on a face that is not parallel to the sketch, found in the model as built', async () => {
+    // A cylinder of radius 1 cm along X, its axis at y 0.5, z 5: the rectangle rises until it meets its underside.
+    const cylinder: F3dPrimitive = {
+      kind: 'primitive',
+      id: 200,
+      shape: 'cylinder',
+      operation: 'newBody',
+      plane: [0, 0, 1, -1, 1, 0, 0, 0.5, 0, 1, 0, 5, 0, 0, 0, 1],
+      onPlane: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+      sizes: { Diameter: parameter(300, 2), Height: parameter(301, 4) },
+    };
+    const faces = new FaceIndex();
+    const surface: BrepSurface = { kind: 'cone', origin: [0, 0.5, 5], axis: [1, 0, 0], radius: 1, sine: 0, cosine: 1 };
+    faces.add([{ tags: [{ token: '1', ops: [7] }], surface }]);
+    const stop = extrude({ side1Offset: parameter(104, 0), along: null, faces: [{ token: '1', ops: [7] }] });
+    const r = await built({ ...design(rectangle(), [stop], faces), features: [cylinder, stop], order: [200, 2, 100] });
+    // The area under a circle of radius 10 mm across the 10 mm the rectangle spans, about its middle.
+    const under = 5 * Math.sqrt(75) + 100 * Math.asin(0.5);
+    const cylinderVolume = Math.PI * 10 * 10 * 40;
+    expect(r.volume).toBeCloseTo(cylinderVolume + 20 * (50 * 10 - under), 0);
+    expect(r.min[2]).toBeCloseTo(0);
   });
 });
 
@@ -929,6 +953,71 @@ describe('sketch constraints', { timeout: 60_000 }, () => {
     ];
     const r = await built(design(rectangle({ relations }), [extrude()]));
     expect(r.volume).toBeCloseTo(20 * 10 * 30, 3);
+    expect(r.max[0]).toBeCloseTo(20);
+  });
+});
+
+describe('up axis', { timeout: 60_000 }, () => {
+  it('stands a design modelled Z up on the Y axis: its XY sketch lies on the ground plane', async () => {
+    const r = await built({ ...design(rectangle(), [extrude()]), upAxis: 'z' });
+    // (x, y, z) became (x, z, -y): 3 cm up, the sketch's 1 cm toward -z.
+    expect(r.min).toEqual([expect.closeTo(0), expect.closeTo(0), expect.closeTo(-10)]);
+    expect(r.max).toEqual([expect.closeTo(20), expect.closeTo(30), expect.closeTo(0)]);
+    const sketch = ((r.document.parts as Json[])[0]?.timeline as Json[])[0]?.inputs as Json;
+    expect(JSON.stringify(sketch.frame)).toContain('"standard":{"name":"xz"}');
+  });
+
+  it('keeps the axes of a design modelled Y up, or one that does not say', async () => {
+    for (const upAxis of ['y', null] as const) {
+      const r = await built({ ...design(rectangle(), [extrude()]), upAxis });
+      expect(r.max).toEqual([expect.closeTo(20), expect.closeTo(10), expect.closeTo(30)]);
+    }
+  });
+});
+
+describe('profiles', { timeout: 60_000 }, () => {
+  /** The rectangle with more lines drawn on it: points from 14, lines from 24. */
+  function drawnOn(extra: [[number, number], [number, number]][]): F3dSketch {
+    const s = rectangle();
+    extra.forEach(([a, b], i) => {
+      s.points.set(14 + 2 * i, { id: 14 + 2 * i, x: a[0], y: a[1], z: 0 });
+      s.points.set(15 + 2 * i, { id: 15 + 2 * i, x: b[0], y: b[1], z: 0 });
+      s.curves.push({
+        kind: 'line',
+        id: 24 + i,
+        primaryId: 24 + i,
+        secondaryId: 0,
+        startId: 14 + 2 * i,
+        endId: 15 + 2 * i,
+        construction: false,
+      });
+    });
+    return s;
+  }
+
+  it('finds a profile that names a longer line lying over one of its sides', async () => {
+    const sketch = drawnOn([
+      [
+        [-1, 0],
+        [3, 0],
+      ],
+    ]);
+    const over = { sketchId: SKETCH, regions: [{ curves: [24, 21, 22, 23].map((primary) => ({ primary, secondary: 0 })) }] };
+    const r = await built(design(sketch, [extrude({ profiles: [over] })]));
+    expect(r.volume).toBeCloseTo(20 * 10 * 30, 3);
+    expect(r.max[0]).toBeCloseTo(20);
+  });
+
+  it('takes every region inside a profile that lines drawn later split', async () => {
+    const sketch = drawnOn([
+      [
+        [1, 0],
+        [1, 1],
+      ],
+    ]);
+    const r = await built(design(sketch, [extrude({ profiles: [profile] })]));
+    expect(r.volume).toBeCloseTo(20 * 10 * 30, 3);
+    expect(r.min[0]).toBeCloseTo(0);
     expect(r.max[0]).toBeCloseTo(20);
   });
 });

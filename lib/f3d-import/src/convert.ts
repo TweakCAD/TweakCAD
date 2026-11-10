@@ -16,6 +16,7 @@ import {
   OPERATIONS,
   chamferFeature,
   extrudeRow,
+  isFaceStop,
   filletFeature,
   revolveRow,
   type FeatureContext,
@@ -40,7 +41,9 @@ import { planParameters, type ParameterPlan } from './parameters';
 import { STORED_BODY, UNLINKED } from './parser/types';
 import type { F3dComponent, F3dDesign, F3dFeature, F3dSketch } from './parser/types';
 import { frameOfMatrix, invertMatrix, multiplyMatrix } from './placement';
+import type { FaceIndex } from './parser/brep';
 import { convertSketch, type SketchStats } from './sketch';
+import { TurnedFaces, turnFeature, Z_UP_TURN } from './turn';
 import { Writer, type Json } from './writer';
 
 export interface ImportNote {
@@ -82,6 +85,8 @@ export interface ImportReport {
   leftOut: Record<string, number>;
   parts: number;
   instances: number;
+  /** The file's axis that became the document's y: `z` when a design modelled Z up was turned, (x, y, z) to (x, z, −y). */
+  upAxis: 'y' | 'z';
 }
 
 export interface Conversion {
@@ -169,6 +174,13 @@ const MAX_INSTANCES = 200_000;
 
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 
+/** Of face references, the one whose recorded area is largest. */
+function largestFace(faces: readonly Json[]): Json | undefined {
+  const area = (f: Json): number =>
+    ((f.entity as { snapshot?: { area?: number } } | undefined)?.snapshot?.area as number | undefined) ?? 0;
+  return faces.reduce<Json | undefined>((best, f) => (best === undefined || area(f) > area(best) ? f : best), undefined);
+}
+
 export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
   const w = new Writer(o.ids);
   const notes: ImportNote[] = [];
@@ -187,6 +199,8 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
   const allParts: PartDraft[] = [];
   const topTable: Json[] = [];
   const written = new Map<F3dDesign, Placed[]>();
+  /** The top design's root part when its contents were turned to stand Y up. */
+  let turnedRoot: string | undefined;
 
   /** Writes a design's parts once; returns where they sit in its model. */
   const writeDesign = (design: F3dDesign, designName: string): Placed[] => {
@@ -209,12 +223,14 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
   };
 
   const writeParts = (design: F3dDesign, designName: string, plan: ParameterPlan, isTop: boolean): Placed[] => {
+    // A design modelled Z up stands on the app's Y-up axes: its root part's contents turn, and every other part is placed turned.
+    const turns = isTop && design.upAxis === 'z';
     const rootPart: PartDraft = {
       id: o.ids('part'),
       name: designName,
       timeline: [],
       pending: [],
-      toPart: null,
+      toPart: turns ? Z_UP_TURN : null,
       component: null,
       parameters: [],
     };
@@ -273,11 +289,13 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
       return out;
     };
 
+    const turnedFaces = turns ? new TurnedFaces(design.faces) : design.faces;
+    const facesOf = (part: PartDraft): FaceIndex => (part === rootPart ? turnedFaces : design.faces);
     const context = (part: PartDraft): FeatureContext => ({
       w,
       plan,
       sketch: (id) => emit(id, part),
-      faces: design.faces,
+      faces: facesOf(part),
     });
     for (const [what, n] of Object.entries(design.leftOut)) count(what, n);
 
@@ -319,7 +337,7 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
     };
     const counters: Record<string, number> = {};
     const copiesLeftOut = 'pasted body' in design.leftOut || 'component from bodies' in design.leftOut;
-    const tc: TransformContext = {
+    const transforms: TransformContext = {
       w,
       plan,
       faces: design.faces,
@@ -355,19 +373,37 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
       rows.set(record, { id, part: part.id, op: 'new' });
     };
     for (const id of design.order) {
-      const f = features.get(id);
-      if (!f) continue;
-      if (f.kind === 'sketch') {
-        const sketch = records.get(f.sketchId);
-        if (sketch) emit(f.sketchId, partOf(sketch.componentId));
+      const raw = features.get(id);
+      if (!raw) continue;
+      if (raw.kind === 'sketch') {
+        const sketch = records.get(raw.sketchId);
+        if (sketch) emit(raw.sketchId, partOf(sketch.componentId));
         continue;
       }
-      const part = partOfFeature(f);
+      const part = partOfFeature(raw);
+      const f = turns && part === rootPart ? turnFeature(raw) : raw;
       const ctx = context(part);
       if (f.kind === 'extrude') {
         const row = extrudeRow(ctx, f, `Extrude ${extrudeLabels + 1}`);
         if (typeof row === 'string') count(LEFT_OUT_TEXT[row]);
-        else {
+        else if (isFaceStop(row)) {
+          extrudes++;
+          extrudeLabels++;
+          const stop = row;
+          transform(f.id, `Extrude ${extrudeLabels}`, {
+            plan: {
+              part: part.id,
+              groups: [],
+              surfaces: [stop.stop],
+              // The stop is the face's whole surface, so any face on it will do: the largest, whose name is plainest.
+              row: (_groups, faces, id) => {
+                const face = largestFace(faces.map((x) => x.face));
+                return face ? stop.row(face, id) : null;
+              },
+            },
+          });
+          (rows.get(f.id) as { op: string }).op = OPERATIONS[f.operation];
+        } else {
           extrudes++;
           extrudeLabels++;
           add(part, row);
@@ -396,20 +432,25 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
         else round(f.id, part, label, stepId, feature);
       } else {
         const label = `${LABELS[f.kind]} ${(counters[f.kind] = (counters[f.kind] ?? 0) + 1)}`;
-        const outcome =
-          f.kind === 'combine'
-            ? combineOutcome(tc, f, label)
-            : f.kind === 'removeBody'
-              ? removeOutcome(tc, f, label)
-              : f.kind === 'move'
-                ? moveOutcome(tc, f, label)
-                : f.kind === 'mirror'
-                  ? mirrorOutcome(tc, f, label)
-                  : f.kind === 'pattern'
-                    ? patternOutcome(tc, f, label)
-                    : f.kind === 'primitive'
-                      ? primitiveOutcome(tc, f, label, part.id)
-                      : shellOutcome(tc, f, label, part.id);
+        const outcomeOf = (g: typeof f, tc: TransformContext): Outcome =>
+          g.kind === 'combine'
+            ? combineOutcome(tc, g, label)
+            : g.kind === 'removeBody'
+              ? removeOutcome(tc, g, label)
+              : g.kind === 'move'
+                ? moveOutcome(tc, g, label)
+                : g.kind === 'mirror'
+                  ? mirrorOutcome(tc, g, label)
+                  : g.kind === 'pattern'
+                    ? patternOutcome(tc, g, label)
+                    : g.kind === 'primitive'
+                      ? primitiveOutcome(tc, g, label, part.id)
+                      : shellOutcome(tc, g, label, part.id);
+        // A transform lands in the part of what it works on, so it turns only when that is the turned root part.
+        const plain = raw as typeof f;
+        let outcome = outcomeOf(plain, transforms);
+        const lands = 'leftOut' in outcome ? undefined : 'row' in outcome ? outcome.part : outcome.plan.part;
+        if (turns && lands === rootPart.id) outcome = outcomeOf(turnFeature(plain), { ...transforms, faces: turnedFaces });
         transform(f.id, label, outcome);
       }
     }
@@ -429,7 +470,7 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
           stored: { asset, representation: { ...STORED_REPRESENTATION }, map: [] },
           importer: { format: 'f3d', version: '' },
           units: w.choice('cm'),
-          upAxis: w.choice('z'),
+          upAxis: w.choice(turns && part === rootPart ? 'z' : 'y'),
         }),
       );
     }
@@ -442,6 +483,7 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
     allParts.push(...filled);
     if (isTop) topTable.push(...plan.rows);
     else if (filled.length === 1) (filled[0] as PartDraft).parameters = plan.rows;
+    if (turns) turnedRoot = rootPart.id;
     return filled.flatMap((p) => {
       if (!p.component) return [{ part: p.id, matrix: IDENTITY }];
       const list = p.component.placements.length > 0 ? p.component.placements : [p.component.world];
@@ -449,7 +491,9 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
     });
   };
 
-  const placed = writeDesign(top, name);
+  const placed = writeDesign(top, name).map((p) =>
+    top.upAxis === 'z' && p.part !== turnedRoot ? { ...p, matrix: multiplyMatrix(Z_UP_TURN, p.matrix) } : p,
+  );
   if (placed.length >= MAX_INSTANCES)
     notes.push({
       severity: 'warning',
@@ -522,7 +566,14 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
       object: 'document',
       message: `${mirrored} mirrored ${mirrored === 1 ? 'occurrence was' : 'occurrences were'} placed unmirrored`,
     });
-  const only = instances.length === 1 && parts.length === 1 && top.links.length === 0 ? parts[0] : undefined;
+  // A lone part is the document's root, unplaced: only when nothing turns where it is placed.
+  const only =
+    instances.length === 1 &&
+    parts.length === 1 &&
+    top.links.length === 0 &&
+    (top.upAxis !== 'z' || parts[0]?.id === turnedRoot)
+      ? parts[0]
+      : undefined;
   const assembly = only ? undefined : w.assembly(name, instances);
 
   const time = o.now ?? new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -535,6 +586,7 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
     leftOut,
     parts: parts.length,
     instances: instances.length,
+    upAxis: top.upAxis === 'z' ? 'z' : 'y',
   };
   const reportBytes = new TextEncoder().encode(JSON.stringify({ format: 'f3d', version: '', notes }, null, 2));
   const kept = o.source !== undefined && o.source.length <= MAX_SOURCE_BYTES ? o.source : undefined;
