@@ -8,7 +8,15 @@ import type { ShapeKey, ShapeRef } from './facts';
 import { NamingPause, startFeature } from './namer';
 import type { CopyStep } from './names';
 import { resolve, writeRecord } from './resolve';
-import { checkShapeMap, writeShapeMap, type ShapeMapEntry } from './shapeMap';
+import {
+  checkShapeMap,
+  entrySnapshot,
+  numberingRows,
+  sameNumbering,
+  shapeFingerprint,
+  writeShapeMap,
+  type ShapeMapEntry,
+} from './shapeMap';
 import { NamedState } from './state';
 
 const F_BOX = 'feat_aaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -56,9 +64,10 @@ function frozen() {
   return { kernel, names, box, state, map, later, copy };
 }
 
+/** Loads `map` into `shape` of `later`, which stands for the stored bytes decoded: its fingerprint is the stored one. */
 function load(later: FakeKernel, names: NameTable, map: ShapeMapEntry[], shape: ShapeRef = 'loaded') {
   const namer = startFeature(NamedState.empty(), { feature: F_FROZEN, ordinal: 1 }, later, names);
-  namer.load(shape, map);
+  namer.load(shape, map, shapeFingerprint(shape, later));
   return namer.finish([]);
 }
 
@@ -82,32 +91,19 @@ describe('writing a shape map', () => {
     }
   });
 
-  it('holds measures everywhere and geometry on faces, edges and vertices', () => {
-    const { kernel, map } = frozen();
-    const subs = kernel.subShapes('stored');
-    for (const [i, sub] of subs.entries()) {
-      const described = sub.kind === 'face' || sub.kind === 'edge' || sub.kind === 'vertex';
-      expect(map[i]?.snapshot.geometry !== undefined).toBe(described);
-    }
-    expect(map[0]?.snapshot.volume).toBe(6000);
+  it('holds no snapshots: the fingerprint of the stored shape checks it', () => {
+    const { map } = frozen();
+    expect(map.every((e) => e.snapshot === undefined)).toBe(true);
   });
 
-  it('is what the document reader accepts, byte-stable', () => {
-    const { map } = frozen();
+  it('is what the document reader accepts, with its fingerprint, byte-stable', () => {
+    const { map, kernel } = frozen();
     const r = new Reader();
-    readStoredShape(r, { asset: 'a'.repeat(64), representation: { name: 'brep', version: 1 }, map }, '/stored');
+    const fingerprint = shapeFingerprint('stored', kernel);
+    const stored = { asset: 'a'.repeat(64), representation: { name: 'brep', version: 1 }, map, fingerprint };
+    readStoredShape(r, stored, '/stored');
     expect(r.diagnostics.list).toEqual([]);
     expect(canonicalize(map as unknown as JsonValue)).toBe(canonicalize(frozen().map as unknown as JsonValue));
-  });
-
-  it('writes a free-form face without geometry, and it still loads on its measures', () => {
-    const { kernel, names, state, box, later, copy } = frozen();
-    kernel.unsupported.add(box.faces['+z']);
-    later.unsupported.add(copy.faces['+z']);
-    const map = writeShapeMap(state, 'stored', kernel);
-    const index = kernel.subShapes('stored').findIndex((s) => s.key === box.faces['+z']);
-    expect(map[index]?.snapshot.geometry).toBeUndefined();
-    expect(load(later, names, map).get(copy.faces['+z'])?.ladder).toEqual(state.get(box.faces['+z'])?.ladder);
   });
 });
 
@@ -160,7 +156,12 @@ describe('loading a shape map', () => {
     const split = new NamedState(entities, state.bodies, new Set([F_CUT]), state.producers);
     const map = writeShapeMap(split, 'stored', kernel);
     const reader = new Reader();
-    readStoredShape(reader, { asset: 'a'.repeat(64), representation: { name: 'brep', version: 1 }, map }, '/stored');
+    const fingerprint = shapeFingerprint('stored', kernel);
+    readStoredShape(
+      reader,
+      { asset: 'a'.repeat(64), representation: { name: 'brep', version: 1 }, map, fingerprint },
+      '/stored',
+    );
     expect(reader.diagnostics.list).toEqual([]);
 
     const later = new FakeKernel();
@@ -260,7 +261,7 @@ describe('loading a shape map', () => {
     addCompound(kernel, 'loaded', 4999, ['copy']);
     const namer = startFeature(state, { feature: F_FROZEN, ordinal: 5 }, kernel, names);
     namer.retire('box');
-    namer.load('loaded', map);
+    namer.load('loaded', map, shapeFingerprint('loaded', kernel));
     const after = namer.finish([]);
     expect(after.get(box.faces['+z'])).toBeUndefined();
     expect(after.get(box.solid)).toBeUndefined();
@@ -302,10 +303,11 @@ describe('loading a shape map', () => {
 });
 
 describe('the load check', () => {
-  it('passes a map against its own shape', () => {
+  it('passes a map against its own shape, by the fingerprint of the stored shape', () => {
     const { kernel, map, later } = frozen();
-    expect(checkShapeMap(map, 'stored', kernel)).toBeNull();
-    expect(checkShapeMap(map, 'loaded', later)).toBeNull();
+    const fingerprint = shapeFingerprint('stored', kernel);
+    expect(checkShapeMap(map, 'stored', kernel, fingerprint)).toBeNull();
+    expect(checkShapeMap(map, 'loaded', later, fingerprint)).toBeNull();
   });
 
   it('pauses on the wrong length', () => {
@@ -321,27 +323,82 @@ describe('the load check', () => {
     expect(() => load(later, names, broken)).toThrow(NamingPause);
   });
 
-  it('pauses when a decoder numbers the faces differently', () => {
-    const { names, map, later } = frozen();
-    const swapped = [...map];
-    const [a, b] = [swapped[3] as ShapeMapEntry, swapped[5] as ShapeMapEntry];
-    swapped[3] = { ...b, children: a.children };
-    swapped[5] = { ...a, children: b.children };
-    expect(checkShapeMap(swapped, 'loaded', later)).toEqual({ index: 3, field: 'snapshot' });
-    expect(() => load(later, names, swapped)).toThrow(NamingPause);
+  it('pauses when a decoder numbers the shape differently, or reads it otherwise', () => {
+    const { kernel, names, map, later } = frozen();
+    const fingerprint = shapeFingerprint('stored', kernel);
+    // Two faces of the decoded shape in each other's place.
+    const tree = [...(later.trees.get('loaded') ?? [])];
+    const faces = tree.flatMap((n, i) => (n.kind === 'face' ? [i] : []));
+    const [a, b] = [faces[0] as number, faces[2] as number];
+    [tree[a], tree[b]] = [tree[b] as (typeof tree)[number], tree[a] as (typeof tree)[number]];
+    later.trees.set('loaded', tree);
+    expect(checkShapeMap(map, 'loaded', later, fingerprint)).not.toBeNull();
+    // A shape whose points moved.
+    const moved = new FakeKernel();
+    addBox(moved, 'c', 7000, [0, 0, 0], [10, 20, 30 + 1e-9]);
+    addCompound(moved, 'loaded', 6999, ['c']);
+    expect(checkShapeMap(map, 'loaded', moved, fingerprint)).toEqual({ index: null, field: 'fingerprint' });
+    const namer = startFeature(NamedState.empty(), { feature: F_FROZEN, ordinal: 1 }, moved, names);
+    expect(() => namer.load('loaded', map, fingerprint)).toThrow(NamingPause);
   });
 
-  it('pauses when the stored shape differs by more than the load tolerance, and not by less', () => {
-    const { names, map } = frozen();
+  it('checks a map written before fingerprints by its snapshots, at the load tolerance', () => {
+    const { kernel, map } = frozen();
+    const subs = kernel.subShapes('stored');
+    const older = map.map((e, i) => ({ ...e, snapshot: entrySnapshot(subs[i] as (typeof subs)[number], kernel) }));
     const shape = (hi: number, base = 7000) => {
       const k = new FakeKernel();
       addBox(k, 'c', base, [0, 0, 0], [10, 20, hi]);
       addCompound(k, 'loaded', base - 1, ['c']);
       return k;
     };
-    expect(checkShapeMap(map, 'loaded', shape(30 + 1e-6))).toBeNull(); // 37 mm part: under 3.7e-5 mm
-    expect(checkShapeMap(map, 'loaded', shape(30.001))).toMatchObject({ field: 'snapshot' });
-    expect(() => load(shape(30.001), names, map)).toThrow(NamingPause);
+    expect(checkShapeMap(older, 'loaded', shape(30 + 1e-6))).toBeNull(); // 37 mm part: under 3.7e-5 mm
+    expect(checkShapeMap(older, 'loaded', shape(30.001))).toMatchObject({ field: 'snapshot' });
+    // Without a fingerprint, an entry with no snapshot does not pass.
+    expect(checkShapeMap(map, 'loaded', shape(30))).toMatchObject({ field: 'snapshot' });
+  });
+});
+
+describe('the fingerprint of a stored shape', () => {
+  /** Two edges between the same two vertices, the halves of a circle, listed in `order`. */
+  function halves(order: readonly number[]): FakeKernel {
+    const k = new FakeKernel();
+    const edges = [11, 12];
+    k.trees.set('s', [
+      { key: 1, kind: 'compound', children: order.map((i) => edges[i] as number) },
+      ...order.map((i) => ({ key: edges[i] as number, kind: 'edge' as const, children: [21, 22] })),
+      { key: 21, kind: 'vertex', children: [] },
+      { key: 22, kind: 'vertex', children: [] },
+    ]);
+    k.points.set(21, [5, 0, 0]);
+    k.points.set(22, [-5, 0, 0]);
+    k.ranges.set(11, [0, Math.PI]);
+    k.ranges.set(12, [Math.PI, 2 * Math.PI]);
+    return k;
+  }
+
+  it('is the same for the same numbering', () => {
+    expect(shapeFingerprint('s', halves([0, 1]))).toBe(shapeFingerprint('s', halves([0, 1])));
+  });
+
+  it('tells apart two edges with the same vertices by their parameter ranges', () => {
+    expect(shapeFingerprint('s', halves([1, 0]))).not.toBe(shapeFingerprint('s', halves([0, 1])));
+  });
+
+  it('changes when a vertex moves', () => {
+    const moved = halves([0, 1]);
+    moved.points.set(21, [5, 1e-12, 0]);
+    expect(shapeFingerprint('s', moved)).not.toBe(shapeFingerprint('s', halves([0, 1])));
+  });
+
+  it('lets a writer check the decoded shape is numbered as the live one, up to the digits text keeps', () => {
+    const live = numberingRows('s', halves([0, 1]));
+    const decoded = halves([0, 1]);
+    decoded.ranges.set(12, [Math.PI, 6.28318530717959]); // 15 digits, as BREP text writes it
+    expect(sameNumbering(live, numberingRows('s', decoded))).toBe(true);
+    expect(sameNumbering(live, numberingRows('s', halves([1, 0])))).toBe(false);
+    decoded.points.set(21, [5, 1e-6, 0]);
+    expect(sameNumbering(live, numberingRows('s', decoded))).toBe(false);
   });
 });
 

@@ -11,10 +11,12 @@ import {
   NamingPause,
   checkShapeMap,
   describeEdge,
-  describeEntity,
   describeFace,
   matchesDescription,
+  numberingRows,
   resolve,
+  sameNumbering,
+  shapeFingerprint,
   startFeature,
   tightTolerance,
   writeRecord,
@@ -228,13 +230,16 @@ function boxBuild() {
   return { adapter, names, shape, state, handle };
 }
 
-/** Writes the map of the given solids wrapped as 13.2 stores them, and the asset's BREP. */
+/** Writes the map of the given solids wrapped as 13.2 stores them, the asset's BREP and its fingerprint as decoded. */
 function freeze(adapter: NamingAdapter, state: NamedState, solids: readonly ShapeHandle[]) {
   const compound = k.makeCompound([...solids]);
   const ref = adapter.addShape(compound, 'stored');
   // Through JSON, as a document would hold it.
   const map = JSON.parse(JSON.stringify(writeShapeMap(state, ref, adapter))) as ShapeMapEntry[];
-  return { map, brep: k.toBREP(compound) };
+  const brep = k.toBREP(compound);
+  const decoded = thaw(brep);
+  expect(sameNumbering(numberingRows(ref, adapter), numberingRows(decoded.ref, decoded.adapter))).toBe(true);
+  return { map, brep, fingerprint: shapeFingerprint(decoded.ref, decoded.adapter) };
 }
 
 /** Reloads an asset in a new build whose keys do not line up with the old one. */
@@ -244,9 +249,9 @@ function thaw(brep: string) {
   return { adapter, ref: adapter.addShape(k.fromBREP(brep), 'loaded') };
 }
 
-function loadInto(adapter: NamingAdapter, names: NameTable, ref: ShapeRef, map: ShapeMapEntry[]) {
+function loadInto(adapter: NamingAdapter, names: NameTable, ref: ShapeRef, map: ShapeMapEntry[], fingerprint: string) {
   const namer = startFeature(NamedState.empty(), { feature: F_FROZEN, ordinal: 1 }, adapter, names);
-  namer.load(ref, map);
+  namer.load(ref, map, fingerprint);
   return namer.finish([]);
 }
 
@@ -275,9 +280,9 @@ describe('a frozen box', () => {
       record: writeRecord(state.get(key)!, state, adapter),
     }));
 
-    const { map, brep } = freeze(adapter, state, [built.handle]);
+    const { map, brep, fingerprint } = freeze(adapter, state, [built.handle]);
     const later = thaw(brep);
-    const loaded = loadInto(later.adapter, built.names, later.ref, map);
+    const loaded = loadInto(later.adapter, built.names, later.ref, map, fingerprint);
 
     expect(loaded.entities.size).toBe(state.entities.size);
     for (const { key, record } of picks) {
@@ -297,26 +302,16 @@ describe('a frozen box', () => {
 
   it('pauses on a mismatching map', () => {
     const built = boxBuild();
-    const { map, brep } = freeze(built.adapter, built.state, [built.handle]);
+    const { map, fingerprint } = freeze(built.adapter, built.state, [built.handle]);
 
-    // Faces numbered another way.
-    const later = thaw(brep);
-    const faces = later.adapter.subShapes(later.ref).flatMap((s, i) => (s.kind === 'face' ? [i] : []));
-    const [a, b] = [faces[0] as number, faces[1] as number];
-    const swapped = [...map];
-    swapped[a] = { ...(map[b] as ShapeMapEntry), children: (map[a] as ShapeMapEntry).children };
-    swapped[b] = { ...(map[a] as ShapeMapEntry), children: (map[b] as ShapeMapEntry).children };
-    expect(checkShapeMap(swapped, later.ref, later.adapter)).toEqual({ index: a, field: 'snapshot' });
-    expect(() => loadInto(later.adapter, built.names, later.ref, swapped)).toThrow(NamingPause);
-
-    // Another shape altogether.
+    // Another shape altogether: the same topology, numbered the same, with other points.
     const other = thaw(k.toBREP(k.makeCompound([box(0, 0, 0, 10, 20, 31)])));
-    expect(checkShapeMap(map, other.ref, other.adapter)).toMatchObject({ field: 'snapshot' });
-    expect(() => loadInto(other.adapter, built.names, other.ref, map)).toThrow(NamingPause);
+    expect(checkShapeMap(map, other.ref, other.adapter, fingerprint)).toEqual({ index: null, field: 'fingerprint' });
+    expect(() => loadInto(other.adapter, built.names, other.ref, map, fingerprint)).toThrow(NamingPause);
 
     // Another count.
     const two = thaw(k.toBREP(k.makeCompound([box(0, 0, 0, 10, 20, 30), box(50, 0, 0, 1, 1, 1)])));
-    expect(() => loadInto(two.adapter, built.names, two.ref, map)).toThrow(NamingPause);
+    expect(() => loadInto(two.adapter, built.names, two.ref, map, fingerprint)).toThrow(NamingPause);
   });
 
   it('lets a later live feature keep names: a fillet after the freeze leaves the other picks alone', () => {
@@ -328,10 +323,10 @@ describe('a frozen box', () => {
       return near(m[0], 0) && near(m[2], 0);
     });
     const record = writeRecord(state.get(other)!, state, adapter);
-    const { map, brep } = freeze(adapter, state, [built.handle]);
+    const { map, brep, fingerprint } = freeze(adapter, state, [built.handle]);
 
     const later = thaw(brep);
-    const loaded = loadInto(later.adapter, built.names, later.ref, map);
+    const loaded = loadInto(later.adapter, built.names, later.ref, map, fingerprint);
     const solidKey = later.adapter.topology(later.ref).solids[0]?.solid as ShapeKey;
     const solid = later.adapter.handleOf(solidKey);
     const input = later.adapter.addShape(solid, 'solid');
@@ -390,7 +385,7 @@ describe('a frozen slotted box', () => {
     const right = only(walls, (f) => !onLeft(adapter, f));
     const records = [left, right].map((f) => writeRecord(state.get(f)!, state, adapter));
 
-    const { map, brep } = freeze(
+    const { map, brep, fingerprint } = freeze(
       adapter,
       state,
       solids.map((s) => adapter.handleOf(s.solid)),
@@ -400,7 +395,7 @@ describe('a frozen slotted box', () => {
     expect(stored[0]?.children).toHaveLength(2);
 
     const later = thaw(brep);
-    const loaded = loadInto(later.adapter, names, later.ref, map);
+    const loaded = loadInto(later.adapter, names, later.ref, map, fingerprint);
     expect(loaded.splits.has(F_CUT)).toBe(true);
     expect(loaded.bodies.size).toBe(2);
     const [toLeft, toRight] = records.map((r) => keyOf(resolve(r, loaded, later.adapter)));
@@ -409,14 +404,25 @@ describe('a frozen slotted box', () => {
   });
 });
 
-describe('the load check across a BREP round trip', () => {
+describe('the fingerprint across a BREP round trip', () => {
   const wrapped = (solid: ShapeHandle) => {
     const adapter = newAdapter();
     const compound = k.makeCompound([solid]);
     const ref = adapter.addShape(compound, 'stored');
     const map = writeShapeMap(NamedState.empty(), ref, adapter);
-    const later = thaw(k.toBREP(compound));
-    return { map, adapter, later };
+    const brep = k.toBREP(compound);
+    const later = thaw(brep);
+    return { map, adapter, ref, brep, later };
+  };
+
+  const free = () => {
+    const profile = k.interpolatePoints([
+      { x: 10, y: 0, z: 0 },
+      { x: 5, y: 3, z: 0 },
+      { x: 0, y: 0, z: 0 },
+    ]);
+    const closing = k.makeLineEdge({ x: 0, y: 0, z: 0 }, { x: 10, y: 0, z: 0 });
+    return k.extrude(k.makeFace(k.makeWire([profile, closing])), 0, 0, 5);
   };
 
   it.each([
@@ -432,30 +438,14 @@ describe('the load check across a BREP round trip', () => {
         return k.mirror(k.fillet(b, [edges[0] as ShapeHandle], 1), { x: 0, y: 0, z: 0 }, { x: 1, y: 0, z: 0 });
       },
     ],
-  ])('passes %s', (_, make) => {
-    const { map, later } = wrapped(make());
-    expect(checkShapeMap(map, later.ref, later.adapter)).toBeNull();
-  });
-
-  it('reads a free-form face by its measures alone', () => {
-    // Runs from its larger end, so the written form is the reversed curve.
-    const profile = k.interpolatePoints([
-      { x: 10, y: 0, z: 0 },
-      { x: 5, y: 3, z: 0 },
-      { x: 0, y: 0, z: 0 },
-    ]);
-    const closing = k.makeLineEdge({ x: 0, y: 0, z: 0 }, { x: 10, y: 0, z: 0 });
-    const face = k.makeFace(k.makeWire([profile, closing]));
-    const solid = k.extrude(face, 0, 0, 5);
-    const { map, adapter, later } = wrapped(solid);
-    const subs = adapter.subShapes('stored');
-    const faces = subs.flatMap((s, i) => (s.kind === 'face' ? [i] : []));
-    const unread = faces.filter((i) => map[i]?.snapshot.geometry === undefined);
-    expect(unread).toHaveLength(1);
-    expect(map.some((e) => JSON.stringify(e.snapshot.geometry ?? null).includes('"bspline"'))).toBe(true);
-    expect(checkShapeMap(map, later.ref, later.adapter)).toBeNull();
-    const body = adapter.topology('stored').solids[0]?.solid as ShapeKey;
-    const entity = { key: body, kind: 'body', body: 'stored' } as Parameters<typeof describeEntity>[0];
-    expect(describeEntity(entity, adapter)).toBeNull();
+    ['a free-form face', free],
+  ])('numbers %s the same once decoded, and decodes it to the same fingerprint every time', (_, make) => {
+    const { map, adapter, ref, brep, later } = wrapped(make());
+    // The text keeps 15 digits, so the values may differ in the last bits, never the numbering.
+    expect(sameNumbering(numberingRows(ref, adapter), numberingRows(later.ref, later.adapter))).toBe(true);
+    const fingerprint = shapeFingerprint(later.ref, later.adapter);
+    const again = thaw(k.toBREP(k.fromBREP(brep)));
+    expect(shapeFingerprint(again.ref, again.adapter)).toBe(fingerprint);
+    expect(checkShapeMap(map, later.ref, later.adapter, fingerprint)).toBeNull();
   });
 });

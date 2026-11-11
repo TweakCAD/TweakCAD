@@ -1,23 +1,17 @@
 /**
  * Turning a STEP, STL or BREP file into the stored shape of a `core.import`
  * (13.2, 13.3): the file is read once, here, and its solids are written as a
- * `brep` 1 asset with a shape map, so replay never reads the file again and a
- * newer kernel or importer never changes the import.
+ * `brep` 1 asset, so replay never reads the file again and a newer kernel or
+ * importer never changes the import.
  *
  * The file has no entity ids of its own that the kernel exposes, so faces and
- * bodies are named by their map index; edges and vertices follow from the
- * faces by the rules of 9.4.
+ * bodies are named by their map index, and edges and vertices follow from the
+ * faces by the rules of 9.4. Those names are exactly what the shape gives, so
+ * the map is derived: it stores no entries, only the fingerprint of the
+ * shape's numbering, and replay names the shape again.
  */
 import type { OcctKernel, ShapeHandle } from 'occt-wasm';
-import {
-  NameTable,
-  NamedState,
-  contentHash,
-  startFeature,
-  writeShapeMap,
-  type NameTableJson,
-  type OperationHistory,
-} from '@tweakcad/format';
+import { contentHash, shapeFingerprint } from '@tweakcad/format';
 import { NamingAdapter } from '@tweakcad/kernel/src/namingAdapter.ts';
 
 export type ImportFormat = 'step' | 'stl' | 'brep';
@@ -25,22 +19,24 @@ export type ImportFormat = 'step' | 'stl' | 'brep';
 /** The most triangles an STL may have to be read: each is a face until coplanar ones merge. */
 export const MAX_STL_TRIANGLES = 200_000;
 /**
- * The most faces an STL may make once coplanar triangles merge. Every face,
- * edge and vertex of a stored shape is an entry of its map in the document
- * (about 3 kB per triangle of a curved mesh), so this keeps the document a
- * few megabytes.
+ * The most faces an STL may make once coplanar triangles merge: each is a
+ * face of the stored shape, built and named on every replay.
  */
 export const MAX_STL_FACES = 2_000;
 
-/** What a `core.import` row needs from the file: its stored shape, the assets it names and the names its map uses. */
+/** What a `core.import` row needs from the file: its stored shape and the assets it names. A derived map holds no name hashes. */
 export interface ImportedShape {
-  /** The `stored` input (13.2). */
-  stored: { asset: string; representation: { name: 'brep'; version: 1 }; map: unknown[] };
+  /** The `stored` input (13.2), its map derived. */
+  stored: {
+    asset: string;
+    representation: { name: 'brep'; version: 1 };
+    map: unknown[];
+    fingerprint: string;
+  };
   /** The stored shape's asset row and the file's own, keyed by content hash. */
   assets: Record<string, { mediaType: string; name: string; size: number; data: { inline: { base64: string } } }>;
   /** The content hash of the file as read. */
   source: string;
-  names: NameTableJson;
   /** How many bodies the file holds. */
   bodies: number;
   /** How many open meshes of an STL were left out: shells with holes or loose triangles, which bound no solid. */
@@ -51,10 +47,7 @@ const OPEN_MESH = 'This STL mesh is not closed: it has holes or loose triangles,
 
 /** What an import is doing, as it reports it: each stage once, and each solid of an STL as it is made. */
 export type ImportProgress =
-  | { stage: 'reading' }
-  | { stage: 'sewing'; triangles: number }
-  | { stage: 'solids'; done: number; total: number }
-  | { stage: 'naming'; faces: number };
+  { stage: 'reading' } | { stage: 'sewing'; triangles: number } | { stage: 'solids'; done: number; total: number };
 
 /** Refusals a user reads: the file is not one this importer can make solids of. */
 export class ImportRefusal extends Error {}
@@ -171,15 +164,14 @@ function solidsOf(
 }
 
 /**
- * Reads `bytes` as `format` into the stored shape of the `core.import`
- * feature `feature`. Refuses a file with no solids. `name` is the file's
- * name, kept on its asset row. `report` hears each stage as it starts.
+ * Reads `bytes` as `format` into the stored shape of a `core.import`.
+ * Refuses a file with no solids. `name` is the file's name, kept on its asset
+ * row. `report` hears each stage as it starts.
  */
 export function importShape(
   k: OcctKernel,
   bytes: Uint8Array,
   format: ImportFormat,
-  feature: string,
   name: string,
   report: (p: ImportProgress) => void = () => undefined,
 ): ImportedShape {
@@ -203,37 +195,18 @@ export function importShape(
     const copy = k.copy(compound);
     made.push(copy);
     const brep = new TextEncoder().encode(k.toBREP(copy));
-    // The map is written from the bytes as replay reads them: a text round trip can shift a measure past the load tolerance.
+    // The fingerprint is taken from the bytes as replay reads them, so replay finds the same numbering.
     const replayed = k.fromBREP(new TextDecoder().decode(brep));
     made.push(replayed);
     const ref = adapter.addShape(replayed, 'stored');
-    const index = new Map(adapter.subShapes(ref).map((s, i) => [s.key, i]));
-    const at = (key: number) => ({ index: index.get(key) as number });
-    const none = { kept: [], modified: new Map(), deleted: [], added: [] };
-    const history: OperationHistory = {
-      result: ref,
-      inputs: [],
-      faces: none,
-      edges: none,
-      facesFromFace: new Map(),
-      facesFromEdge: new Map(),
-    };
-    const topology = adapter.topology(ref);
-    report({ stage: 'naming', faces: topology.faces.length });
-    const names = new NameTable();
-    const namer = startFeature(NamedState.empty(), { feature, ordinal: 0 }, adapter, names);
-    namer.step(history, {
-      outputs: topology.faces.map((f) => ({ entity: f, role: 'face', src: [at(f)] })),
-      dividers: [],
-    });
-    const state = namer.finish(topology.solids.map((s) => ({ solid: s.solid, from: { create: [at(s.solid)] } })));
-    const map = writeShapeMap(state, ref, adapter) as unknown[];
+    const fingerprint = shapeFingerprint(ref, adapter);
+    const bodies = adapter.topology(ref).solids.length;
 
     const hash = contentHash(brep);
     const source = contentHash(bytes);
     const base = name.replace(/\.[^.]*$/, '') || 'import';
     return {
-      stored: { asset: hash, representation: { name: 'brep', version: 1 }, map },
+      stored: { asset: hash, representation: { name: 'brep', version: 1 }, map: [], fingerprint },
       assets: {
         [source]: {
           mediaType: MEDIA_TYPES[format],
@@ -249,8 +222,7 @@ export function importShape(
         },
       },
       source,
-      names: names.toJson(),
-      bodies: topology.solids.length,
+      bodies,
       skipped,
     };
   } finally {

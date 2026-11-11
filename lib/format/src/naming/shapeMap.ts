@@ -1,4 +1,5 @@
-import { canonicalize, type JsonValue } from '../canonical';
+import { canonicalBytes, canonicalize, type JsonValue } from '../canonical';
+import { contentHash } from '../hash';
 import { makeSet, type JsonSet } from '../collections';
 import type { NameTable } from '../names';
 import type { KernelFacts, ShapeRef, SubShape } from './facts';
@@ -42,7 +43,8 @@ export interface ShapeMapEntry {
   ladder: readonly string[];
   aliases: JsonSet<EntityKeyJson>;
   branch: readonly BranchJson[];
-  snapshot: Record<string, JsonValue>;
+  /** Only in maps written before fingerprints: the measures the load check compared. */
+  snapshot?: Record<string, JsonValue>;
   children: JsonSet<number>;
 }
 
@@ -60,17 +62,18 @@ function distinct<T>(items: readonly T[]): T[] {
   return [...new Map(items.map((item) => [canonicalize(item), item])).values()];
 }
 
-/**
- * What a sub-shape's entry records of it: the 9.7 measures, plus `geometry` for
- * vertices, edges and faces. Those describe everything; a wire, shell or solid
- * would only repeat them, and is held to them by `children`.
- */
 function hasNonFinite(value: JsonValue): boolean {
   if (typeof value === 'number') return !Number.isFinite(value);
   return Array.isArray(value) && value.some(hasNonFinite);
 }
 
-function snapshotOf(sub: SubShape, facts: KernelFacts): Record<string, JsonValue> {
+/**
+ * What an entry of a map written before fingerprints records of its sub-shape:
+ * the 9.7 measures, plus `geometry` for vertices, edges and faces. Those
+ * describe everything; a wire, shell or solid would only repeat them, and is
+ * held to them by `children`.
+ */
+export function entrySnapshot(sub: SubShape, facts: KernelFacts): Record<string, JsonValue> {
   // A degenerate entity can measure as NaN: such a measure is not recorded, and what is not recorded is not compared.
   const snapshot: Record<string, JsonValue> = Object.fromEntries(
     Object.entries(facts.measures(sub.key) as Record<string, JsonValue>).filter(([, value]) => !hasNonFinite(value)),
@@ -90,10 +93,55 @@ export interface CaptureChain {
 }
 
 /**
+ * The fingerprint of a stored shape's numbering (13.2): the content hash of
+ * one row per sub-shape in index order, `[kind, children, extra]`, `extra`
+ * being a vertex's point, an edge's parameter range, or null. Every value is
+ * read from the stored shape, not computed, so the same bytes give the same
+ * fingerprint, and any other numbering changes it. Take it from the shape as
+ * decoded from its bytes: a text round trip need not keep every last bit.
+ */
+export function shapeFingerprint(shape: ShapeRef, facts: KernelFacts): string {
+  return contentHash(canonicalBytes(numberingRows(shape, facts)));
+}
+
+/** One sub-shape's row of the fingerprint: kind, children, and a vertex's point or an edge's range. */
+export type NumberingRow = readonly [SubShape['kind'], readonly number[], readonly number[] | null];
+
+/** The rows `shapeFingerprint` hashes, in index order. */
+export function numberingRows(shape: ShapeRef, facts: KernelFacts): NumberingRow[] {
+  return facts.subShapes(shape).map((sub) => {
+    let extra: readonly number[] | null = null;
+    if (sub.kind === 'vertex') extra = facts.measures(sub.key).point ?? null;
+    else if (sub.kind === 'edge') extra = facts.edgeRange(sub.key);
+    return [sub.kind, sub.children, extra];
+  });
+}
+
+/**
+ * Whether a shape decoded from its bytes is numbered as the live shape its
+ * map was written from: the same kinds and children in the same order, and
+ * every point and range the same up to what the text form keeps (relative
+ * 1e-12). A writer checks this before it stores a map, since the map names
+ * the live shape's sub-shapes and the fingerprint the decoded shape's.
+ */
+export function sameNumbering(live: readonly NumberingRow[], decoded: readonly NumberingRow[]): boolean {
+  if (live.length !== decoded.length) return false;
+  return live.every(([kind, children, extra], i) => {
+    const [k, c, e] = decoded[i] as NumberingRow;
+    if (kind !== k || children.length !== c.length || children.some((x, j) => x !== c[j])) return false;
+    if (extra === null || e === null) return extra === e;
+    return (
+      extra.length === e.length &&
+      extra.every((x, j) => Math.abs(x - (e[j] as number)) <= 1e-12 * Math.max(1, Math.abs(x)))
+    );
+  });
+}
+
+/**
  * Writes the map of `shape` from the state naming it. Sub-shapes the state does
  * not name (wires, shells, a stored shape's root) get an empty ladder. A
  * capture appends `capture.chain` to every name; `branch` entries name features
- * and stay as they are (9.5).
+ * and stay as they are (9.5). The stored shape's fingerprint goes with it.
  */
 export function writeShapeMap(
   state: NamedState,
@@ -109,7 +157,6 @@ export function writeShapeMap(
       ladder: (entity?.ladder ?? []).map(extended),
       aliases: makeSet(distinct(aliases)),
       branch: branchJson(entity?.branch ?? []),
-      snapshot: snapshotOf(sub, facts),
       children: makeSet(sub.children),
     };
   });
@@ -119,23 +166,38 @@ export function writeShapeMap(
 export interface ShapeMapMismatch {
   /** The entry, or null when the map has the wrong length. */
   index: number | null;
-  field: 'length' | 'children' | 'snapshot';
+  field: 'length' | 'children' | 'snapshot' | 'fingerprint';
 }
 
-/** The 13.2 load check: each entry against the sub-shape at its index, at the load tolerance. Null when they agree. */
-export function checkShapeMap(map: ShapeMapJson, shape: ShapeRef, facts: KernelFacts): ShapeMapMismatch | null {
+/**
+ * The 13.2 load check, null when the map and the shape agree: each entry's
+ * children, then the shape's `fingerprint`, or, for a map written before
+ * fingerprints, each entry's snapshot at the load tolerance.
+ */
+export function checkShapeMap(
+  map: ShapeMapJson,
+  shape: ShapeRef,
+  facts: KernelFacts,
+  fingerprint?: string,
+): ShapeMapMismatch | null {
   const subs = facts.subShapes(shape);
   if (map.length !== subs.length) return { index: null, field: 'length' };
+  for (const [index, sub] of subs.entries()) {
+    const children = new Set((map[index] as ShapeMapEntry).children.set);
+    if (children.size !== sub.children.length || !sub.children.every((c) => children.has(c))) {
+      return { index, field: 'children' };
+    }
+  }
+  if (fingerprint !== undefined) {
+    return shapeFingerprint(shape, facts) === fingerprint ? null : { index: null, field: 'fingerprint' };
+  }
   const root = subs[0];
   if (root === undefined) return null;
   const tolerance = loadTolerance(diagonal(facts.measures(root.key).bbox));
   for (const [index, sub] of subs.entries()) {
-    const entry = map[index] as ShapeMapEntry;
-    const children = new Set(entry.children.set);
-    if (children.size !== sub.children.length || !sub.children.every((c) => children.has(c))) {
-      return { index, field: 'children' };
-    }
-    if (!matchesSnapshot(entry.snapshot, snapshotOf(sub, facts), tolerance)) return { index, field: 'snapshot' };
+    const snapshot = (map[index] as ShapeMapEntry).snapshot;
+    if (!snapshot || !matchesSnapshot(snapshot, entrySnapshot(sub, facts), tolerance))
+      return { index, field: 'snapshot' };
   }
   return null;
 }

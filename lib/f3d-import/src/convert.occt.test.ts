@@ -28,6 +28,15 @@ import type {
   F3dSketch,
 } from './parser/types';
 import type { Json } from './writer';
+import { asmStream, boxRecords, type BuiltRecord } from './parser/asmBuilder.testHelper';
+
+/** Records of a second body, renumbered to follow a first body's records in one stream. */
+function shifted(records: BuiltRecord[], by: number): BuiltRecord[] {
+  return records.map((r) => ({
+    ...r,
+    items: r.items.map((x) => (x.t === 'ref' && x.v >= 0 ? { ...x, v: x.v + by } : x)),
+  }));
+}
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -67,6 +76,8 @@ const client = {
     before: string | undefined,
     surfaces: Parameters<EvaluationService['locateFacesOnSurfaces']>[2],
   ) => Promise.resolve(service.locateFacesOnSurfaces(part, before, [...surfaces])),
+  importFile: (bytes: Uint8Array, format: 'step', name: string) =>
+    Promise.resolve(service.importFile(bytes, format, name)),
 };
 
 const SKETCH = 1;
@@ -156,7 +167,10 @@ const design = (sketch: F3dSketch, features: F3dFeature[], faces = new FaceIndex
   faces,
   leftOut: {},
   storedBodies: new Map(),
+  storedShapes: new Map(),
+  brep: () => undefined,
   links: [],
+  upAxis: null,
   components: [],
   componentOf: new Map(),
   recordOfOp: (op) => OPS.get(Math.abs(op)),
@@ -310,6 +324,29 @@ describe('extrudes', { timeout: 60_000 }, () => {
       ),
     );
     expect(r.max[2]).toBeCloseTo(40);
+  });
+
+  it('stops on a face that is not parallel to the sketch, found in the model as built', async () => {
+    // A cylinder of radius 1 cm along X, its axis at y 0.5, z 5: the rectangle rises until it meets its underside.
+    const cylinder: F3dPrimitive = {
+      kind: 'primitive',
+      id: 200,
+      shape: 'cylinder',
+      operation: 'newBody',
+      plane: [0, 0, 1, -1, 1, 0, 0, 0.5, 0, 1, 0, 5, 0, 0, 0, 1],
+      onPlane: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+      sizes: { Diameter: parameter(300, 2), Height: parameter(301, 4) },
+    };
+    const faces = new FaceIndex();
+    const surface: BrepSurface = { kind: 'cone', origin: [0, 0.5, 5], axis: [1, 0, 0], radius: 1, sine: 0, cosine: 1 };
+    faces.add([{ tags: [{ token: '1', ops: [7] }], surface }]);
+    const stop = extrude({ side1Offset: parameter(104, 0), along: null, faces: [{ token: '1', ops: [7] }] });
+    const r = await built({ ...design(rectangle(), [stop], faces), features: [cylinder, stop], order: [200, 2, 100] });
+    // The area under a circle of radius 10 mm across the 10 mm the rectangle spans, about its middle.
+    const under = 5 * Math.sqrt(75) + 100 * Math.asin(0.5);
+    const cylinderVolume = Math.PI * 10 * 10 * 40;
+    expect(r.volume).toBeCloseTo(cylinderVolume + 20 * (50 * 10 - under), 0);
+    expect(r.min[2]).toBeCloseTo(0);
   });
 });
 
@@ -742,48 +779,73 @@ describe('a body removed after a copy that is left out', { timeout: 60_000 }, ()
 });
 
 describe('bodies with no history', { timeout: 60_000 }, () => {
-  it('come in as a Base Feature at the start of their component, which pauses', async () => {
-    const d: F3dDesign = {
-      ...design(rectangle(), [extrude()]),
-      storedBodies: new Map([[null, 2]]),
-      leftOut: { 'stored body': 2 },
-    };
-    const { document, steps, notes } = convertDesign(d, {
+  // Two boxes in one stream, keyed 5 and 9: 1 × 1 × 1 cm and 1 × 2 × 1 cm.
+  const first = boxRecords([0, 0, 0], [1, 1, 1], 5);
+  const stream = asmStream([...first, ...shifted(boxRecords([3, 0, 0], [4, 2, 1], 9), first.length)]);
+  const stored = (over: Partial<F3dDesign>): F3dDesign => ({
+    ...design(rectangle(), [extrude()]),
+    storedBodies: new Map([[null, 2]]),
+    storedShapes: new Map([
+      [
+        null,
+        [
+          { stream: 'BREP.a.smb', selector: 5 },
+          { stream: 'BREP.a.smb', selector: 9 },
+        ],
+      ],
+    ]),
+    brep: (name) => (name === 'BREP.a.smb' ? stream : undefined),
+    leftOut: { 'stored body': 2 },
+    ...over,
+  });
+  const convert = (d: F3dDesign) =>
+    convertDesign(d, {
       ids: seededIds(9),
       writer: { app: 'test', version: '0' },
       name: 'plate',
       now: '2026-11-06T00:00:00Z',
     });
-    await complete(document, steps, client);
+
+  it('come in as the file stored them, in a Base Feature at the start of their component', async () => {
+    const { document, steps, notes, report } = convert(stored({}));
+    expect(await complete(document, steps, client)).toEqual([]);
     const timeline = ((document.parts as Json[])[0] as Json).timeline as Json[];
     expect(timeline[0]).toMatchObject({ type: 'core.import', name: 'Base Feature' });
+    const stored0 = (timeline[0]?.inputs as Json).stored as Json;
+    expect(stored0.representation).toEqual({ name: 'brep', version: 1 });
+    // The stored shape is the only asset it adds: the file is its source.
+    expect(Object.keys(document.assets as Json)).toEqual([stored0.asset]);
     expect(readDocument(document).diagnostics.filter((x) => x.severity === 'refuse')).toEqual([]);
     const display = service.evaluate(document);
-    expect(display.pauses.map((p) => p.feature)).toEqual([timeline[0]?.id]);
-    // What has history still builds.
-    expect(display.definitions.flatMap((x) => x.bodies)).toHaveLength(1);
+    expect(display.pauses).toEqual([]);
+    expect(display.definitions.flatMap((x) => x.bodies)).toHaveLength(3);
+    expect(report.leftOut['stored body']).toBeUndefined();
     expect(notes.find((n) => n.object === 'timeline')?.message).toBe(
-      "2 bodies have no history, kept as 1 Base Feature. Stored bodies can't be read yet, so they are not drawn.",
+      '2 bodies have no history and come in as the file stored them, in 1 Base Feature',
     );
   });
 
-  it('say the design has no history when nothing else is on its timeline', () => {
-    const d: F3dDesign = {
-      ...design(rectangle(), []),
-      sketches: [],
-      features: [],
-      order: [],
-      storedBodies: new Map([[null, 1]]),
-      leftOut: { 'stored body': 1 },
-    };
-    const { notes, report } = convertDesign(d, { ids: seededIds(9), writer: { app: 'test', version: '0' } });
-    expect(report).toMatchObject({ parts: 1 });
-    expect(notes[0]).toEqual({
-      severity: 'warning',
-      object: 'timeline',
-      message:
-        "This design has no history: 1 body is stored with no timeline, kept as 1 Base Feature. Stored bodies can't be read yet, so it is not drawn.",
-    });
+  it('say which bodies could not be read', () => {
+    const { notes, steps, report } = convert(
+      stored({
+        storedShapes: new Map([[null, [{ stream: 'BREP.a.smb', selector: 5 }, null]]]),
+      }),
+    );
+    expect(steps.filter((s) => s.kind === 'store').map((s) => (s.kind === 'store' ? s.bodies : 0))).toEqual([1]);
+    expect(report.leftOut['stored body']).toBe(1);
+    expect(notes.find((n) => n.severity === 'warning' && n.object === 'timeline')?.message).toBe(
+      '1 body with no history could not be read from the file, so it is not drawn.',
+    );
+  });
+
+  it('stand a turned design on its Y axis like the rest of it', async () => {
+    const { document, steps } = convert(stored({ upAxis: 'z' }));
+    await complete(document, steps, client);
+    const display = service.evaluate(document);
+    const tall = display.definitions.flatMap((x) => x.bodies).length;
+    expect(tall).toBe(3);
+    const timeline = ((document.parts as Json[])[0] as Json).timeline as Json[];
+    expect(((timeline[0]?.inputs as Json).upAxis as Json).def).toMatchObject({ expr: { text: '"z"' } });
   });
 });
 
@@ -929,6 +991,74 @@ describe('sketch constraints', { timeout: 60_000 }, () => {
     ];
     const r = await built(design(rectangle({ relations }), [extrude()]));
     expect(r.volume).toBeCloseTo(20 * 10 * 30, 3);
+    expect(r.max[0]).toBeCloseTo(20);
+  });
+});
+
+describe('up axis', { timeout: 60_000 }, () => {
+  it('stands a design modelled Z up on the Y axis: its XY sketch lies on the ground plane', async () => {
+    const r = await built({ ...design(rectangle(), [extrude()]), upAxis: 'z' });
+    // (x, y, z) became (x, z, -y): 3 cm up, the sketch's 1 cm toward -z.
+    expect(r.min).toEqual([expect.closeTo(0), expect.closeTo(0), expect.closeTo(-10)]);
+    expect(r.max).toEqual([expect.closeTo(20), expect.closeTo(30), expect.closeTo(0)]);
+    const sketch = ((r.document.parts as Json[])[0]?.timeline as Json[])[0]?.inputs as Json;
+    expect(JSON.stringify(sketch.frame)).toContain('"standard":{"name":"xz"}');
+  });
+
+  it('keeps the axes of a design modelled Y up, or one that does not say', async () => {
+    for (const upAxis of ['y', null] as const) {
+      const r = await built({ ...design(rectangle(), [extrude()]), upAxis });
+      expect(r.max).toEqual([expect.closeTo(20), expect.closeTo(10), expect.closeTo(30)]);
+    }
+  });
+});
+
+describe('profiles', { timeout: 60_000 }, () => {
+  /** The rectangle with more lines drawn on it: points from 14, lines from 24. */
+  function drawnOn(extra: [[number, number], [number, number]][]): F3dSketch {
+    const s = rectangle();
+    extra.forEach(([a, b], i) => {
+      s.points.set(14 + 2 * i, { id: 14 + 2 * i, x: a[0], y: a[1], z: 0 });
+      s.points.set(15 + 2 * i, { id: 15 + 2 * i, x: b[0], y: b[1], z: 0 });
+      s.curves.push({
+        kind: 'line',
+        id: 24 + i,
+        primaryId: 24 + i,
+        secondaryId: 0,
+        startId: 14 + 2 * i,
+        endId: 15 + 2 * i,
+        construction: false,
+      });
+    });
+    return s;
+  }
+
+  it('finds a profile that names a longer line lying over one of its sides', async () => {
+    const sketch = drawnOn([
+      [
+        [-1, 0],
+        [3, 0],
+      ],
+    ]);
+    const over = {
+      sketchId: SKETCH,
+      regions: [{ curves: [24, 21, 22, 23].map((primary) => ({ primary, secondary: 0 })) }],
+    };
+    const r = await built(design(sketch, [extrude({ profiles: [over] })]));
+    expect(r.volume).toBeCloseTo(20 * 10 * 30, 3);
+    expect(r.max[0]).toBeCloseTo(20);
+  });
+
+  it('takes every region inside a profile that lines drawn later split', async () => {
+    const sketch = drawnOn([
+      [
+        [1, 0],
+        [1, 1],
+      ],
+    ]);
+    const r = await built(design(sketch, [extrude({ profiles: [profile] })]));
+    expect(r.volume).toBeCloseTo(20 * 10 * 30, 3);
+    expect(r.min[0]).toBeCloseTo(0);
     expect(r.max[0]).toBeCloseTo(20);
   });
 });

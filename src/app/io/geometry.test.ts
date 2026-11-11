@@ -13,10 +13,9 @@ const HASH = contentHash(BYTES);
 function deferredClient(): { client: GeometryClient; finish: () => void } {
   let finish: () => void = () => undefined;
   const shape: ImportedShape = {
-    stored: { asset: HASH, representation: { name: 'brep', version: 1 }, map: [] },
+    stored: { asset: HASH, representation: { name: 'brep', version: 1 }, map: [], fingerprint: HASH },
     assets: {},
     source: HASH,
-    names: {},
     bodies: 1,
   };
   return {

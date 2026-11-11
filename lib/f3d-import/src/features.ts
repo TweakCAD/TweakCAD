@@ -46,6 +46,14 @@ export interface FeatureContext {
 
 export type LeftOut = 'surface' | 'noProfile' | 'noRegion' | 'startsFromFace' | 'toObject' | 'noDistance' | 'thin';
 
+/** An extrude that stops on a face of the model: the face is found once what comes before it is built. */
+export interface FaceStop {
+  stop: SurfaceSpec;
+  row(face: Json, id: string): Json;
+}
+
+export const isFaceStop = (row: Json | FaceStop): row is FaceStop => 'stop' in row && typeof row.row === 'function';
+
 export const OPERATIONS = { newBody: 'new', join: 'join', cut: 'cut', intersect: 'intersect' } as const;
 
 /** The region references of the profiles found, and the first sketch among them. */
@@ -91,7 +99,7 @@ function parallelHeight(c: FeatureContext, name: F3dFaceName | undefined, s: Pla
   return dot([x * CM_TO_MM, y * CM_TO_MM, z * CM_TO_MM], s.normal) - dot(s.origin, s.normal);
 }
 
-export function extrudeRow(c: FeatureContext, e: F3dExtrude, name: string): Json | LeftOut {
+export function extrudeRow(c: FeatureContext, e: F3dExtrude, name: string): Json | LeftOut | FaceStop {
   const { w, plan } = c;
   if (!e.solid) return 'surface';
   if (e.wall) return 'thin';
@@ -118,7 +126,7 @@ export function extrudeRow(c: FeatureContext, e: F3dExtrude, name: string): Json
   const distance = (d: number, p: F3dParameter | null): Json => ({
     distance: { d: plan.value(p && p.value > 0 ? p : null, mm(d), LENGTH) },
   });
-  const build = (sign: number, sides: Json[]): Json => {
+  const build = (sign: number, sides: Json[], id?: string): Json => {
     const reversed = sign < 0;
     const inputs: Json = {
       profiles: makeSet(refs),
@@ -128,16 +136,25 @@ export function extrudeRow(c: FeatureContext, e: F3dExtrude, name: string): Json
       operation: w.operation(OPERATIONS[e.operation]),
     };
     if (startHeight !== 0) inputs.start = { offset: { d: w.val(mm(reversed ? -startHeight : startHeight)) } };
-    return w.feature('core.extrude', name, inputs);
+    return w.feature('core.extrude', name, inputs, id);
   };
   const side = (extent: Json, p: F3dParameter | null = e.taper): Json => ({ extent, taper: taper(p) });
   const flip = facing * forward;
 
-  // Up to a face: a plane parallel to the sketch is a distance.
+  // Up to a face: a plane parallel to the sketch is a distance; any other face is a stop found in the model as built.
   if (e.side1Offset) {
     if (e.sides !== 'one') return 'toObject';
     const target = parallelHeight(c, e.faces[startFace], sketch);
-    if (target === null) return 'toObject';
+    if (target === null) {
+      const named = e.faces[startFace];
+      const surface = named ? surfaceOf(c.faces, named) : null;
+      if (!surface) return 'toObject';
+      const offset = e.side1Offset;
+      const extent = (face: Json): Json => ({
+        toFace: { face, offset: plan.value(offset.value !== 0 ? offset : null, mm(size(offset)), LENGTH) },
+      });
+      return { stop: surfaceSpec(surface), row: (face, id) => build(flip, [side(extent(face))], id) };
+    }
     const gap = target - startHeight;
     const reach = gap >= 0 ? gap + size(e.side1Offset) : gap - size(e.side1Offset);
     if (Math.abs(reach) < 1e-9) return 'noDistance';

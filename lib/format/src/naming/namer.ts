@@ -59,9 +59,10 @@ export interface FeatureNamer {
   /**
    * A stored shape (import, frozen effect, captured instance): its sub-shapes
    * take the identities in `map`, its solids become bodies. Pauses when the map
-   * fails the 13.2 load check. `finish` takes no outcome for these bodies.
+   * fails the 13.2 load check, by the stored shape's `fingerprint` when it has
+   * one. `finish` takes no outcome for these bodies.
    */
-  load(shape: ShapeRef, map: ShapeMapJson): void;
+  load(shape: ShapeRef, map: ShapeMapJson, fingerprint?: string): void;
   /** A live shape leaves the state: a frozen `remove`, or the body a frozen `modify` replaces. */
   retire(shape: ShapeRef): void;
   /** Sub-shapes of a live shape move, keys and names unchanged, into these shapes: its solids taken apart. */
@@ -428,8 +429,8 @@ export function startFeature(
       return out;
     },
 
-    load(shape, map) {
-      const mismatch = checkShapeMap(map, shape, facts);
+    load(shape, map, fingerprint) {
+      const mismatch = checkShapeMap(map, shape, facts, fingerprint);
       if (mismatch) {
         throw new NamingPause(
           `shape map ${mismatch.field} disagrees with stored shape ${shape} at ${mismatch.index ?? 'its length'}`,

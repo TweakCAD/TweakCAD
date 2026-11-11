@@ -42,8 +42,13 @@ export {
 } from './snapshot';
 export {
   checkShapeMap,
+  entrySnapshot,
+  numberingRows,
   readShapeMap,
+  sameNumbering,
+  shapeFingerprint,
   writeShapeMap,
+  type NumberingRow,
   type CaptureChain,
   type LoadedEntity,
   type LoadedMap,
@@ -51,3 +56,4 @@ export {
   type ShapeMapJson,
   type ShapeMapMismatch,
 } from './shapeMap';
+export { nameImported } from './derived';

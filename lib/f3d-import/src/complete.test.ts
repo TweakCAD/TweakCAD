@@ -42,6 +42,7 @@ const client = (over: Partial<F3dClient> = {}): F3dClient => ({
   locateOnSurfaces: () => Promise.resolve([[{ reference: { entity: {} }, names: {} }]]),
   bodiesMadeBy: () => Promise.resolve([]),
   locateFacesOnSurfaces: () => Promise.resolve([]),
+  importFile: () => Promise.reject(new Error('no stored bodies here')),
   ...over,
 });
 const ids = (d: Json) => (((d.parts as Json[])[0] as Json).timeline as Json[]).map((f) => f.id);

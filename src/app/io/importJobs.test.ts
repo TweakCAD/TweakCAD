@@ -15,7 +15,7 @@ function fakeWorker() {
   } = { terminated: false, report: () => undefined, finish: () => undefined, fail: () => undefined };
   const worker: ImportWorker = {
     init: () => Promise.resolve(),
-    importFile: (_bytes, _format, _feature, _name, onProgress) =>
+    importFile: (_bytes, _format, _name, onProgress) =>
       new Promise((resolve, reject) => {
         state.report = (p) => onProgress?.(p);
         state.finish = resolve;
@@ -36,7 +36,7 @@ afterEach(() => importJobs.setState({ jobs: [] }));
 describe('imports on a worker of their own', () => {
   it('lists the import with its progress while it runs, then stops its worker', async () => {
     const { worker, state } = fakeWorker();
-    const pending = ownWorkerImports(() => worker).importFile(BYTES, 'stl', 'feat_A', 'board.stl');
+    const pending = ownWorkerImports(() => worker).importFile(BYTES, '', 'board.stl');
     expect(labels()).toEqual(['Starting the kernel']);
     await settle();
     state.report({ stage: 'sewing', triangles: 93422 });
@@ -51,7 +51,7 @@ describe('imports on a worker of their own', () => {
 
   it('ends a cancelled import at once, as ImportCancelled, and stops its worker', async () => {
     const { worker, state } = fakeWorker();
-    const pending = ownWorkerImports(() => worker).importFile(BYTES, 'stl', 'feat_A', 'board.stl');
+    const pending = ownWorkerImports(() => worker).importFile(BYTES, '', 'board.stl');
     await settle();
     importJobs.getState().jobs[0]?.cancel();
     await expect(pending).rejects.toBeInstanceOf(ImportCancelled);
@@ -64,8 +64,8 @@ describe('imports on a worker of their own', () => {
     const b = fakeWorker();
     const workers = [a.worker, b.worker];
     const imports = ownWorkerImports(() => workers.shift() as ImportWorker);
-    const first = imports.importFile(BYTES, 'stl', 'feat_A', 'a.stl');
-    const second = imports.importFile(BYTES, 'step', 'feat_B', 'b.step');
+    const first = imports.importFile(BYTES, '', 'a.stl');
+    const second = imports.importFile(BYTES, '', 'b.step');
     expect(importJobs.getState().jobs.map((j) => j.name)).toEqual(['a.stl', 'b.step']);
     cancelImports();
     await expect(first).rejects.toBeInstanceOf(ImportCancelled);
@@ -75,7 +75,7 @@ describe('imports on a worker of their own', () => {
 
   it('passes a failed import on, and stops its worker', async () => {
     const { worker, state } = fakeWorker();
-    const pending = ownWorkerImports(() => worker).importFile(BYTES, 'stl', 'feat_A', 'board.stl');
+    const pending = ownWorkerImports(() => worker).importFile(BYTES, '', 'board.stl');
     await settle();
     state.fail(new Error('This STL mesh is not closed'));
     await expect(pending).rejects.toThrow('This STL mesh is not closed');

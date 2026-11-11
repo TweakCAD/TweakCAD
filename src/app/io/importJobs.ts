@@ -37,7 +37,6 @@ export interface ImportWorker {
   importFile(
     bytes: Uint8Array,
     format: ImportFormat,
-    feature: string,
     name: string,
     onProgress?: (p: ImportProgress) => void,
   ): Promise<ImportedShape>;
@@ -53,8 +52,6 @@ export function importStatus(p: ImportProgress, name: string): BuildStatus {
       return { label: `Sewing ${p.triangles.toLocaleString('en-US')} triangles` };
     case 'solids':
       return { label: 'Making solids', done: p.done, total: p.total };
-    case 'naming':
-      return { label: `Naming ${p.faces.toLocaleString('en-US')} faces` };
   }
 }
 
@@ -71,7 +68,7 @@ const setStatus = (id: number, status: BuildStatus) =>
 /** A `GeometryClient` whose every import runs on a worker of its own from `spawn`, listed in `importJobs` while it runs. */
 export function ownWorkerImports(spawn: () => ImportWorker): GeometryClient {
   return {
-    async importFile(bytes, format, feature, name) {
+    async importFile(bytes, format, name) {
       const id = ++nextJob;
       const worker = spawn();
       let cancel: () => void = () => undefined;
@@ -85,7 +82,7 @@ export function ownWorkerImports(spawn: () => ImportWorker): GeometryClient {
       }));
       const run = async () => {
         await worker.init();
-        return worker.importFile(bytes, format, feature, name, (p) => setStatus(id, importStatus(p, name)));
+        return worker.importFile(bytes, format, name, (p) => setStatus(id, importStatus(p, name)));
       };
       try {
         return await Promise.race([run(), cancelled]);

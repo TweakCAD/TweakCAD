@@ -6,7 +6,15 @@
  * on the curves as the file solved them, then profiles find theirs by the
  * curves around them.
  */
-import { detectRegions, type SolvedCurve, type SolvedSketch } from '@tweakcad/format';
+import {
+  cyclePolyline,
+  detectRegions,
+  regionSamplePoint,
+  type DetectedRegion,
+  type Detection,
+  type SolvedCurve,
+  type SolvedSketch,
+} from '@tweakcad/format';
 import { curveGeometry } from '@tweakcad/worker/src/v2/sketchCurves';
 import {
   convertDimension,
@@ -354,33 +362,95 @@ export function convertSketch(sketch: F3dSketch, w: Writer, plan: ParameterPlan)
     holes: r.holes,
     origin: { detected: {} },
   }));
-  const wires = regions.map((r) => {
-    const ids = new Set<string>();
-    const add = (loop: unknown): void => {
-      for (const u of loop as Json[]) {
-        const member = (u.open ?? u.closed) as { curve: { drawn?: { id: string } } } | undefined;
-        if (member?.curve.drawn) ids.add(member.curve.drawn.id);
-      }
-    };
-    add(r.loop);
-    for (const hole of (r.holes as { set: unknown[] }).set ?? []) add(hole);
-    return ids;
-  });
+  const stretches = stretchesOf(detection);
 
   const regionsOf = (region: F3dProfileRegion): string[] => {
     const wanted = new Set<string>();
     for (const c of region.curves)
       for (const id of byKey.get(`${c.primary}:${c.secondary}`) ?? byKey.get(`${c.primary}`) ?? []) wanted.add(id);
     if (wanted.size === 0) return [];
-    const exact = regions.filter((_, i) => {
-      const ids = wires[i] as Set<string>;
-      return ids.size === wanted.size && [...ids].every((id) => wanted.has(id));
+    const found = onCurves(stretches, wanted);
+    if (found.length > 0) return found.map((i) => (regions[i] as { id: string }).id);
+    // Curves drawn after the feature split its profile: the regions inside the outline the listed curves draw.
+    const listed = { points: solved.points, curves: solved.curves.filter((c) => wanted.has(curveIdOf(c.key) ?? '')) };
+    const outline = detectRegions(listed);
+    const shapes = onCurves(stretchesOf(outline), wanted).map((i) => outline.regions[i] as DetectedRegion);
+    if (shapes.length === 0) return [];
+    const polygons = shapes.map((r) => ({
+      outer: cyclePolyline(outline.arrangement, r.outer, 8),
+      inner: r.inner.map((c) => cyclePolyline(outline.arrangement, c, 8)),
+    }));
+    return detection.regions.flatMap((r, i) => {
+      const p = regionSamplePoint(detection.arrangement, r);
+      const inside = p && polygons.some((g) => evenOdd(p, g.outer) && !g.inner.some((h) => evenOdd(p, h)));
+      return inside ? [(regions[i] as { id: string }).id] : [];
     });
-    if (exact.length > 0) return exact.map((r) => r.id);
-    // Trimmed curves bound less than the whole region lists: take what lies wholly on the listed curves.
-    return regions.filter((_, i) => [...(wires[i] as Set<string>)].every((id) => wanted.has(id))).map((r) => r.id);
   };
 
   const inputs: Json = { points: points.rows, curves, constraints, regions, retired: [], text: [] };
   return { inputs, stats, regionsOf };
+}
+
+const curveIdOf = (key: unknown): string | undefined => (key as { drawn?: { id: string } }).drawn?.id;
+
+/**
+ * Each region's boundary as stretches, each the set of drawn curves lying over it: where two curves
+ * overlap, detection keeps one of them, and the file's profile may list the other.
+ */
+function stretchesOf(detection: Detection): Set<string>[][] {
+  const { arrangement } = detection;
+  const ends = (e: number): string => {
+    const edge = arrangement.edges[e];
+    return edge ? [edge.from.vertex, edge.to.vertex].sort((a, b) => a - b).join(',') : '';
+  };
+  const sameEnds = new Map<string, number[]>();
+  arrangement.edges.forEach((_, e) => {
+    const group = sameEnds.get(ends(e));
+    if (group) group.push(e);
+    else sameEnds.set(ends(e), [e]);
+  });
+  const coveredBy = (e: number): Set<string> => {
+    const ids = new Set<string>();
+    const edge = arrangement.edges[e];
+    if (!edge) return ids;
+    const own = curveIdOf(arrangement.curves[edge.curve]?.source.key);
+    if (own) ids.add(own);
+    const group = sameEnds.get(ends(e)) ?? [];
+    // Only when the stretch is the one kept between its ends are the others there copies of it.
+    if (group.filter((g) => !arrangement.edges[g]?.duplicate).length !== 1) return ids;
+    for (const g of group) {
+      const other = arrangement.edges[g];
+      const id = other?.duplicate ? curveIdOf(arrangement.curves[other.curve]?.source.key) : undefined;
+      if (id) ids.add(id);
+    }
+    return ids;
+  };
+  return detection.regions.map((r) =>
+    [r.outer, ...r.inner].flatMap((cycle) => cycle.halfEdges.map((h) => coveredBy(h >> 1))),
+  );
+}
+
+/**
+ * The regions whose every stretch lies on a wanted curve: those that use every wanted curve when
+ * there are any, else all of them, since trimmed curves bound less than the whole region lists.
+ */
+function onCurves(stretches: readonly Set<string>[][], wanted: ReadonlySet<string>): number[] {
+  const on = stretches.flatMap((region, i) => {
+    if (!region.every((ids) => [...ids].some((id) => wanted.has(id)))) return [];
+    const used = new Set(region.flatMap((ids) => [...ids].filter((id) => wanted.has(id))));
+    return [{ i, exact: used.size === wanted.size }];
+  });
+  const exact = on.filter((r) => r.exact);
+  return (exact.length > 0 ? exact : on).map((r) => r.i);
+}
+
+/** Even-odd containment of a point in a closed polygon. */
+function evenOdd(p: readonly [number, number], polygon: readonly (readonly [number, number])[]): boolean {
+  let inside = false;
+  for (let i = 1; i < polygon.length; i++) {
+    const a = polygon[i - 1] as readonly [number, number];
+    const b = polygon[i] as readonly [number, number];
+    if (a[1] > p[1] !== b[1] > p[1] && a[0] + ((p[1] - a[1]) * (b[0] - a[0])) / (b[1] - a[1]) > p[0]) inside = !inside;
+  }
+  return inside;
 }

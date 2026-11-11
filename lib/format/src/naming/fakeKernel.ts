@@ -40,6 +40,7 @@ export class FakeKernel implements KernelFacts {
   readonly edgeFacts = new Map<ShapeKey, EdgeGeometry>();
   readonly faceFacts = new Map<ShapeKey, FaceGeometry>();
   readonly measured = new Map<ShapeKey, Measures>();
+  readonly ranges = new Map<ShapeKey, readonly [number, number]>();
   readonly trees = new Map<ShapeRef, readonly TreeNode[]>();
   /** Keys whose geometry the kernel has no way to read. */
   readonly unsupported = new Set<ShapeKey>();
@@ -87,6 +88,10 @@ export class FakeKernel implements KernelFacts {
     if (!p) return null;
     const d = p.normal[0] * point[0] + p.normal[1] * point[1] + p.normal[2] * point[2] - p.offset;
     return d > 1e-9 ? 1 : d < -1e-9 ? -1 : 0;
+  }
+
+  edgeRange(edge: ShapeKey): readonly [number, number] | null {
+    return this.ranges.get(edge) ?? null;
   }
 
   subShapes(shape: ShapeRef): readonly SubShape[] {

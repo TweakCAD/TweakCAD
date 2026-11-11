@@ -108,20 +108,28 @@ function readLadder(r: Reader, v: unknown, path: string): void {
   if (r.list(v, path)) v.forEach((h, i) => r.hash(h, child(path, i)));
 }
 
-/** A shape map (13.2): one entry per sub-shape in index order. */
-function readShapeMap(r: Reader, v: unknown, path: string): void {
+/**
+ * A shape map (13.2): one entry per sub-shape in index order. With a
+ * fingerprint, entries hold no snapshot; a map written before fingerprints
+ * holds one in every entry.
+ */
+function readShapeMap(r: Reader, v: unknown, path: string, fingerprinted: boolean): void {
   if (!r.list(v, path)) return;
   const count = v.length;
   v.forEach((entry, i) => {
     const ep = child(path, i);
-    const o = r.object(entry, ep, { required: ['ladder', 'aliases', 'branch', 'snapshot', 'children'] });
+    const o = r.object(entry, ep, {
+      required: fingerprinted
+        ? ['ladder', 'aliases', 'branch', 'children']
+        : ['ladder', 'aliases', 'branch', 'snapshot', 'children'],
+    });
     if (!o) return;
     readLadder(r, o.ladder, child(ep, 'ladder'));
     r.set(o.aliases, child(ep, 'aliases'))?.forEach((a, j) =>
       readEntityKey(r, a, child(child(child(ep, 'aliases'), 'set'), j)),
     );
     readEntityRecordBranch(r, o.branch, child(ep, 'branch'));
-    r.map(o.snapshot, child(ep, 'snapshot'));
+    if (!fingerprinted) r.map(o.snapshot, child(ep, 'snapshot'));
     r.set(o.children, child(ep, 'children'))?.forEach((c, j) => {
       const cp = child(child(child(ep, 'children'), 'set'), j);
       if (r.integer(c, cp, 0) && (c >= count || c === i)) {
@@ -131,10 +139,24 @@ function readShapeMap(r: Reader, v: unknown, path: string): void {
   });
 }
 
-/** A stored shape (13.2). */
-export function readStoredShape(r: Reader, v: unknown, path: string): void {
-  const o = r.object(v, path, { required: ['asset', 'representation', 'map'] });
+const FINGERPRINT = /^[0-9a-f]{64}$/;
+
+/**
+ * A stored shape (13.2). `derivable`: the holder is a `core.import`, the one
+ * place a map may be derived: a fingerprint and no entries.
+ */
+export function readStoredShape(r: Reader, v: unknown, path: string, derivable = false): void {
+  const o = r.object(v, path, { required: ['asset', 'representation', 'map'], optional: ['fingerprint'] });
   if (!o) return;
+  const fingerprinted = 'fingerprint' in o;
+  if (fingerprinted) {
+    if (typeof o.fingerprint !== 'string' || !FINGERPRINT.test(o.fingerprint)) {
+      r.diagnostics.refuse('bad-hash', child(path, 'fingerprint'), 'a fingerprint is 64 lower-case hex digits');
+    }
+    if (!derivable && Array.isArray(o.map) && o.map.length === 0) {
+      r.diagnostics.refuse('bad-value', child(path, 'map'), 'only an import derives its shape map');
+    }
+  }
   assetUse(r, o.asset, child(path, 'asset'));
   const rep = r.object(o.representation, child(path, 'representation'), { required: ['name', 'version'] });
   if (
@@ -150,7 +172,7 @@ export function readStoredShape(r: Reader, v: unknown, path: string): void {
       );
     }
   }
-  readShapeMap(r, o.map, child(path, 'map'));
+  readShapeMap(r, o.map, child(path, 'map'), fingerprinted);
 }
 
 /** A numeric placement `{position, rotation}` (2.7). */

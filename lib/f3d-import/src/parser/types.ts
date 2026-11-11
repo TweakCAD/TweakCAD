@@ -3,6 +3,7 @@
  * radians, as in the file; the converter changes them to millimetres and degrees.
  */
 
+import type { BodySource } from './bodyMap';
 import type { FaceIndex } from './brep';
 
 /** Row-major 4 × 4 rigid transform. */
@@ -329,8 +330,14 @@ export type F3dDesign = {
   components: F3dComponent[];
   /** Bodies with no history, by the component holding them. */
   storedBodies: Map<number | null, number>;
+  /** Where each of those bodies' shapes is stored, by component; null for one the file does not say. */
+  storedShapes: Map<number | null, (BodySource | null)[]>;
+  /** A B-rep stream of the design by its file name. */
+  brep(name: string): Uint8Array | undefined;
   /** The designs this one links to. */
   links: F3dLink[];
+  /** The axis the design was modelled with up, from its saved views; null when it has none. */
+  upAxis: 'y' | 'z' | null;
   /** The component each feature works in, for those that name bodies. */
   componentOf: Map<number, number>;
   /** The record behind an operation id. */

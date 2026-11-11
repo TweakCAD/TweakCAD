@@ -150,6 +150,27 @@ describe('assets and imports', () => {
     const broken = read(doc({ assets: { [ASSET]: asset() } }, { timeline: [feature(1, 'core.import', badMap)] }));
     expect(codes(broken, 'refuse')).toEqual(['bad-value /parts/0/timeline/0/inputs/stored/map/0/children/set/0']);
   });
+
+  it('reads a fingerprint with entries that hold no snapshot, and with no entries on an import only', () => {
+    const at = (inputs: Json) =>
+      read(doc({ assets: { [ASSET]: asset() } }, { timeline: [feature(1, 'core.import', inputs)] }));
+    const bare = (children: number[]): Json => ({
+      ladder: [],
+      aliases: { set: [] },
+      branch: [],
+      children: { set: children },
+    });
+    const printed = (map: Json[], fingerprint: string): Json => ({ ...stored(map), fingerprint });
+    expect(at(importInputs({ stored: printed([bare([1]), bare([])], 'a'.repeat(64)) })).diagnostics).toEqual([]);
+    expect(at(importInputs({ stored: printed([], 'a'.repeat(64)) })).diagnostics).toEqual([]);
+    expect(codes(at(importInputs({ stored: printed([], 'A'.repeat(64)) })), 'refuse')).toEqual([
+      'bad-hash /parts/0/timeline/0/inputs/stored/fingerprint',
+    ]);
+    // Without a fingerprint, every entry holds its snapshot.
+    expect(codes(at(importInputs({ stored: stored([bare([])]) })), 'refuse')).toContain(
+      'missing-field /parts/0/timeline/0/inputs/stored/map/0/snapshot',
+    );
+  });
 });
 
 describe('frozen features', () => {
@@ -174,6 +195,15 @@ describe('frozen features', () => {
     expect(codes(result, 'pause')).toEqual([]);
     const live = read(doc({}, { timeline: [feature(1, 'acme.box', { size: val('10 mm') })] }));
     expect(codes(live, 'pause')).toEqual(['unknown-variant /parts/0/timeline/0/type']);
+  });
+
+  it('refuses a derived map (a fingerprint and no entries) on a frozen effect, whose names come from another build', () => {
+    const shape = { ...stored(), fingerprint: 'a'.repeat(64) };
+    const f = feature(1, 'acme.box', {}, { frozen: frozen([{ create: { ladder: [], branch: [], stored: shape } }]) });
+    const result = read(doc({ assets: { [ASSET]: asset() } }, { timeline: [f] }));
+    expect(codes(result, 'refuse')).toEqual([
+      'bad-value /parts/0/timeline/0/frozen/frozen/effects/0/create/stored/map',
+    ]);
   });
 
   it('refuses a typed literal for a value that does not exist', () => {

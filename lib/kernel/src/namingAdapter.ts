@@ -348,6 +348,13 @@ export class NamingAdapter implements KernelFacts {
     };
   }
 
+  edgeRange(edge: ShapeKey): readonly [number, number] | null {
+    const entry = this.entryOf(edge, 'edge');
+    if (this.isDegenerate(entry)) return null;
+    const { first, last } = this.k.curveParameters(entry.handle);
+    return [first, last];
+  }
+
   faceGeometry(face: ShapeKey): FaceGeometry {
     const entry = this.entryOf(face, 'face');
     return { surface: this.surface(entry), loops: this.loops(entry) };

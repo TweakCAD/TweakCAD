@@ -151,6 +151,12 @@ export interface KernelFacts {
   side(point: Vec3, face: ShapeKey, test: 'solid' | 'normal'): 1 | -1 | 0 | null;
   /** The 13.2 index order with direct children, for shape maps. */
   subShapes(shape: ShapeRef): readonly SubShape[];
+  /**
+   * An edge's parameter range as its shape stores it, read rather than
+   * computed, so the same stored bytes always give the same numbers. Null for
+   * a degenerate edge.
+   */
+  edgeRange(edge: ShapeKey): readonly [number, number] | null;
 }
 
 /** Whether `error` says the kernel has no way to read a fact, rather than that something broke. */

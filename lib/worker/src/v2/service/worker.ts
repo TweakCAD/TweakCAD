@@ -153,14 +153,8 @@ const api = {
   },
 
   /** Reads a file into an import's stored shape; `onProgress` hears each stage as it starts. */
-  async importFile(
-    bytes: Uint8Array,
-    format: ImportFormat,
-    feature: string,
-    name: string,
-    onProgress?: (p: ImportProgress) => void,
-  ) {
-    return (await service()).importFile(bytes, format, feature, name, onProgress && ((p) => void onProgress(p)));
+  async importFile(bytes: Uint8Array, format: ImportFormat, name: string, onProgress?: (p: ImportProgress) => void) {
+    return (await service()).importFile(bytes, format, name, onProgress && ((p) => void onProgress(p)));
   },
 
   async bodyRecords(part: string, before: string | undefined) {

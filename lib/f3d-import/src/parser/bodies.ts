@@ -26,6 +26,13 @@ export type FeatureBodies = {
   recordOfOp(op: number): number | undefined;
   /** Bodies no feature says it made, by component. One stored record can hold many, and a design with no history has no such records. */
   storedBodies(root: number | null): Map<number | null, number>;
+  /** The body records of those bodies, by component. */
+  storedBodyRecords(root: number | null): Map<number | null, number[]>;
+  /**
+   * The body record holding a base feature's body as the base feature left it,
+   * for the body it made; later features change only the latter.
+   */
+  asLeft(body: number): number | undefined;
 };
 
 export function readFeatureBodies(index: DesignIndex): FeatureBodies {
@@ -118,25 +125,48 @@ export function readFeatureBodies(index: DesignIndex): FeatureBodies {
     return record;
   };
 
-  const storedBodies = (root: number | null): Map<number | null, number> => {
+  // A base feature names the body it made, in its component, and the body as it left it, in none.
+  const left = new Map<number, number>();
+  const leftBodies = new Set<number>();
+  for (const base of index.idsOf.get(TYPE_STORED_BODY) ?? []) {
+    const bodies = refsOf(base).filter((r) => typeKey(r) === TYPE_BODY);
+    const made = bodies.find((b) => componentOfBody.has(b));
+    const kept = bodies.find((b) => !componentOfBody.has(b));
+    if (made !== undefined && kept !== undefined) {
+      left.set(made, kept);
+      leftBodies.add(kept);
+    }
+  }
+
+  const storedBodyRecords = (root: number | null): Map<number | null, number[]> => {
     const made = new Set<number>();
     for (const link of index.idsOf.get(TYPE_BODY_LINK) ?? []) {
       const refs = refsOf(link);
       if (refs.some((r) => typeKey(r) === TYPE_STORED_BODY)) continue;
       for (const r of refs) if (typeKey(r) === TYPE_BODY) made.add(r);
     }
+    const out = new Map<number | null, number[]>();
+    for (const body of index.idsOf.get(TYPE_BODY) ?? []) {
+      if (made.has(body) || leftBodies.has(body)) continue;
+      const component = componentOfBody.get(body) ?? root;
+      const list = out.get(component);
+      if (list) list.push(body);
+      else out.set(component, [body]);
+    }
+    return out;
+  };
+
+  const storedBodies = (root: number | null): Map<number | null, number> => {
     const out = new Map<number | null, number>();
     let total = 0;
-    for (const body of index.idsOf.get(TYPE_BODY) ?? []) {
-      if (made.has(body)) continue;
-      const component = componentOfBody.get(body) ?? root;
-      out.set(component, (out.get(component) ?? 0) + 1);
-      total++;
+    for (const [component, bodies] of storedBodyRecords(root)) {
+      out.set(component, bodies.length);
+      total += bodies.length;
     }
     const records = index.idsOf.get(TYPE_STORED_BODY)?.length ?? 0;
     if (records > total) out.set(root, (out.get(root) ?? 0) + records - total);
     return out;
   };
 
-  return { componentOfFeature, recordOfOp, storedBodies };
+  return { componentOfFeature, recordOfOp, storedBodies, storedBodyRecords, asLeft: (body) => left.get(body) };
 }

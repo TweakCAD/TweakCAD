@@ -124,7 +124,7 @@ function client(): AppServiceClient & GeometryClient & LocateClient {
     exportFile: (format, scope, options) => Promise.resolve(service.exportFile(format, scope, options)),
     exportFreeCad: () => Promise.resolve(service.exportFreeCad()),
     properties: (key) => Promise.resolve(service.properties(key)),
-    importFile: (bytes, format, feature, name) => Promise.resolve(service.importFile(bytes, format, feature, name)),
+    importFile: (bytes, format, name) => Promise.resolve(service.importFile(bytes, format, name)),
     locate: (part, before, brep, kind, indices, ofFaces) =>
       Promise.resolve(service.locate(part, before, brep, kind, indices, ofFaces)),
     bodyRecords: (part, before) => Promise.resolve(service.bodyRecords(part, before)),

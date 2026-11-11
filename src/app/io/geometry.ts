@@ -19,7 +19,7 @@ export const GEOMETRY_FILES: Record<ImportFormat, FileKind> = {
 
 /** The worker's side of an import. */
 export interface GeometryClient {
-  importFile(bytes: Uint8Array, format: ImportFormat, feature: string, name: string): Promise<ImportedShape>;
+  importFile(bytes: Uint8Array, format: ImportFormat, name: string): Promise<ImportedShape>;
 }
 
 export type ImportOutcome =
@@ -51,7 +51,7 @@ export async function importGeometry(
   const feature = editor.newId('feat');
   let shape: ImportedShape;
   try {
-    shape = await client.importFile(file.bytes, format, feature, file.name);
+    shape = await client.importFile(file.bytes, format, file.name);
   } catch (e) {
     if (e instanceof ImportCancelled) return { ok: false, dropped: true, message: e.message };
     return { ok: false, message: messageOf(e) };
@@ -73,7 +73,6 @@ export async function importGeometry(
     type: 'addFeature',
     container: part,
     feature: row,
-    names: shape.names,
     assets: shape.assets,
     ...(before ? { before } : {}),
   });

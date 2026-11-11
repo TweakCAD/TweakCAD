@@ -12,7 +12,7 @@
  */
 import type { NameTableJson } from '@tweakcad/format';
 import type { SurfaceSpec } from '@tweakcad/worker/src/v2/service/onSurfaces';
-import type { BodyStep, ImportNote, RoundStep, Step } from './convert';
+import type { BodyStep, ImportNote, RoundStep, Step, StoreStep } from './convert';
 import type { Json } from './writer';
 
 interface Found {
@@ -42,6 +42,12 @@ export interface F3dClient {
     before: string | undefined,
     surfaces: SurfaceSpec[],
   ): Promise<{ face: Found; body: Found }[][]>;
+  /** Reads a STEP file into the stored shape of a `core.import`. */
+  importFile(
+    bytes: Uint8Array,
+    format: 'step',
+    name: string,
+  ): Promise<{ stored: unknown; assets: Record<string, unknown>; bodies: number }>;
 }
 
 function timelineOf(doc: Json, part: string): Json[] {
@@ -135,6 +141,21 @@ async function finishBodies(doc: Json, step: BodyStep, client: F3dClient, notes:
     });
 }
 
+/** A part's stored bodies made into its Base Feature's shape, written first in the part. Only the shape's own asset is kept: the file is the source. */
+async function finishStore(doc: Json, step: StoreStep, client: F3dClient, notes: ImportNote[]): Promise<void> {
+  const shape = await client.importFile(new TextEncoder().encode(step.text), 'step', 'Base Feature.step');
+  const stored = shape.stored as Json;
+  const asset = stored.asset as string;
+  (doc.assets as Json)[asset] = shape.assets[asset];
+  timelineOf(doc, step.part).unshift(step.row(stored));
+  if (shape.bodies < step.bodies)
+    notes.push({
+      severity: 'warning',
+      object: step.object,
+      message: `${step.bodies - shape.bodies} of its ${step.bodies} stored bodies did not come in as solids`,
+    });
+}
+
 /** Where finishing stands: item `done + 1` of `total` of what `label` says is under way. */
 export type FinishProgress = (label: string, done: number, total: number) => void;
 
@@ -150,6 +171,20 @@ export async function complete(
   progress?: FinishProgress,
 ): Promise<ImportNote[]> {
   const notes: ImportNote[] = [];
+  // Stored bodies first: what is built on them needs them in place.
+  const stores = steps.filter((s): s is StoreStep => s.kind === 'store');
+  for (const [i, step] of stores.entries()) {
+    progress?.('Reading stored bodies', i, stores.length);
+    try {
+      await finishStore(doc, step, client, notes);
+    } catch (e) {
+      notes.push({
+        severity: 'warning',
+        object: step.object,
+        message: `its ${step.bodies === 1 ? 'body' : `${step.bodies} bodies`} could not be made into solids, so it was left out: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
+  }
   let dropped = 0;
   const sketches = (doc.parts as Json[]).flatMap((part) =>
     (part.timeline as Json[]).filter(
@@ -192,7 +227,9 @@ export async function complete(
     });
 
   // A part's steps run together, so each evaluation resumes from the one before.
-  const order = [...steps].sort((a, b) => (a.part < b.part ? -1 : a.part > b.part ? 1 : 0));
+  const order = steps
+    .filter((s) => s.kind !== 'store')
+    .sort((a, b) => (a.part < b.part ? -1 : a.part > b.part ? 1 : 0));
   for (const [i, step] of order.entries()) {
     progress?.(`Finishing ${step.object}`, i, order.length);
     try {

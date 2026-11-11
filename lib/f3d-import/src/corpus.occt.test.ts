@@ -99,6 +99,7 @@ describe.skipIf(!corpus)('real files against reference solids', () => {
         bodiesMadeBy: (part, before, features) => Promise.resolve(service.bodiesMadeBy(part, before, features)),
         locateFacesOnSurfaces: (part, before, surfaces) =>
           Promise.resolve(service.locateFacesOnSurfaces(part, before, surfaces)),
+        importFile: (bytes, format, name) => Promise.resolve(service.importFile(bytes, format, name)),
       };
       return { k, service, client };
     };
@@ -131,6 +132,7 @@ describe.skipIf(!corpus)('real files against reference solids', () => {
         const shown = performance.now();
         const display = session.service.evaluate(document);
         row.evaluateMs = Math.round(performance.now() - shown);
+        row.documentBytes = JSON.stringify(document).length;
         const got: Solid[] = [];
         const k = session.k;
         const placements = ((document.assemblies as Row[])[0]?.instances as Row[] | undefined)?.map((i) => ({
@@ -143,7 +145,13 @@ describe.skipIf(!corpus)('real files against reference solids', () => {
             for (const solid of k.getSubShapes(shape, 'solid')) {
               const placed = at ? k.transform(solid, matrixOf(at)) : solid;
               const b = k.getBoundingBox(placed);
-              got.push({ v: k.getVolume(solid), min: [b.xmin, b.ymin, b.zmin], max: [b.xmax, b.ymax, b.zmax] });
+              // References are in the file's axes: a turned design is turned back, (x, y, z) to (x, −z, y).
+              const back = report.upAxis === 'z';
+              got.push({
+                v: k.getVolume(solid),
+                min: back ? [b.xmin, -b.zmax, b.ymin] : [b.xmin, b.ymin, b.zmin],
+                max: back ? [b.xmax, -b.zmin, b.ymax] : [b.xmax, b.ymax, b.zmax],
+              });
               if (at) k.release(placed);
             }
           }
@@ -193,6 +201,7 @@ describe.skipIf(!corpus)('real files against reference solids', () => {
           parts: report.parts,
           rows: (document.parts as Row[]).reduce((n, p) => n + (p.timeline as Row[]).length, 0),
           rootKind: Object.keys(document.root as Row)[0],
+          upAxis: report.upAxis,
           why: notes.find((n) => n.object === 'timeline' && n.severity === 'warning')?.message,
           instances: report.instances,
           constraints: report.sketches.reduce((n, s) => n + s.constraints, 0),
