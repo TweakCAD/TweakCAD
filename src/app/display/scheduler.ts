@@ -396,7 +396,13 @@ export class RebuildScheduler {
           kept && displayOnly(kept.document, document) ? { ...this.options, restyle: kept.generation } : this.options;
         const options = candidate ? { ...restyled, preview: true } : restyled;
         this.kept = null;
-        const display = await this.evaluator.evaluate(document, options);
+        this.evaluatingNow = true;
+        let display: Display;
+        try {
+          display = await this.evaluator.evaluate(document, options);
+        } finally {
+          this.evaluatingNow = false;
+        }
         this.kept = { document, generation: display.generation };
         if (this.disposed || this.pending) continue;
         const shown = { display, revision, error: null, preview, candidate: candidate === true };
@@ -428,6 +434,12 @@ export class RebuildScheduler {
       this.settle();
     }
   }
+
+  /**
+   * An evaluate of the scheduler's own is in the worker now (not work run
+   * through `exclusive`): what a restart of the worker would stop.
+   */
+  evaluatingNow = false;
 
   private get busyEvaluating(): boolean {
     return this.running || this.pending !== null;

@@ -37,6 +37,7 @@ import { writeMultiHole } from './multiHole';
 import { jointValues } from './pose';
 import { jointTimelineRows } from './jointActions';
 import { activePartOf, shownOf } from './focus';
+import { activatePart } from './commands';
 import { planeProblem, sketchOn } from '../modeling/commands';
 import { sketchesOf } from '../modeling/profiles';
 import { embedDocument, insertComponentCommands, overridesFrom, publicParameters } from './library';
@@ -436,6 +437,23 @@ describe('assemblies in the app', { timeout: 120_000 }, () => {
     const d = await settled(s);
     expect(d.pauses).toEqual([]);
     expect(d.definitions[d.parts[base] as number]?.bodies).toHaveLength(2);
+  });
+
+  it('makes a part active in the assembly around it, and shows the whole design again', async () => {
+    const { s, base, arm } = await boot();
+    const { assembly, armInstance } = await hinged(s, base, arm);
+    const focus = () => s.app.getState().focus;
+    activatePart(s, arm);
+    expect(focus()).toMatchObject({ part: arm, context: { assembly } });
+    expect(JSON.stringify(focus())).toContain(armInstance);
+    expect(shownOf(s.editor.document, focus())).toEqual({ assembly });
+    activatePart(s, null);
+    expect(focus()).toBeNull();
+    // From a part opened on its own, the radio makes another part active in the document's root assembly.
+    s.app.setState({ focus: { part: base } });
+    activatePart(s, arm);
+    expect(activePartOf(s.editor.document, focus())).toBe(arm);
+    expect(shownOf(s.editor.document, focus())).toEqual({ assembly });
   });
 
   it('references another instance in context through a captured context', async () => {

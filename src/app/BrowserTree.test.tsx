@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
   BrowserTree,
   allowedEntries,
@@ -9,6 +9,10 @@ import {
   type BrowserTreeProps,
 } from './BrowserTree';
 import type { FeatureRow } from './features';
+import { setAllOpen, toggleNode } from './treeOpen';
+
+// The rows these tests read are inside nodes that start collapsed.
+beforeEach(() => setAllOpen(true));
 
 const row = (o: Partial<FeatureRow> & { id: string; type: string }): FeatureRow => ({
   name: o.id,
@@ -43,8 +47,8 @@ function props(
     selectedKeys: new Set(),
     selectedStandard: new Set(),
     selectedDatums: new Set(),
-    standardPlanesVisible: false,
-    onToggleStandardPlanes: none,
+    originShown: () => new Set(),
+    onSetOriginShown: none,
     onSelectStandard: none,
     onSelectDatum: none,
     onSelectFeature: none,
@@ -82,14 +86,33 @@ describe('the browser', () => {
     expect(html).not.toContain('constrained');
   });
 
-  it('has the Parameters node with its edit gear, and the origin planes with their eye', () => {
+  it('has the Parameters node with its edit gear, and an eye on the Origin and on each of its items', () => {
     const html = renderToStaticMarkup(<BrowserTree {...props([])} />);
     expect(html).toContain('aria-label="Edit parameters"');
     expect(html).toContain('width');
-    expect(html).toContain('aria-label="Show origin planes"');
-    expect(renderToStaticMarkup(<BrowserTree {...props([], { standardPlanesVisible: true })} />)).toContain(
-      'aria-label="Hide origin planes"',
+    expect(html).toContain('aria-label="Show origin"');
+    for (const item of ['XY Plane', 'Z Axis', 'Origin Point']) expect(html).toContain(`aria-label="Show ${item}"`);
+    const some = renderToStaticMarkup(<BrowserTree {...props([], { originShown: () => new Set(['xy', 'z']) })} />);
+    expect(some).toContain('aria-label="Hide origin"');
+    expect(some).toContain('aria-label="Hide XY Plane"');
+    expect(some).toContain('aria-label="Hide Z Axis"');
+    expect(some).toContain('aria-label="Show XZ Plane"');
+  });
+
+  it('has an eye on the Bodies of a part that hides them all, or shows them all when every one is hidden', () => {
+    const two = [BODY, { ...BODY, key: 2, id: 'b2', name: 'Body 2' }];
+    expect(renderToStaticMarkup(<BrowserTree {...props([], {}, two)} />)).toContain(
+      'aria-label="Hide the bodies of Part"',
     );
+    const oneHidden = two.map((b, i) => ({ ...b, visible: i === 0 }));
+    expect(renderToStaticMarkup(<BrowserTree {...props([], {}, oneHidden)} />)).toContain(
+      'aria-label="Hide the bodies of Part"',
+    );
+    const hidden = two.map((b) => ({ ...b, visible: false }));
+    expect(renderToStaticMarkup(<BrowserTree {...props([], {}, hidden)} />)).toContain(
+      'aria-label="Show the bodies of Part"',
+    );
+    expect(renderToStaticMarkup(<BrowserTree {...props([], {}, [])} />)).not.toContain('the bodies of Part');
   });
 });
 
@@ -101,10 +124,41 @@ describe('the browser rows and menus', () => {
     );
   });
 
-  it('starts with the Origin closed, its planes, axes and point inside', () => {
-    const html = renderToStaticMarkup(<BrowserTree {...props([])} />);
-    expect(html).toContain('Origin');
-    for (const label of ['XY Plane', 'X Axis', 'Origin Point']) expect(html).not.toContain(label);
+  it('starts collapsed but for the document, and opens or closes every node at once', () => {
+    setAllOpen(false);
+    const top = renderToStaticMarkup(<BrowserTree {...props([])} />);
+    expect(top).toContain('Part');
+    expect(top).not.toContain('Origin');
+    toggleNode('part_1');
+    const part = renderToStaticMarkup(<BrowserTree {...props([])} />);
+    expect(part).toContain('Origin');
+    for (const label of ['XY Plane', 'X Axis', 'Origin Point']) expect(part).not.toContain(label);
+    setAllOpen(true);
+    const all = renderToStaticMarkup(<BrowserTree {...props([])} />);
+    for (const label of ['XY Plane', 'X Axis', 'Origin Point']) expect(all).toContain(label);
+    expect(all).toContain('aria-label="Expand all"');
+    expect(all).toContain('aria-label="Collapse all"');
+  });
+
+  it('lists the assemblies before the parts', () => {
+    const html = renderToStaticMarkup(
+      <BrowserTree {...props([], { assemblies: [{ id: 'asm_1', name: 'Top assembly' }] })} />,
+    );
+    expect(html.indexOf('Top assembly')).toBeLessThan(html.indexOf('>Part<'));
+  });
+
+  it('marks the active part with its radio, and the whole design with the document radio', () => {
+    const activating = { onActivatePart: none, activePart: 'part_1' };
+    const html = renderToStaticMarkup(<BrowserTree {...props([], { ...activating, designActive: false })} />);
+    expect(html).toMatch(/role="radio" aria-checked="true"[^>]*aria-label="Make Part active"/);
+    expect(html).toMatch(/role="radio" aria-checked="false"[^>]*aria-label="Show the whole design"/);
+    const design = renderToStaticMarkup(
+      <BrowserTree {...props([], { ...activating, activePart: null, designActive: true })} />,
+    );
+    expect(design).toMatch(/role="radio" aria-checked="false"[^>]*aria-label="Make Part active"/);
+    expect(design).toMatch(/role="radio" aria-checked="true"[^>]*aria-label="Show the whole design"/);
+    // A document whose root is a part has no design radio: the part is the design.
+    expect(renderToStaticMarkup(<BrowserTree {...props([], activating)} />)).not.toContain('Show the whole design');
   });
 
   it('lists derived components under Components, each with its eye, and says when there are none', () => {
@@ -136,6 +190,9 @@ describe('the browser rows and menus', () => {
       { ...BODY, key: 2, id: 'b2', name: 'Body 2', feature: 'feat_i' },
       { ...BODY, key: 3, id: 'b3', name: 'Body 3', feature: 'feat_i' },
     ];
+    setAllOpen(false);
+    toggleNode('part_1');
+    toggleNode('part_1/bodies');
     const html = renderToStaticMarkup(<BrowserTree {...props([imp], {}, bodies)} />);
     expect(html).toContain('bracket.step');
     expect(html).toContain('aria-label="Hide all bodies"');
@@ -297,10 +354,11 @@ describe('feature menus', () => {
     expect(html).not.toContain('aria-label="Hide Sketch 1"');
     expect(html).not.toContain('aria-label="Hide Body 1"');
     expect(html).toMatch(/<select[^>]*disabled=""/);
-    // Viewing stays: the rows, the origin planes' toggle.
+    // Viewing stays: the rows. The origin's eyes write the document, so they go too.
     expect(html).toContain('Sketch 1');
     expect(html).toContain('Body 1');
-    expect(html).toContain('aria-label="Show origin planes"');
+    expect(html).not.toContain('aria-label="Show origin"');
+    expect(html).not.toContain('the bodies of Part');
   });
 
   it('lists a parameter by its value now, marked with the configuration row that sets it', () => {

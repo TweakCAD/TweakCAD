@@ -12,6 +12,8 @@ import {
   ExternalLink,
   ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Crosshair,
   Eye,
   EyeOff,
@@ -41,6 +43,8 @@ import {
 } from 'lucide-react';
 import { BODY_COLOR_SWATCHES } from './attributes';
 import { useKeptInWindow } from './menuPlacement';
+import { ORIGIN_ITEMS, type OriginItem } from './attributes';
+import { DOCUMENT_NODE, setAllOpen, toggleNode, useTreeOpen } from './treeOpen';
 import {
   ExtrudeIcon,
   RevolveIcon,
@@ -227,14 +231,23 @@ export interface BrowserTreeProps {
   /** The part new features go into; another part offers Open. */
   activePart?: string | null;
   onOpenPart?: (part: string) => void;
+  /**
+   * Makes a part the active one, or with null the whole design: each part's
+   * radio, and the document's while `designActive` is given.
+   */
+  onActivatePart?: (part: string | null) => void;
+  /** The document's root is an assembly: whether it shows with no part active (its radio is on). */
+  designActive?: boolean;
   /** The header's New Part. */
   onNewPart?: () => void;
   selectedFeatures: ReadonlySet<string>;
   selectedKeys: ReadonlySet<number>;
   selectedStandard: ReadonlySet<StandardPlane>;
   selectedDatums: ReadonlySet<StandardDatum>;
-  standardPlanesVisible: boolean;
-  onToggleStandardPlanes: () => void;
+  /** The origin items of a part that show, as its document keeps them. */
+  originShown: (part: string) => ReadonlySet<OriginItem>;
+  /** Shows or hides origin items of a part: the Origin node's eye sets all of them, each row's its own. */
+  onSetOriginShown: (part: string, items: readonly OriginItem[], shown: boolean) => void;
   onSelectStandard: (name: StandardPlane, additive: boolean) => void;
   onSelectDatum: (name: StandardDatum, additive: boolean) => void;
   onSelectFeature: (feature: string, additive: boolean) => void;
@@ -269,9 +282,6 @@ const DATUM_ROWS: { name: StandardDatum; label: string; color: string }[] = [
   { name: 'origin', label: 'Origin Point', color: '#888888' },
 ];
 
-/** Nodes that start collapsed: each part's Origin, and the import nodes. */
-const closedAtFirst = (id: string): boolean => id.endsWith('/origin') || id.startsWith('import:');
-
 /** A body row's menu: the body, and the row of the feature that made it. */
 interface BodyMenu {
   /** The part the body is listed under. */
@@ -283,8 +293,8 @@ interface BodyMenu {
 }
 
 export function BrowserTree(props: BrowserTreeProps) {
-  // Nodes toggled away from how they start (open, or closed for `closedAtFirst`).
-  const [toggled, setToggled] = useState<Set<string>>(() => new Set());
+  const open = useTreeOpen();
+  const toggle = toggleNode;
   const [menu, setMenu] = useState<{ feature: string; entries: MenuEntry[]; x: number; y: number } | null>(null);
   const [bodyMenu, setBodyMenu] = useState<BodyMenu | null>(null);
   /** The body whose name is being edited in its row. */
@@ -298,14 +308,6 @@ export function BrowserTree(props: BrowserTreeProps) {
   } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   useKeptInWindow(menuRef, menu ?? bodyMenu ?? importMenu);
-  const toggle = (id: string) =>
-    setToggled((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  const open = (id: string) => toggled.has(id) === closedAtFirst(id);
 
   const anyMenu = menu !== null || bodyMenu !== null || importMenu !== null;
   const closeMenus = () => {
@@ -358,32 +360,37 @@ export function BrowserTree(props: BrowserTreeProps) {
       <div style={styles.header}>
         <Layers size={12} style={{ color: '#888' }} />
         <span style={styles.headerTitle}>Browser</span>
-        {props.onNewPart && (
-          <button
-            type="button"
-            style={styles.headerActionBtn}
-            onClick={props.onNewPart}
-            aria-label="New part"
-            title="New part"
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background = '#e6e6e6';
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
-            }}
-          >
-            <Plus size={12} color="#666" />
-          </button>
-        )}
+        <span style={styles.headerActions}>
+          <HeaderButton label="Expand all" onClick={() => setAllOpen(true)}>
+            <ChevronsUpDown size={12} color="#666" />
+          </HeaderButton>
+          <HeaderButton label="Collapse all" onClick={() => setAllOpen(false)}>
+            <ChevronsDownUp size={12} color="#666" />
+          </HeaderButton>
+          {props.onNewPart && (
+            <HeaderButton label="New part" onClick={props.onNewPart}>
+              <Plus size={12} color="#666" />
+            </HeaderButton>
+          )}
+        </span>
       </div>
       <div style={styles.content}>
         <TreeNode
           label={props.documentName}
           icon={<FileBox size={13} color="#888" />}
-          expanded={open('doc')}
-          onToggle={() => toggle('doc')}
+          expanded={open(DOCUMENT_NODE)}
+          onToggle={() => toggle(DOCUMENT_NODE)}
           depth={0}
           bold
+          {...(props.onActivatePart && props.designActive !== undefined
+            ? {
+                radio: {
+                  on: props.designActive,
+                  onClick: () => props.onActivatePart?.(null),
+                  ariaLabel: 'Show the whole design',
+                },
+              }
+            : {})}
         >
           <TreeNode
             label="Parameters"
@@ -426,10 +433,20 @@ export function BrowserTree(props: BrowserTreeProps) {
               </div>
             ))}
           </TreeNode>
+          {props.assemblyTree ??
+            props.assemblies.map((a) => (
+              <div key={a.id} style={{ ...styles.originItem, paddingLeft: 8 + 14 }}>
+                <Layers size={12} color="#6366f1" />
+                <span style={{ ...styles.originLabel, fontSize: 12, color: '#444', fontWeight: 600 }}>{a.name}</span>
+              </div>
+            ))}
           {props.parts.map((part) => {
             const sketches = sketchesOf(part.features);
             const construction = constructionOf(part.features);
             const components = componentsOf(part.features);
+            const originShown = props.originShown(part.id);
+            const shownBodies = part.bodies.filter((b) => b.key >= 0);
+            const allBodiesHidden = shownBodies.length > 0 && shownBodies.every((b) => !b.visible);
             return (
               <TreeNode
                 key={part.id}
@@ -444,7 +461,16 @@ export function BrowserTree(props: BrowserTreeProps) {
                       trailingAction: {
                         icon: <ExternalLink size={11} color="#777" />,
                         onClick: () => props.onOpenPart?.(part.id),
-                        ariaLabel: `Open ${part.name}`,
+                        ariaLabel: `Open ${part.name} on its own`,
+                      },
+                    }
+                  : {})}
+                {...(props.onActivatePart
+                  ? {
+                      radio: {
+                        on: props.activePart === part.id,
+                        onClick: () => props.onActivatePart?.(part.id),
+                        ariaLabel: `Make ${part.name} active`,
                       },
                     }
                   : {})}
@@ -473,15 +499,20 @@ export function BrowserTree(props: BrowserTreeProps) {
                   expanded={open(`${part.id}/origin`)}
                   onToggle={() => toggle(`${part.id}/origin`)}
                   depth={2}
-                  trailingAction={{
-                    icon: props.standardPlanesVisible ? (
-                      <Eye size={11} strokeWidth={1.5} />
-                    ) : (
-                      <EyeOff size={11} strokeWidth={1.5} />
-                    ),
-                    onClick: props.onToggleStandardPlanes,
-                    ariaLabel: props.standardPlanesVisible ? 'Hide origin planes' : 'Show origin planes',
-                  }}
+                  {...(readOnly
+                    ? {}
+                    : {
+                        trailingAction: {
+                          icon:
+                            originShown.size > 0 ? (
+                              <Eye size={11} strokeWidth={1.5} />
+                            ) : (
+                              <EyeOff size={11} strokeWidth={1.5} />
+                            ),
+                          onClick: () => props.onSetOriginShown(part.id, ORIGIN_ITEMS, originShown.size === 0),
+                          ariaLabel: originShown.size > 0 ? 'Hide origin' : 'Show origin',
+                        },
+                      })}
                 >
                   {STANDARD_ROWS.map((p) => (
                     <OriginRow
@@ -491,6 +522,12 @@ export function BrowserTree(props: BrowserTreeProps) {
                       plane
                       selected={props.selectedStandard.has(p.name)}
                       onClick={(additive) => props.onSelectStandard(p.name, additive)}
+                      {...(readOnly
+                        ? {}
+                        : {
+                            shown: originShown.has(p.name),
+                            onToggleShown: () => props.onSetOriginShown(part.id, [p.name], !originShown.has(p.name)),
+                          })}
                     />
                   ))}
                   {DATUM_ROWS.map((p) => (
@@ -500,6 +537,12 @@ export function BrowserTree(props: BrowserTreeProps) {
                       color={p.color}
                       selected={props.selectedDatums.has(p.name)}
                       onClick={(additive) => props.onSelectDatum(p.name, additive)}
+                      {...(readOnly
+                        ? {}
+                        : {
+                            shown: originShown.has(p.name),
+                            onToggleShown: () => props.onSetOriginShown(part.id, [p.name], !originShown.has(p.name)),
+                          })}
                     />
                   ))}
                 </TreeNode>
@@ -639,6 +682,26 @@ export function BrowserTree(props: BrowserTreeProps) {
                   onToggle={() => toggle(`${part.id}/bodies`)}
                   depth={2}
                   count={part.bodies.length}
+                  {...(readOnly || shownBodies.length === 0
+                    ? {}
+                    : {
+                        trailingAction: {
+                          icon: allBodiesHidden ? (
+                            <EyeOff size={11} strokeWidth={1.5} />
+                          ) : (
+                            <Eye size={11} strokeWidth={1.5} />
+                          ),
+                          onClick: () =>
+                            props.onBodyAction(
+                              part.id,
+                              shownBodies.map((b) => b.key),
+                              { kind: 'visible', visible: allBodiesHidden },
+                            ),
+                          ariaLabel: allBodiesHidden
+                            ? `Show the bodies of ${part.name}`
+                            : `Hide the bodies of ${part.name}`,
+                        },
+                      })}
                 >
                   {part.bodies.length === 0 && <span style={{ ...styles.emptyText, paddingLeft: 56 }}>No bodies</span>}
                   {bodyGroups(part.features, part.bodies).map((g) => {
@@ -725,13 +788,6 @@ export function BrowserTree(props: BrowserTreeProps) {
               </TreeNode>
             );
           })}
-          {props.assemblyTree ??
-            props.assemblies.map((a) => (
-              <div key={a.id} style={{ ...styles.originItem, paddingLeft: 8 + 14 }}>
-                <Layers size={12} color="#6366f1" />
-                <span style={{ ...styles.originLabel, fontSize: 12, color: '#444', fontWeight: 600 }}>{a.name}</span>
-              </div>
-            ))}
         </TreeNode>
       </div>
       {importMenu && (
@@ -922,6 +978,27 @@ export function BrowserTree(props: BrowserTreeProps) {
   );
 }
 
+/** A small icon button of the browser's header. */
+function HeaderButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      style={styles.headerActionBtn}
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      onMouseEnter={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.background = '#e6e6e6';
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
 export function TreeNode({
   label,
   icon,
@@ -932,6 +1009,7 @@ export function TreeNode({
   bold,
   children,
   trailingAction,
+  radio,
   onContextMenu,
 }: {
   label: string;
@@ -943,8 +1021,11 @@ export function TreeNode({
   bold?: boolean;
   children?: React.ReactNode;
   trailingAction?: { icon: React.ReactNode; onClick: () => void; ariaLabel: string };
+  /** A radio left of the trailing action: on for the active part, or the design shown with none. */
+  radio?: { on: boolean; onClick: () => void; ariaLabel: string };
   onContextMenu?: (e: React.MouseEvent) => void;
 }) {
+  const controls = (trailingAction ? 1 : 0) + (radio ? 1 : 0);
   return (
     <>
       <div style={{ position: 'relative' }}>
@@ -953,7 +1034,7 @@ export function TreeNode({
           style={{
             ...styles.treeNodeBtn,
             paddingLeft: 8 + depth * 14,
-            paddingRight: trailingAction ? 28 : 8,
+            paddingRight: 8 + controls * 22,
             fontWeight: bold ? 600 : 500,
             fontSize: bold ? 12 : 11,
             color: bold ? '#444' : '#555',
@@ -984,6 +1065,22 @@ export function TreeNode({
             title={trailingAction.ariaLabel}
           >
             {trailingAction.icon}
+          </button>
+        )}
+        {radio && (
+          <button
+            type="button"
+            role="radio"
+            aria-checked={radio.on}
+            style={{ ...styles.trailingActionBtn, right: trailingAction ? 26 : 4 }}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!radio.on) radio.onClick();
+            }}
+            aria-label={radio.ariaLabel}
+            title={radio.ariaLabel}
+          >
+            <span style={{ ...styles.radio, ...(radio.on ? styles.radioOn : {}) }} />
           </button>
         )}
       </div>
@@ -1200,33 +1297,51 @@ function OriginRow({
   plane,
   selected,
   onClick,
+  shown,
+  onToggleShown,
 }: {
   label: string;
   color: string;
   plane?: boolean;
   selected: boolean;
   onClick: (additive: boolean) => void;
+  /** Whether it is drawn; with `onToggleShown`, the row has its eye. */
+  shown?: boolean;
+  onToggleShown?: () => void;
 }) {
   return (
-    <button
-      type="button"
-      style={{ ...styles.originItem, paddingLeft: 8 + 3 * 14, ...(selected ? styles.selectedRow : {}) }}
-      onClick={(e) => onClick(e.shiftKey || e.ctrlKey || e.metaKey)}
-      onMouseEnter={(e) => {
-        if (!selected) e.currentTarget.style.background = '#f4f4f4';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = selected ? '#e3effb' : 'transparent';
-      }}
-    >
-      <span style={{ ...styles.originDot, background: color }} />
-      {plane && (
-        <svg width={12} height={12} viewBox="0 0 12 12" style={{ flexShrink: 0 }}>
-          <rect x="1" y="3" width="10" height="6" rx="1" stroke={color} strokeWidth="1" fill={`${color}15`} />
-        </svg>
+    <div style={{ position: 'relative' }}>
+      <button
+        type="button"
+        style={{ ...styles.originItem, paddingLeft: 8 + 3 * 14, ...(selected ? styles.selectedRow : {}) }}
+        onClick={(e) => onClick(e.shiftKey || e.ctrlKey || e.metaKey)}
+        onMouseEnter={(e) => {
+          if (!selected) e.currentTarget.style.background = '#f4f4f4';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = selected ? '#e3effb' : 'transparent';
+        }}
+      >
+        <span style={{ ...styles.originDot, background: color }} />
+        {plane && (
+          <svg width={12} height={12} viewBox="0 0 12 12" style={{ flexShrink: 0 }}>
+            <rect x="1" y="3" width="10" height="6" rx="1" stroke={color} strokeWidth="1" fill={`${color}15`} />
+          </svg>
+        )}
+        <span style={styles.originLabel}>{label}</span>
+      </button>
+      {onToggleShown && (
+        <button
+          type="button"
+          style={styles.trailingActionBtn}
+          aria-label={shown ? `Hide ${label}` : `Show ${label}`}
+          title={shown ? 'Hide' : 'Show'}
+          onClick={onToggleShown}
+        >
+          {shown ? <Eye size={11} strokeWidth={1.5} /> : <EyeOff size={11} strokeWidth={1.5} />}
+        </button>
       )}
-      <span style={styles.originLabel}>{label}</span>
-    </button>
+    </div>
   );
 }
 
@@ -1345,7 +1460,6 @@ const styles: Record<string, React.CSSProperties> = {
   root: { width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: '#fafafa' },
   header: { padding: '8px 12px', borderBottom: '1px solid #d8d8d8', display: 'flex', alignItems: 'center', gap: 6 },
   headerActionBtn: {
-    marginLeft: 'auto',
     width: 20,
     height: 20,
     display: 'inline-flex',
@@ -1357,6 +1471,16 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 3,
     padding: 0,
   },
+  headerActions: { marginLeft: 'auto', display: 'inline-flex', gap: 2 },
+  radio: {
+    width: 10,
+    height: 10,
+    borderRadius: '50%',
+    border: '1.5px solid #9a9a9a',
+    boxSizing: 'border-box',
+    background: '#ffffff',
+  },
+  radioOn: { border: '3px solid #2563eb' },
   headerTitle: { fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1, color: '#888' },
   content: { flex: 1, overflow: 'auto', padding: '2px 0' },
   treeNodeBtn: {

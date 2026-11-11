@@ -65,6 +65,61 @@ class FakeService implements AppServiceClient {
 
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
+/** A service whose evaluates, once `hang` is set, wait until it is restarted, as a worker deep in a long build. */
+class SlowService extends FakeService {
+  hang = false;
+  restarts = 0;
+  private waiting: ((e: Error) => void)[] = [];
+  override evaluate(doc: unknown) {
+    if (!this.hang) return super.evaluate(doc);
+    this.evaluated.push(doc);
+    return new Promise<Display>((_, reject) => this.waiting.push(reject));
+  }
+  restart() {
+    this.restarts++;
+    this.hang = false;
+    for (const reject of this.waiting.splice(0)) reject(new Error('The worker was restarted'));
+  }
+}
+
+describe('another document while one builds', () => {
+  const boot = async (client: SlowService) => {
+    const { services } = await bootApp({
+      client,
+      workingCopy: new MemoryWorkingCopy(),
+      localId: null,
+      ids: seededIds(5),
+      name: () => 'slow-build',
+    });
+    await services.ready;
+    await services.whenShown();
+    return services;
+  };
+
+  it('restarts the worker, and builds the new document without waiting for the old build', async () => {
+    const client = new SlowService();
+    const services = await boot(client);
+    client.hang = true;
+    services.session.newDocument();
+    await settle();
+    expect(services.scheduler.evaluatingNow).toBe(true);
+    // A second document while the first still builds: the build stops, the second is shown.
+    services.session.newDocument();
+    await services.whenShown();
+    expect(client.restarts).toBe(1);
+    expect(services.display.getState().error).toBeNull();
+    expect(client.evaluated.at(-1)).toBe(services.editor.document);
+  });
+
+  it('leaves the worker alone when nothing builds', async () => {
+    const client = new SlowService();
+    const services = await boot(client);
+    services.session.newDocument();
+    await services.whenShown();
+    expect(client.restarts).toBe(0);
+  });
+});
+
 describe('bootApp', () => {
   it('boots a new document, loads the kernel and shows the first display', async () => {
     const client = new FakeService();

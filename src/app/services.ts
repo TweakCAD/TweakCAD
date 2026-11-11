@@ -50,6 +50,8 @@ import type { WorkingCopyStore } from './storage/workingCopy';
 /** The worker service as the app uses it (`ServiceClient`, or a fake in tests). */
 export interface AppServiceClient extends Evaluator, PickClient {
   init(): Promise<{ loadTimeMs: number }>;
+  /** Stops the work in the worker and starts a fresh one; calls waiting fail. Absent where the client cannot. */
+  restart?(): void;
   exportFile(format: ExportFormat, scope: ResolveScope, options?: ExportOptions): Promise<Uint8Array>;
   exportFreeCad(): Promise<FcstdExport>;
   /** A model entity kind and measures (9.7), or null for anything else. */
@@ -179,6 +181,10 @@ export async function bootApp(o: BootAppOptions): Promise<BootedApp> {
     newName: name,
     storage: boot.session,
     cloud,
+    onLeaving: () => {
+      // The last document's build is not waited for: the worker is restarted, and the next document is built on a fresh one.
+      if (scheduler.evaluatingNow) o.client.restart?.();
+    },
     onRebound: () => {
       // Another document: nothing selected, back to modelling, an empty console (its warnings were the last document's), and the address names no record until autosave makes one.
       clearSelection(selection);

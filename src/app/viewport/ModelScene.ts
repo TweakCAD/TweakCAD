@@ -168,6 +168,10 @@ export class ModelScene {
   private readonly content = new THREE.Group();
   private readonly standard = new THREE.Group();
   private readonly standardMeshes = new Map<StandardPlane, THREE.Mesh>();
+  /** Each standard plane's outline, shown and hidden with its mesh. */
+  private readonly standardOutlines = new Map<StandardPlane, THREE.LineSegments>();
+  /** The origin items drawn whatever is selected; the planes until the app says otherwise. */
+  private originItems: ReadonlySet<StandardPlane | StandardDatum> = new Set(STANDARD_PLANES);
   /** The standard axes and the origin, drawn only while selected or hovered (they are picked in the browser). */
   private readonly datums = new THREE.Group();
   private readonly datumObjects = new Map<StandardDatum, THREE.Object3D>();
@@ -568,6 +572,7 @@ export class ModelScene {
       outline.renderOrder = ORDER.standard + 1;
       this.standard.add(mesh, outline);
       this.standardMeshes.set(name, mesh);
+      this.standardOutlines.set(name, outline);
     }
   }
 
@@ -667,12 +672,15 @@ export class ModelScene {
     return (sketch.visible || this.shownSketches.has(sketch.feature)) && sketch.feature !== this.hiddenSketch;
   }
 
-  setStandardPlanesVisible(visible: boolean): void {
-    this.standard.visible = visible;
-  }
-
-  get standardPlanesVisible(): boolean {
-    return this.standard.visible;
+  /** Draws these standard planes, axes and the origin point; a plane not drawn takes no picks. */
+  setOriginShown(items: ReadonlySet<StandardPlane | StandardDatum>): void {
+    this.originItems = items;
+    for (const [name, mesh] of this.standardMeshes) {
+      mesh.visible = items.has(name);
+      const outline = this.standardOutlines.get(name);
+      if (outline) outline.visible = mesh.visible;
+    }
+    this.applyStandardLooks();
   }
 
   /** What picks may land on. */
@@ -988,7 +996,8 @@ export class ModelScene {
     }
     for (const [name, object] of this.datumObjects) {
       const item = { datum: name };
-      object.visible = this.selection.some((s) => sameItem(s, item)) || sameItem(this.hover, item);
+      object.visible =
+        this.originItems.has(name) || this.selection.some((s) => sameItem(s, item)) || sameItem(this.hover, item);
     }
   }
 

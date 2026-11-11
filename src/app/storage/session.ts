@@ -210,6 +210,8 @@ export interface SessionOptions {
   /** Cloud projects, when the site is there. */
   cloud?: CloudProjects | null;
   /** Told when the document has a fresh working-copy record (New and Open). */
+  /** Just before another document takes the editor's place (New, Open, a document opened from text). */
+  onLeaving?: () => void;
   onRebound?: () => void;
   /** Told when the document's storage changes, so the address names it. */
   onStorage?: (storage: DocumentStorage, localId: string | null) => void;
@@ -223,6 +225,7 @@ export class DocumentSession {
   private readonly ids: IdGenerator;
   private readonly newName: () => string;
   private readonly cloud: CloudProjects | null;
+  private readonly onLeaving: () => void;
   private readonly onRebound: () => void;
   private readonly onStorage: (storage: DocumentStorage, localId: string | null) => void;
   /** Counts preview requests and their ends, so a revision fetched after its preview was closed or replaced is not shown. */
@@ -235,6 +238,7 @@ export class DocumentSession {
     this.ids = o.ids;
     this.newName = o.newName;
     this.cloud = o.cloud ?? null;
+    this.onLeaving = o.onLeaving ?? (() => undefined);
     this.onRebound = o.onRebound ?? (() => undefined);
     this.onStorage = o.onStorage ?? (() => undefined);
     this.state = createStore<SessionState>(() => ({ storage: o.storage ?? { kind: 'unsaved' }, preview: null }));
@@ -262,6 +266,7 @@ export class DocumentSession {
 
   /** Replaces the document with `doc`, which gets a working-copy record of its own; `keep` writes it there at once. */
   private adopt(doc: Doc, storage: DocumentStorage, keep: boolean): void {
+    this.onLeaving();
     this.autosave?.reset(null, snapshotOf(storage), keep);
     // The load ends a preview, with the live document it held.
     this.previewTurn++;
