@@ -118,22 +118,71 @@ export class MeshStore {
   }
 }
 
+/** How a call ends when the worker it went to is restarted (`ServiceClient.restart`). */
+export class WorkerRestarted extends Error {
+  constructor() {
+    super('The worker was restarted');
+  }
+}
+
 export class ServiceClient {
-  private readonly api: Comlink.Remote<ServiceWorkerApi>;
+  // Held in private fields, out of reach of anything that walks the client's
+  // properties: a released Comlink proxy throws on every property read.
+  #worker!: Worker;
+  /** The worker's API as Comlink gives it. */
+  #remote!: Comlink.Remote<ServiceWorkerApi>;
+  /** The same API, each call ending in `WorkerRestarted` when the worker is restarted before it answers. */
+  #api!: Comlink.Remote<ServiceWorkerApi>;
+  private stop: (e: Error) => void = () => undefined;
   private readonly progress = new ProgressRelay();
-  private readonly meshes = new MeshStore();
-  private readonly port: MessagePort;
+  private meshes = new MeshStore();
+  private port!: MessagePort;
   /** The document last sent to evaluate and the id the worker keeps it under, so the next goes as a change from it. */
   private sent: { doc: unknown; id: number } | null = null;
   private sends = 0;
 
-  /** A client over `worker`, which runs `worker.ts`. */
-  constructor(private readonly worker: Worker) {
-    this.api = Comlink.wrap<ServiceWorkerApi>(worker);
+  /** A client over the workers `spawn` makes, each running `worker.ts`: one now, another at each restart. */
+  constructor(private readonly spawnWorker: () => Worker) {
+    this.connect();
+  }
+
+  private connect(): void {
+    this.#worker = this.spawnWorker();
+    const remote = Comlink.wrap<ServiceWorkerApi>(this.#worker);
+    this.#remote = remote;
+    const stopped = new Promise<never>((_, reject) => {
+      this.stop = reject;
+    });
+    // A restart with no call waiting is heard by no one.
+    stopped.catch(() => undefined);
+    this.#api = new Proxy(remote, {
+      get: (target, name) => {
+        if (typeof name !== 'string' || name === 'then') return undefined;
+        const method = Reflect.get(target, name) as (...args: unknown[]) => Promise<unknown>;
+        return (...args: unknown[]) => Promise.race([method(...args), stopped]);
+      },
+    });
     const channel = new MessageChannel();
     this.port = channel.port1;
     this.port.onmessage = (e: MessageEvent<Progress & { job: number }>) => this.progress.receive(e.data);
-    void this.api.connect(Comlink.transfer(channel.port2, [channel.port2]));
+    this.#api.connect(Comlink.transfer(channel.port2, [channel.port2])).catch(() => undefined);
+  }
+
+  /**
+   * Stops the worker, whatever it is doing, and starts a fresh one: the only
+   * way to end a kernel call. Calls waiting end in `WorkerRestarted`. The new
+   * worker keeps no document and numbers its geometries afresh, so the next
+   * evaluate sends the whole document and every geometry. Its kernel loads
+   * with the first call.
+   */
+  restart(): void {
+    this.stop(new WorkerRestarted());
+    this.port.close();
+    this.#remote[Comlink.releaseProxy]();
+    this.#worker.terminate();
+    this.sent = null;
+    this.meshes = new MeshStore();
+    this.connect();
   }
 
   /** Hears the progress of the newest job (an evaluate); a superseded job's progress is dropped. Returns the unsubscribe. */
@@ -143,11 +192,11 @@ export class ServiceClient {
 
   /** Starts a worker of its own. */
   static spawn(): ServiceClient {
-    return new ServiceClient(new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' }));
+    return new ServiceClient(() => new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' }));
   }
 
   init(): Promise<{ loadTimeMs: number }> {
-    return this.api.init();
+    return this.#api.init();
   }
 
   /**
@@ -171,7 +220,7 @@ export class ServiceClient {
     const id = ++this.sends;
     this.sent = { doc, id };
     if (before) {
-      const changed = await this.api.evaluateChange(
+      const changed = await this.#api.evaluateChange(
         before.id,
         diffDocs(before.doc, doc),
         id,
@@ -180,40 +229,40 @@ export class ServiceClient {
       );
       if (changed) return changed;
     }
-    return this.api.evaluate(doc as Record<string, unknown>, options, this.progress.start(), id);
+    return this.#api.evaluate(doc as Record<string, unknown>, options, this.progress.start(), id);
   }
 
   pick(target: PickTarget, options?: PickOptions): Promise<Picked | null> {
-    return this.api.pick(target, options);
+    return this.#api.pick(target, options);
   }
 
   resolve(
     record: EntityRecord,
     scope: ResolveScope,
   ): Promise<Resolved & { instances?: { index: number; key: Key }[] }> {
-    return this.api.resolve(record, scope);
+    return this.#api.resolve(record, scope);
   }
 
   /** The bodies of a part just before a feature, and where `records` land there; see `EvaluationService.bodiesBefore`. */
   bodiesBefore(scope: BeforeScope, records?: EntityRecord[], options?: { picks?: boolean }): Promise<BodiesBefore> {
-    return this.api.bodiesBefore(scope, records, options);
+    return this.#api.bodiesBefore(scope, records, options);
   }
 
   /** Where stored references lie in a part just before a feature, drawn; see `EvaluationService.outlinesBefore`. */
   outlinesBefore(scope: BeforeScope, records: EntityRecord[]): Promise<(PickOutline | null)[]> {
-    return this.api.outlinesBefore(scope, records);
+    return this.#api.outlinesBefore(scope, records);
   }
 
   measure(kind: MeasureKind, targets: (Key | PickTarget)[]): Promise<Measured> {
-    return this.api.measure(kind, targets);
+    return this.#api.measure(kind, targets);
   }
 
   properties(key: Key): ReturnType<ServiceWorkerApi['properties']> {
-    return this.api.properties(key);
+    return this.#api.properties(key);
   }
 
   bodyMeasures(key: Key): Promise<BodyMeasures | null> {
-    return this.api.bodyMeasures(key);
+    return this.#api.bodyMeasures(key);
   }
 
   externalCurves(
@@ -221,16 +270,16 @@ export class ServiceClient {
     mode: 'project' | 'intersect',
     frame: FrameDisplay,
   ): ReturnType<ServiceWorkerApi['externalCurves']> {
-    return this.api.externalCurves(key, mode, frame);
+    return this.#api.externalCurves(key, mode, frame);
   }
 
   entities(keys: Key[]): Promise<EntityInfo[]> {
-    return this.api.entities(keys);
+    return this.#api.entities(keys);
   }
 
   /** The faces an edge or vertex lies on. */
   neighbours(key: Key): Promise<Key[]> {
-    return this.api.neighbours(key);
+    return this.#api.neighbours(key);
   }
 
   /** Re-captures contexts of `doc` (12.4) apart from the kept evaluation; see `EvaluationService.updateContexts`. */
@@ -239,41 +288,41 @@ export class ServiceClient {
     requests: ContextRequest[],
     options?: { passes?: number; capturedAt?: string },
   ): Promise<ContextsUpdate> {
-    return this.api.updateContexts(doc as Record<string, unknown>, requests, options);
+    return this.#api.updateContexts(doc as Record<string, unknown>, requests, options);
   }
 
   /** A feature of `doc` frozen (7.2) apart from the kept evaluation; see `EvaluationService.freeze`. */
   freeze(doc: unknown, feature: string): Promise<FrozenResult> {
-    return this.api.freeze(doc as Record<string, unknown>, feature);
+    return this.#api.freeze(doc as Record<string, unknown>, feature);
   }
 
   exportFile(format: ExportFormat, scope: ResolveScope, options?: ExportOptions): Promise<Uint8Array> {
-    return this.api.exportFile(format, scope, options);
+    return this.#api.exportFile(format, scope, options);
   }
 
   /** Reads a file into the stored shape of the `core.import` feature `feature`. */
   importFile(bytes: Uint8Array, format: ImportFormat, feature: string, name: string): Promise<ImportedShape> {
-    return this.api.importFile(bytes, format, feature, name);
+    return this.#api.importFile(bytes, format, feature, name);
   }
 
   /** The references of a part's live bodies just before a feature. */
   bodyRecords(part: string, before: string | undefined): Promise<PickedEntity[]> {
-    return this.api.bodyRecords(part, before);
+    return this.#api.bodyRecords(part, before);
   }
 
   /** The evaluated document as a FreeCAD file (see `EvaluationService.exportFreeCad`). */
   exportFreeCad(): Promise<FcstdExport> {
-    return this.api.exportFreeCad();
+    return this.#api.exportFreeCad();
   }
 
   /** The volume and box of a shape in BREP text. */
   shapeMeasures(brep: string): Promise<ShapeMeasures | null> {
-    return this.api.shapeMeasures(brep);
+    return this.#api.shapeMeasures(brep);
   }
 
   /** The volume and box of a part just after one of its features. */
   stepMeasures(part: string, feature: string): Promise<ShapeMeasures | null> {
-    return this.api.stepMeasures(part, feature);
+    return this.#api.stepMeasures(part, feature);
   }
 
   /** The kept evaluation's entities that match sub-shapes of another program's shape (see `EvaluationService.locate`). */
@@ -285,7 +334,7 @@ export class ServiceClient {
     indices: number[] | 'all',
     ofFaces?: number[],
   ): Promise<(PickedEntity | null)[]> {
-    return this.api.locate(part, before, brep, kind, indices, ofFaces);
+    return this.#api.locate(part, before, brep, kind, indices, ofFaces);
   }
 
   /** The kept evaluation's edges lying on both surfaces of each pair (see `EvaluationService.locateOnSurfaces`). */
@@ -294,12 +343,12 @@ export class ServiceClient {
     before: string | undefined,
     pairs: [SurfaceSpec, SurfaceSpec][],
   ): Promise<PickedEntity[][]> {
-    return this.api.locateOnSurfaces(part, before, pairs);
+    return this.#api.locateOnSurfaces(part, before, pairs);
   }
 
   /** The kept evaluation's bodies that any of these features made (see `EvaluationService.bodiesMadeBy`). */
   bodiesMadeBy(part: string, before: string | undefined, features: string[]): Promise<PickedEntity[]> {
-    return this.api.bodiesMadeBy(part, before, features);
+    return this.#api.bodiesMadeBy(part, before, features);
   }
 
   /** The kept evaluation's faces on each surface (see `EvaluationService.locateFacesOnSurfaces`). */
@@ -308,28 +357,28 @@ export class ServiceClient {
     before: string | undefined,
     surfaces: SurfaceSpec[],
   ): Promise<{ face: PickedEntity; body: PickedEntity }[][]> {
-    return this.api.locateFacesOnSurfaces(part, before, surfaces);
+    return this.#api.locateFacesOnSurfaces(part, before, surfaces);
   }
 
   /** The constraints of a sketch's inputs that the solver cannot hold still (see `EvaluationService.vetSketch`). */
   vetSketch(inputs: unknown): Promise<string[]> {
-    return this.api.vetSketch(inputs as Record<string, unknown>);
+    return this.#api.vetSketch(inputs as Record<string, unknown>);
   }
 
   /** The same for sketches of `doc`, read against its values alone; null where a build is needed (see `EvaluationService.vetSketches`). */
   vetSketches(doc: unknown, features: string[]): Promise<(string[] | null)[]> {
-    return this.api.vetSketches(doc as Record<string, unknown>, features);
+    return this.#api.vetSketches(doc as Record<string, unknown>, features);
   }
 
   release(): Promise<void> {
-    return this.api.release();
+    return this.#api.release();
   }
 
   /** Stops the worker and frees its kernel. */
   terminate(): void {
     this.progress.clear();
     this.port.close();
-    this.api[Comlink.releaseProxy]();
-    this.worker.terminate();
+    this.#remote[Comlink.releaseProxy]();
+    this.#worker.terminate();
   }
 }
