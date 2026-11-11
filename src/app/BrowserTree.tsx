@@ -43,6 +43,7 @@ import {
 } from 'lucide-react';
 import { BODY_COLOR_SWATCHES } from './attributes';
 import { useKeptInWindow } from './menuPlacement';
+import { ORIGIN_ITEMS, type OriginItem } from './attributes';
 import { DOCUMENT_NODE, setAllOpen, toggleNode, useTreeOpen } from './treeOpen';
 import {
   ExtrudeIcon,
@@ -243,8 +244,10 @@ export interface BrowserTreeProps {
   selectedKeys: ReadonlySet<number>;
   selectedStandard: ReadonlySet<StandardPlane>;
   selectedDatums: ReadonlySet<StandardDatum>;
-  standardPlanesVisible: boolean;
-  onToggleStandardPlanes: () => void;
+  /** The origin items of a part that show, as its document keeps them. */
+  originShown: (part: string) => ReadonlySet<OriginItem>;
+  /** Shows or hides origin items of a part: the Origin node's eye sets all of them, each row's its own. */
+  onSetOriginShown: (part: string, items: readonly OriginItem[], shown: boolean) => void;
   onSelectStandard: (name: StandardPlane, additive: boolean) => void;
   onSelectDatum: (name: StandardDatum, additive: boolean) => void;
   onSelectFeature: (feature: string, additive: boolean) => void;
@@ -441,6 +444,9 @@ export function BrowserTree(props: BrowserTreeProps) {
             const sketches = sketchesOf(part.features);
             const construction = constructionOf(part.features);
             const components = componentsOf(part.features);
+            const originShown = props.originShown(part.id);
+            const shownBodies = part.bodies.filter((b) => b.key >= 0);
+            const allBodiesHidden = shownBodies.length > 0 && shownBodies.every((b) => !b.visible);
             return (
               <TreeNode
                 key={part.id}
@@ -493,15 +499,20 @@ export function BrowserTree(props: BrowserTreeProps) {
                   expanded={open(`${part.id}/origin`)}
                   onToggle={() => toggle(`${part.id}/origin`)}
                   depth={2}
-                  trailingAction={{
-                    icon: props.standardPlanesVisible ? (
-                      <Eye size={11} strokeWidth={1.5} />
-                    ) : (
-                      <EyeOff size={11} strokeWidth={1.5} />
-                    ),
-                    onClick: props.onToggleStandardPlanes,
-                    ariaLabel: props.standardPlanesVisible ? 'Hide origin planes' : 'Show origin planes',
-                  }}
+                  {...(readOnly
+                    ? {}
+                    : {
+                        trailingAction: {
+                          icon:
+                            originShown.size > 0 ? (
+                              <Eye size={11} strokeWidth={1.5} />
+                            ) : (
+                              <EyeOff size={11} strokeWidth={1.5} />
+                            ),
+                          onClick: () => props.onSetOriginShown(part.id, ORIGIN_ITEMS, originShown.size === 0),
+                          ariaLabel: originShown.size > 0 ? 'Hide origin' : 'Show origin',
+                        },
+                      })}
                 >
                   {STANDARD_ROWS.map((p) => (
                     <OriginRow
@@ -511,6 +522,12 @@ export function BrowserTree(props: BrowserTreeProps) {
                       plane
                       selected={props.selectedStandard.has(p.name)}
                       onClick={(additive) => props.onSelectStandard(p.name, additive)}
+                      {...(readOnly
+                        ? {}
+                        : {
+                            shown: originShown.has(p.name),
+                            onToggleShown: () => props.onSetOriginShown(part.id, [p.name], !originShown.has(p.name)),
+                          })}
                     />
                   ))}
                   {DATUM_ROWS.map((p) => (
@@ -520,6 +537,12 @@ export function BrowserTree(props: BrowserTreeProps) {
                       color={p.color}
                       selected={props.selectedDatums.has(p.name)}
                       onClick={(additive) => props.onSelectDatum(p.name, additive)}
+                      {...(readOnly
+                        ? {}
+                        : {
+                            shown: originShown.has(p.name),
+                            onToggleShown: () => props.onSetOriginShown(part.id, [p.name], !originShown.has(p.name)),
+                          })}
                     />
                   ))}
                 </TreeNode>
@@ -659,6 +682,26 @@ export function BrowserTree(props: BrowserTreeProps) {
                   onToggle={() => toggle(`${part.id}/bodies`)}
                   depth={2}
                   count={part.bodies.length}
+                  {...(readOnly || shownBodies.length === 0
+                    ? {}
+                    : {
+                        trailingAction: {
+                          icon: allBodiesHidden ? (
+                            <EyeOff size={11} strokeWidth={1.5} />
+                          ) : (
+                            <Eye size={11} strokeWidth={1.5} />
+                          ),
+                          onClick: () =>
+                            props.onBodyAction(
+                              part.id,
+                              shownBodies.map((b) => b.key),
+                              { kind: 'visible', visible: allBodiesHidden },
+                            ),
+                          ariaLabel: allBodiesHidden
+                            ? `Show the bodies of ${part.name}`
+                            : `Hide the bodies of ${part.name}`,
+                        },
+                      })}
                 >
                   {part.bodies.length === 0 && <span style={{ ...styles.emptyText, paddingLeft: 56 }}>No bodies</span>}
                   {bodyGroups(part.features, part.bodies).map((g) => {
@@ -1254,33 +1297,51 @@ function OriginRow({
   plane,
   selected,
   onClick,
+  shown,
+  onToggleShown,
 }: {
   label: string;
   color: string;
   plane?: boolean;
   selected: boolean;
   onClick: (additive: boolean) => void;
+  /** Whether it is drawn; with `onToggleShown`, the row has its eye. */
+  shown?: boolean;
+  onToggleShown?: () => void;
 }) {
   return (
-    <button
-      type="button"
-      style={{ ...styles.originItem, paddingLeft: 8 + 3 * 14, ...(selected ? styles.selectedRow : {}) }}
-      onClick={(e) => onClick(e.shiftKey || e.ctrlKey || e.metaKey)}
-      onMouseEnter={(e) => {
-        if (!selected) e.currentTarget.style.background = '#f4f4f4';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = selected ? '#e3effb' : 'transparent';
-      }}
-    >
-      <span style={{ ...styles.originDot, background: color }} />
-      {plane && (
-        <svg width={12} height={12} viewBox="0 0 12 12" style={{ flexShrink: 0 }}>
-          <rect x="1" y="3" width="10" height="6" rx="1" stroke={color} strokeWidth="1" fill={`${color}15`} />
-        </svg>
+    <div style={{ position: 'relative' }}>
+      <button
+        type="button"
+        style={{ ...styles.originItem, paddingLeft: 8 + 3 * 14, ...(selected ? styles.selectedRow : {}) }}
+        onClick={(e) => onClick(e.shiftKey || e.ctrlKey || e.metaKey)}
+        onMouseEnter={(e) => {
+          if (!selected) e.currentTarget.style.background = '#f4f4f4';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = selected ? '#e3effb' : 'transparent';
+        }}
+      >
+        <span style={{ ...styles.originDot, background: color }} />
+        {plane && (
+          <svg width={12} height={12} viewBox="0 0 12 12" style={{ flexShrink: 0 }}>
+            <rect x="1" y="3" width="10" height="6" rx="1" stroke={color} strokeWidth="1" fill={`${color}15`} />
+          </svg>
+        )}
+        <span style={styles.originLabel}>{label}</span>
+      </button>
+      {onToggleShown && (
+        <button
+          type="button"
+          style={styles.trailingActionBtn}
+          aria-label={shown ? `Hide ${label}` : `Show ${label}`}
+          title={shown ? 'Hide' : 'Show'}
+          onClick={onToggleShown}
+        >
+          {shown ? <Eye size={11} strokeWidth={1.5} /> : <EyeOff size={11} strokeWidth={1.5} />}
+        </button>
       )}
-      <span style={styles.originLabel}>{label}</span>
-    </button>
+    </div>
   );
 }
 

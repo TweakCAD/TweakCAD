@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readDocument } from '@tweakcad/format';
 import { Editor, seededIds, type Json } from '@tweakcad/editor';
 import { newDocument } from './document';
-import { originShown, setOriginShown } from './attributes';
+import { ORIGIN_ITEMS, originShown, setOriginShown } from './attributes';
 
 function setup() {
   const ids = seededIds(81);
@@ -11,26 +11,28 @@ function setup() {
   return { editor, part };
 }
 
-describe('origin plane visibility', () => {
-  it('is kept in the document, so a reload shows the planes as they were left', () => {
+describe('origin visibility', () => {
+  it('is kept in the document for each plane, axis and the point, so a reload shows them as they were left', () => {
     const { editor, part } = setup();
-    expect(originShown(editor.document, part)).toBe(false);
-    expect(setOriginShown(editor, part, true).ok).toBe(true);
-    expect(originShown(editor.document, part)).toBe(true);
+    expect([...originShown(editor.document, part)]).toEqual([]);
+    expect(setOriginShown(editor, part, ['xy', 'z'], true).ok).toBe(true);
+    expect([...originShown(editor.document, part)]).toEqual(['xy', 'z']);
     // As saved and read back.
     const reloaded = readDocument(JSON.parse(editor.save()));
     expect(reloaded.refused).toBe(false);
-    expect(originShown(JSON.parse(editor.save()) as Json, part)).toBe(true);
-    expect(setOriginShown(editor, part, false).ok).toBe(true);
-    expect(originShown(editor.document, part)).toBe(false);
+    expect([...originShown(JSON.parse(editor.save()) as Json, part)]).toEqual(['xy', 'z']);
+    expect(setOriginShown(editor, part, ORIGIN_ITEMS, true).ok).toBe(true);
+    expect([...originShown(editor.document, part)]).toEqual(ORIGIN_ITEMS);
+    expect(setOriginShown(editor, part, ORIGIN_ITEMS, false).ok).toBe(true);
+    expect([...originShown(editor.document, part)]).toEqual([]);
     expect((((editor.document.parts as Json[])[0] as Json).attributes as Json[] | undefined) ?? []).toEqual([]);
   });
 
   it('is one undo step each way', () => {
     const { editor, part } = setup();
-    setOriginShown(editor, part, true);
-    expect(editor.store.undoLabel()).toBe('Show origin planes');
+    setOriginShown(editor, part, ORIGIN_ITEMS, true);
+    expect(editor.store.undoLabel()).toBe('Show origin');
     editor.undo();
-    expect(originShown(editor.document, part)).toBe(false);
+    expect([...originShown(editor.document, part)]).toEqual([]);
   });
 });

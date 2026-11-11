@@ -11,7 +11,8 @@ import type { AppState, SectionView } from '../appState';
 import type { AppServices } from '../services';
 import { useSlice } from '../hooks';
 import { assemblyDisplay, inContextOf, instanceIndex, shownOf } from '../assembly/focus';
-import { clearSelection, select, setHover } from '../selection';
+import { STANDARD_PLANES, clearSelection, select, setHover } from '../selection';
+import type { OriginItem } from '../attributes';
 import { ALL_PICKS } from './ModelScene';
 import { Viewport, viewAlong } from './Viewport';
 import { sectionCut, sectionDistance } from './sectionCut';
@@ -117,12 +118,13 @@ export function ViewportView({ services, onViewport, children }: ViewportViewPro
     if (!viewport) return;
     const apply = () => {
       const state = services.app.getState();
-      const { mode, standardPlanesVisible, picking } = state;
+      const { mode, originShown, picking } = state;
       const sketching = mode.kind === 'sketch';
       viewport.model.setMode(sceneMode(state));
-      viewport.model.setStandardPlanesVisible(
-        picking?.standardPlanes === true || (!sketching && standardPlanesVisible),
-      );
+      const shown = sketching ? new Set<OriginItem>() : new Set(originShown);
+      // A panel that picks a standard plane shows all three to pick from.
+      if (picking?.standardPlanes === true) for (const p of STANDARD_PLANES) shown.add(p);
+      viewport.model.setOriginShown(shown);
       viewport.model.setPickFilter(picking ? new Set(picking.kinds) : ALL_PICKS);
       viewport.setPicking(!sketching);
       viewport.setGridVisible(!sketching);

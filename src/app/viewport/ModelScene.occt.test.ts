@@ -125,9 +125,12 @@ describe('ModelScene', { timeout: 60_000 }, () => {
     expect(region && 'key' in region && kindOf(region.key)).toBe('region');
     const standard = scene.pick(ray([-20, -10, 100], [0, 0, -1]), 0.01);
     expect(standard).toEqual({ standard: 'xy' });
-    scene.setStandardPlanesVisible(false);
+    scene.setOriginShown(new Set());
     expect(scene.pick(ray([-20, -10, 100], [0, 0, -1]), 0.01)).toBeNull();
-    scene.setStandardPlanesVisible(true);
+    // Each plane on its own: with XY hidden, the ray no longer lands on it.
+    scene.setOriginShown(new Set(['xz', 'yz']));
+    expect(scene.pick(ray([-20, -10, 100], [0, 0, -1]), 0.01)).not.toEqual({ standard: 'xy' });
+    scene.setOriginShown(new Set(['xy', 'xz', 'yz']));
   });
 
   it('picks the nearer of a standard plane and a face, and a face lying on the plane over the plane', () => {

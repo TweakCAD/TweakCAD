@@ -11,6 +11,7 @@
 import { isPlainObject } from '@tweakcad/format';
 import type { CommandResult, Doc, Editor, Json } from '@tweakcad/editor';
 import { partOf } from './features';
+import type { StandardDatum, StandardPlane } from './selection';
 
 /** The swatches the body menu offers. */
 export const BODY_COLOR_SWATCHES: readonly { color: string; name: string }[] = [
@@ -131,25 +132,36 @@ export function featureHidden(doc: Doc, part: string, feature: string): boolean 
   return typeof text === 'string' && text.trim() === 'false';
 }
 
-/** The standard planes of a part's origin, whose visibility the browser's Origin eye sets. */
-const ORIGIN_PLANES = ['xy', 'xz', 'yz'] as const;
+/** What a part's Origin holds: the standard planes, axes and the origin point. */
+export type OriginItem = StandardPlane | StandardDatum;
+
+export const ORIGIN_ITEMS: readonly OriginItem[] = ['xy', 'xz', 'yz', 'x', 'y', 'z', 'origin'];
 
 const originTarget = (name: string): AttributeTarget => ({ reference: { standard: { name } }, names: {} });
 
-/** Whether a part's origin planes show: an attribute on its XY plane says so (hidden is the default). */
-export function originShown(doc: Doc, part: string): boolean {
-  const props = attributeFor(doc, part, originTarget('xy'))?.properties as Json | undefined;
-  const v = props?.visible as Json | undefined;
-  const text = ((v?.def as Json | undefined)?.expr as Json | undefined)?.text;
-  return typeof text === 'string' && text.trim() === 'true';
+/** The origin items of a part that show: an attribute on each says so (hidden is the default). */
+export function originShown(doc: Doc, part: string): Set<OriginItem> {
+  return new Set(
+    ORIGIN_ITEMS.filter((name) => {
+      const props = attributeFor(doc, part, originTarget(name))?.properties as Json | undefined;
+      const v = props?.visible as Json | undefined;
+      const text = ((v?.def as Json | undefined)?.expr as Json | undefined)?.text;
+      return typeof text === 'string' && text.trim() === 'true';
+    }),
+  );
 }
 
-/** Shows or hides a part's origin planes, kept in the document as attributes on them, as one undo step. */
-export function setOriginShown(editor: Editor, part: string, shown: boolean): CommandResult {
-  const label = shown ? 'Show origin planes' : 'Hide origin planes';
+/** Shows or hides origin items of a part, kept in the document as attributes on them, as one undo step. */
+export function setOriginShown(
+  editor: Editor,
+  part: string,
+  items: readonly OriginItem[],
+  shown: boolean,
+): CommandResult {
+  const label = shown ? 'Show origin' : 'Hide origin';
   return editor.transaction(label, () => {
     let last: CommandResult = { ok: true, label, changed: false };
-    for (const name of ORIGIN_PLANES) {
+    for (const name of items) {
       last = setProperty(editor, part, originTarget(name), 'visible', shown ? 'true' : null, label);
       if (!last.ok) return last;
     }

@@ -5,6 +5,7 @@
  */
 import { createStore, type StoreApi } from 'zustand/vanilla';
 import type { SelectionItem } from './selection';
+import type { OriginItem } from './attributes';
 import type { PickKind } from './viewport/ModelScene';
 
 export type Mode = { kind: 'model' } | { kind: 'sketch'; part: string; feature: string };
@@ -70,8 +71,8 @@ export interface AppState {
    */
   treeClicks: ((item: SelectionItem) => void) | null;
   sidebarCollapsed: boolean;
-  /** The three standard planes are drawn (the browser's Origin toggle). */
-  standardPlanesVisible: boolean;
+  /** The origin planes, axes and point drawn: the active part's, as its document keeps them. */
+  originShown: ReadonlySet<OriginItem>;
   /** The parameters dialog is open. */
   parametersOpen: boolean;
   /** What the window works on; null for the document's root. */
@@ -94,7 +95,7 @@ export function createAppStore(): AppStore {
     shownSketches: [],
     treeClicks: null,
     sidebarCollapsed: false,
-    standardPlanesVisible: false,
+    originShown: new Set(),
     parametersOpen: false,
     focus: null,
     exploded: null,

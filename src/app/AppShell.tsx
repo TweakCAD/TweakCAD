@@ -22,7 +22,7 @@ import { enqueueToast } from '../components/toastStore.ts';
 import { isEditableTarget } from '../components/toolShortcuts.ts';
 import type { SaasState } from '../storage/saasState.ts';
 import type { Mode, PanelRequest } from './appState';
-import { originShown, setColor, setName, setOriginShown, setVisible } from './attributes';
+import { originShown, setColor, setName, setOriginShown, setVisible, type OriginItem } from './attributes';
 import {
   BrowserTree,
   featureMenu,
@@ -146,7 +146,6 @@ export function AppShell(props: AppShellProps) {
   const mode = useSlice(app, (s) => s.mode);
   const panel = useSlice(app, (s) => s.panel);
   const sidebarCollapsed = useSlice(app, (s) => s.sidebarCollapsed);
-  const appPlanesVisible = useSlice(app, (s) => s.standardPlanesVisible);
   const parametersOpen = useSlice(app, (s) => s.parametersOpen);
   const focus = useSlice(app, (s) => s.focus);
   const componentsOpen = useSlice(app, (s) => s.componentsOpen);
@@ -194,11 +193,13 @@ export function AppShell(props: AppShellProps) {
       : (parts.find((p) => root && 'part' in root && p.id === root.part) ?? parts[0]));
   const docName = String((doc.metadata as { name?: unknown }).name ?? '');
   const parameters = shownParameters(doc, activePart?.id ?? null);
-  // A part's origin planes show as its document says (kept there, so a reload shows them as left); with an assembly shown, as the window last set them.
-  const standardPlanesVisible = activePart ? originShown(doc, activePart.id) : appPlanesVisible;
+  // The active part's origin shows as its document says (kept there, so a reload shows it as left); an assembly with no part active shows none.
+  const shownOrigin = activePart && workingPart ? [...originShown(doc, activePart.id)].join(',') : '';
   useEffect(() => {
-    if (app.getState().standardPlanesVisible !== standardPlanesVisible) app.setState({ standardPlanesVisible });
-  }, [app, standardPlanesVisible]);
+    const items = new Set(shownOrigin === '' ? [] : (shownOrigin.split(',') as OriginItem[]));
+    const now = app.getState().originShown;
+    if (now.size !== items.size || [...items].some((i) => !now.has(i))) app.setState({ originShown: items });
+  }, [app, shownOrigin]);
 
   /** Grouping flags of a feature's menu: Group with several selected, Ungroup in a group. */
   const groupingOf = (feature: string) => {
@@ -669,11 +670,9 @@ export function AppShell(props: AppShellProps) {
             selectedKeys={selectedKeys}
             selectedStandard={selectedStandard}
             selectedDatums={selectedDatums}
-            standardPlanesVisible={standardPlanesVisible}
-            onToggleStandardPlanes={() =>
-              activePart && !readOnly
-                ? report(setOriginShown(editor, activePart.id, !standardPlanesVisible), 'Origin')
-                : app.setState({ standardPlanesVisible: !standardPlanesVisible })
+            originShown={(part) => originShown(doc, part)}
+            onSetOriginShown={(part, items, shown) =>
+              report(setOriginShown(editor, part, items, shown), shown ? 'Show' : 'Hide')
             }
             onSelectStandard={(name, additive) => treeClick({ standard: name }, additive)}
             onSelectDatum={(name, additive) => treeClick({ datum: name }, additive)}
