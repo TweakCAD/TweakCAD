@@ -23,7 +23,11 @@ function withViews(views: { name: string; up: [number, number, number] }[]) {
       {
         id: camera + 1,
         type: VIEW,
-        primary: (w: Parameters<typeof head>[0]) => head(w, camera + 1).wstr(name).ref(camera).zeros(4),
+        primary: (w: Parameters<typeof head>[0]) =>
+          head(w, camera + 1)
+            .wstr(name)
+            .ref(camera)
+            .zeros(4),
       },
     ];
   });

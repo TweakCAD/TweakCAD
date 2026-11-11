@@ -32,6 +32,8 @@ export function readUpAxis(index: DesignIndex): 'y' | 'z' | null {
   const dv = new DataView(index.bulk.buffer, index.bulk.byteOffset, index.bulk.byteLength);
   const up = [24, 16, 8].map((back) => dv.getFloat64(range.end - back, true));
   const is = (x: number, y: number, z: number): boolean =>
-    Math.abs((up[0] as number) - x) < 1e-6 && Math.abs((up[1] as number) - y) < 1e-6 && Math.abs((up[2] as number) - z) < 1e-6;
+    Math.abs((up[0] as number) - x) < 1e-6 &&
+    Math.abs((up[1] as number) - y) < 1e-6 &&
+    Math.abs((up[2] as number) - z) < 1e-6;
   return is(0, 0, 1) ? 'z' : is(0, 1, 0) ? 'y' : null;
 }
