@@ -99,6 +99,7 @@ describe.skipIf(!corpus)('real files against reference solids', () => {
         bodiesMadeBy: (part, before, features) => Promise.resolve(service.bodiesMadeBy(part, before, features)),
         locateFacesOnSurfaces: (part, before, surfaces) =>
           Promise.resolve(service.locateFacesOnSurfaces(part, before, surfaces)),
+        importFile: (bytes, format, feature, name) => Promise.resolve(service.importFile(bytes, format, feature, name)),
       };
       return { k, service, client };
     };
@@ -131,6 +132,7 @@ describe.skipIf(!corpus)('real files against reference solids', () => {
         const shown = performance.now();
         const display = session.service.evaluate(document);
         row.evaluateMs = Math.round(performance.now() - shown);
+        row.documentBytes = JSON.stringify(document).length;
         const got: Solid[] = [];
         const k = session.k;
         const placements = ((document.assemblies as Row[])[0]?.instances as Row[] | undefined)?.map((i) => ({

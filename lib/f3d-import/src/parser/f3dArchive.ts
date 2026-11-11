@@ -148,6 +148,8 @@ export type F3dDesignStreams = {
   bulk: Uint8Array;
   /** The design's B-rep streams, inflated when asked for. */
   breps(): Uint8Array[];
+  /** One B-rep stream by its file name (`BREP.<uuid>.smb` or `.smbh`), inflated when asked for. */
+  brep(name: string): Uint8Array | undefined;
 };
 
 const DESIGN_STREAM = /^(.*\/)(Design1|FusionDesignSegmentType1)\/(Meta|Bulk)Stream\.dat$/;
@@ -170,6 +172,10 @@ function streamsOf(bytes: Uint8Array, entries: ZipEntry[]): F3dDesignStreams {
     meta: readEntry(bytes, meta),
     bulk: readEntry(bytes, bulk),
     breps: () => brepEntries.map((e) => readEntry(bytes, e)),
+    brep: (name) => {
+      const entry = brepEntries.find((e) => e.name.slice(e.name.lastIndexOf('/') + 1) === name);
+      return entry ? readEntry(bytes, entry) : undefined;
+    },
   };
 }
 

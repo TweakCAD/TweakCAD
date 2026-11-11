@@ -101,10 +101,20 @@ export function buildDesign(
   return { meta: meta.bytes(), bulk: bulk.bytes() };
 }
 
-export function buildArchive(streams: { meta: Uint8Array; bulk: Uint8Array }): Uint8Array {
+/** A design's two streams in a file, with its B-rep streams by file name. */
+export function buildArchive(
+  streams: { meta: Uint8Array; bulk: Uint8Array },
+  breps: Record<string, Uint8Array> = {},
+): Uint8Array {
   return zipSync({
     'FusionAssetName[Active]/Design1/MetaStream.dat': [streams.meta, { level: 0 }],
     'FusionAssetName[Active]/Design1/BulkStream.dat': [streams.bulk, { level: 6 }],
+    ...Object.fromEntries(
+      Object.entries(breps).map(([name, bytes]) => [
+        `FusionAssetName[Active]/Breps.BlobParts/${name}`,
+        [bytes, { level: 6 }] as [Uint8Array, { level: number }],
+      ]),
+    ),
   });
 }
 

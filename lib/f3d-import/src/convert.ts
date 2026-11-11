@@ -39,6 +39,9 @@ import {
 } from './transforms';
 import { planParameters, type ParameterPlan } from './parameters';
 import { STORED_BODY, UNLINKED } from './parser/types';
+import { readAsm } from './parser/asm';
+import { AsmBodies, BodyRefusal, type ReadBody } from './parser/asmBodies';
+import { writeStep } from './stepBodies';
 import type { F3dComponent, F3dDesign, F3dFeature, F3dSketch } from './parser/types';
 import { frameOfMatrix, invertMatrix, multiplyMatrix } from './placement';
 import type { FaceIndex } from './parser/brep';
@@ -74,7 +77,21 @@ export interface BodyStep extends StepBase {
   plan: BodyPlan;
 }
 
-export type Step = RoundStep | BodyStep;
+/**
+ * A Base Feature: the file's own bodies of a part, as STEP text the kernel
+ * stores as the row's shape, then written first in the part.
+ */
+export interface StoreStep extends StepBase {
+  kind: 'store';
+  /** The bodies, as one STEP file. */
+  text: string;
+  /** How many bodies the text holds. */
+  bodies: number;
+  /** The row, given its stored shape. */
+  row(stored: Json): Json;
+}
+
+export type Step = RoundStep | BodyStep | StoreStep;
 
 export interface ImportReport {
   sketches: SketchStats[];
@@ -120,9 +137,6 @@ const LEFT_OUT_TEXT: Record<LeftOut, string> = {
   noDistance: 'extrude of no length',
   thin: 'thin extrude',
 };
-
-/** The stored-shape representation of a Base Feature, which no build reads yet. */
-const STORED_REPRESENTATION = { name: 'acis', version: 1 };
 
 const LABELS: Record<string, string> = {
   combine: 'Combine',
@@ -178,7 +192,10 @@ const plural = (n: number, one: string, many: string): string => `${n} ${n === 1
 function largestFace(faces: readonly Json[]): Json | undefined {
   const area = (f: Json): number =>
     ((f.entity as { snapshot?: { area?: number } } | undefined)?.snapshot?.area as number | undefined) ?? 0;
-  return faces.reduce<Json | undefined>((best, f) => (best === undefined || area(f) > area(best) ? f : best), undefined);
+  return faces.reduce<Json | undefined>(
+    (best, f) => (best === undefined || area(f) > area(best) ? f : best),
+    undefined,
+  );
 }
 
 export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
@@ -193,6 +210,8 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
   };
   let text = 0;
   let unread = 0;
+  let storedMissing = 0;
+  const storedRefusals: Record<string, number> = {};
   let lost = 0;
   let extrudes = 0;
   let revolves = 0;
@@ -297,7 +316,8 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
       sketch: (id) => emit(id, part),
       faces: facesOf(part),
     });
-    for (const [what, n] of Object.entries(design.leftOut)) count(what, n);
+    // Stored bodies are counted once read: only those that could not be are left out.
+    for (const [what, n] of Object.entries(design.leftOut)) if (what !== STORED_BODY) count(what, n);
 
     /** Where a feature goes: the component of its bodies, or of the sketch it starts from. */
     const partOfFeature = (f: F3dFeature): PartDraft => {
@@ -450,29 +470,84 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
         const plain = raw as typeof f;
         let outcome = outcomeOf(plain, transforms);
         const lands = 'leftOut' in outcome ? undefined : 'row' in outcome ? outcome.part : outcome.plan.part;
-        if (turns && lands === rootPart.id) outcome = outcomeOf(turnFeature(plain), { ...transforms, faces: turnedFaces });
+        if (turns && lands === rootPart.id)
+          outcome = outcomeOf(turnFeature(plain), { ...transforms, faces: turnedFaces });
         transform(f.id, label, outcome);
       }
     }
     for (const s of design.sketches) if (!counted.has(s.id)) emit(s.id, partOf(s.componentId));
 
     // A component's bodies with no history come first, as Fusion's base feature does.
-    for (const [component, bodies] of design.storedBodies) {
+    const readers = new Map<string, { reader: AsmBodies; models: number[] } | null>();
+    const streamOf = (name: string) => {
+      if (!readers.has(name)) {
+        let entry: { reader: AsmBodies; models: number[] } | null = null;
+        try {
+          const bytes = design.brep(name);
+          if (bytes) {
+            const reader = new AsmBodies(readAsm(bytes));
+            entry = { reader, models: reader.bodies().filter((b) => !reader.isSketchRegion(b)) };
+          }
+        } catch {
+          // An unreadable stream costs only its bodies.
+        }
+        readers.set(name, entry);
+      }
+      return readers.get(name) ?? null;
+    };
+    for (const [component, count] of design.storedBodies) {
       const part = partOf(component);
-      const asset = w.asset(
-        new TextEncoder().encode(JSON.stringify({ format: 'f3d', bodies })),
-        'application/json',
-        'stored-bodies.json',
-      );
-      part.timeline.unshift(
-        w.feature('core.import', 'Base Feature', {
-          source: { kept: {} },
-          stored: { asset, representation: { ...STORED_REPRESENTATION }, map: [] },
-          importer: { format: 'f3d', version: '' },
-          units: w.choice('cm'),
-          upAxis: w.choice(turns && part === rootPart ? 'z' : 'y'),
-        }),
-      );
+      const turned = turns && part === rootPart;
+      const sources = design.storedShapes.get(component) ?? [];
+      const read: ReadBody[] = [];
+      let missing = Math.max(0, count - sources.length);
+      for (const source of sources) {
+        const stream = source ? streamOf(source.stream) : null;
+        if (!source || !stream) {
+          missing++;
+          continue;
+        }
+        const { reader, models } = stream;
+        const body = models.find((b) => reader.key(b) === source.selector) ?? models[source.selector];
+        if (body === undefined) {
+          missing++;
+          continue;
+        }
+        try {
+          const one = reader.read(body, turned ? Z_UP_TURN : undefined);
+          if (one.solids.length > 0) read.push(one);
+          else missing++;
+        } catch (e) {
+          missing++;
+          const why = e instanceof BodyRefusal ? e.message : 'its B-rep could not be read';
+          storedRefusals[why] = (storedRefusals[why] ?? 0) + 1;
+        }
+      }
+      storedMissing += missing;
+      if (read.length === 0) continue;
+      const id = o.ids('feat');
+      steps.push({
+        kind: 'store',
+        part: part.id,
+        before: undefined,
+        object: 'Base Feature',
+        id,
+        text: writeStep(read),
+        bodies: read.length,
+        row: (stored) =>
+          w.feature(
+            'core.import',
+            'Base Feature',
+            {
+              source: { kept: {} },
+              stored,
+              importer: { format: 'f3d', version: '' },
+              units: w.choice('cm'),
+              upAxis: w.choice(turned ? 'z' : 'y'),
+            },
+            id,
+          ),
+      });
     }
 
     // Only parts with something in them are written and placed.
@@ -500,25 +575,32 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
       object: 'document',
       message: `only the first ${MAX_INSTANCES} occurrences were placed`,
     });
-  const rowCount = allParts.reduce((n, p) => n + p.timeline.length + p.pending.length, 0);
-  const stored = leftOut[STORED_BODY] ?? 0;
+  if (storedMissing > 0) count(STORED_BODY, storedMissing);
   const linked = leftOut[UNLINKED] ?? 0;
   const bodyFeature = allParts.some((p) => p.timeline.some((r) => r.type === 'core.primitive'));
-  const baseRows = allParts.reduce((n, p) => n + p.timeline.filter((r) => r.type === 'core.import').length, 0);
+  const stores = steps.filter((s) => s.kind === 'store');
+  const storedRead = stores.reduce((n, s) => n + s.bodies, 0);
   const reasons: string[] = [];
-  if (stored > 0) {
-    const opening =
-      rowCount === baseRows
-        ? `This design has no history: ${plural(stored, 'body is', 'bodies are')} stored with no timeline`
-        : `${plural(stored, 'body has', 'bodies have')} no history`;
+  if (storedMissing > 0)
     reasons.push(
-      `${opening}, kept as ${plural(baseRows, 'Base Feature', 'Base Features')}. Stored bodies can't be read yet, so ${stored === 1 ? 'it is' : 'they are'} not drawn.`,
+      `${plural(storedMissing, 'body', 'bodies')} with no history could not be read from the file, so ${storedMissing === 1 ? 'it is' : 'they are'} not drawn.`,
     );
-  }
   if (linked > 0) reasons.push(`${plural(linked, 'linked component is', 'linked components are')} not in this file.`);
-  if (extrudes + revolves === 0 && reasons.length === 0 && !bodyFeature)
+  if (extrudes + revolves === 0 && reasons.length === 0 && !bodyFeature && stores.length === 0)
     reasons.push('This file has nothing on its timeline that builds a body.');
   if (reasons.length > 0) notes.push({ severity: 'warning', object: 'timeline', message: reasons.join(' ') });
+  if (storedRead > 0)
+    notes.push({
+      severity: 'info',
+      object: 'timeline',
+      message: `${plural(storedRead, 'body has', 'bodies have')} no history and ${storedRead === 1 ? 'comes' : 'come'} in as the file stored ${storedRead === 1 ? 'it' : 'them'}, in ${plural(stores.length, 'Base Feature', 'Base Features')}`,
+    });
+  for (const [why, n] of Object.entries(storedRefusals))
+    notes.push({
+      severity: 'warning',
+      object: 'document',
+      message: `${plural(n, 'stored body was', 'stored bodies were')} left out: ${why}`,
+    });
   if (allParts.length > 1)
     notes.push({
       severity: 'info',

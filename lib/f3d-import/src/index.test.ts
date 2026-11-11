@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readDocument } from '@tweakcad/format';
 import { seededIds } from '@tweakcad/editor';
 import { importF3d } from './index';
+import { asmStream, boxRecords } from './parser/asmBuilder.testHelper';
 import {
   buildArchive,
   buildDesign,
@@ -25,6 +26,7 @@ function rectangle(
     matrix?: number[] | null;
     relations?: ReturnType<typeof relationRecord>[];
     extra?: Parameters<typeof buildDesign>[0];
+    breps?: Record<string, Uint8Array>;
   } = {},
 ) {
   const corners: [number, number][] = [
@@ -46,6 +48,7 @@ function rectangle(
       ...(options.relations ?? []),
       ...(options.extra ?? []),
     ]),
+    options.breps,
   );
 }
 
@@ -181,11 +184,31 @@ describe('importF3d', () => {
     expect(report.sketches[0]?.skipped.notSatisfied).toBe(1);
   });
 
-  it('says how many stored bodies it left out, on the timeline or not', () => {
+  it('says how many stored bodies it could not read', () => {
+    // A base feature whose body the file does not name.
     const body = { id: 60, type: 'D7015B81', primary: (w: ByteWriter) => void head(w, 60).u8(0).u8(0) };
     const { report, notes } = imported(rectangle({ extra: [body] }));
     expect(report.leftOut).toEqual({ 'stored body': 1 });
-    expect(notes.find((n) => n.object === 'timeline')?.message).toContain('1 body has no history');
+    expect(notes.find((n) => n.object === 'timeline')?.message).toContain(
+      '1 body with no history could not be read from the file',
+    );
+  });
+
+  it('reads a body with no history from the B-rep stream its body map names', () => {
+    // A body record, and a body map pairing selector 0 with it in BREP.a.smb.
+    const body = { id: 70, type: 'D3937028', primary: (w: ByteWriter) => void head(w, 70).u8(0).u8(0) };
+    const map = {
+      id: 71,
+      type: '40DCC3F4',
+      primary: (w: ByteWriter) => void head(w, 71).u8(0).u8(0).u32(1).u64(0).u64(70).wstr('BREP.a.smb'),
+    };
+    const { report, notes } = imported(
+      rectangle({ extra: [body, map], breps: { 'BREP.a.smb': asmStream(boxRecords([0, 0, 0], [1, 1, 1])) } }),
+    );
+    expect(report.leftOut['stored body']).toBeUndefined();
+    expect(notes.map((n) => n.message)).toContain(
+      '1 body has no history and comes in as the file stored it, in 1 Base Feature',
+    );
   });
 
   it('says when there is nothing to build a body from', () => {

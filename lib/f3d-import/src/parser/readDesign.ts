@@ -9,6 +9,7 @@ import { FaceIndex, readBrepFaces } from './brep';
 import { readUpAxis } from './upAxis';
 import { readFeatureBodies } from './bodies';
 import { readComponentPlacement } from './components';
+import { readBodyMap, type BodySource } from './bodyMap';
 import { STORED_BODY, UNLINKED, type F3dComponent, type F3dDesign, type F3dLink } from './types';
 
 /** Reads a member and what it links to; one that can't be read costs only its links. */
@@ -92,6 +93,17 @@ function readStreams(
       placements: placements.get(id) ?? [],
     }));
   const storedBodies = bodies.storedBodies(placement.rootId);
+  const sources = readBodyMap(index);
+  const storedShapes = new Map<number | null, (BodySource | null)[]>();
+  for (const [component, records] of bodies.storedBodyRecords(placement.rootId)) {
+    storedShapes.set(
+      component,
+      records.map((body) => {
+        const kept = bodies.asLeft(body);
+        return (kept === undefined ? undefined : sources.get(kept)) ?? sources.get(body) ?? null;
+      }),
+    );
+  }
   const stored = [...storedBodies.values()].reduce((a, b) => a + b, 0);
   if (stored > 0) leftOut[STORED_BODY] = stored;
   const { links, unread } = readLinks(pack, placement.linksOf(), seen);
@@ -107,6 +119,8 @@ function readStreams(
     componentOf,
     recordOfOp: bodies.recordOfOp,
     storedBodies,
+    storedShapes,
+    brep: (name) => streams.brep(name),
     links,
     upAxis: readUpAxis(index),
   };
