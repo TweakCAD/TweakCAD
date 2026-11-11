@@ -105,16 +105,20 @@ describe('importing a file as a stored shape', { timeout: 60_000 }, () => {
     expect(a.assets[a.stored.asset]?.mediaType).toBe('model/x-brep');
   });
 
-  it('merges the coplanar triangles of an STL into faces, and refuses a mesh too fine to store', () => {
+  it('merges the coplanar triangles of an STL into faces, and imports a fine curved mesh of thousands of faces', () => {
     // Two boxes: 1 compound, then per box 1 solid, 1 shell, 6 faces, 6 wires, 12 edges and 8 vertices.
     const shape = service.importFile(file('stl'), 'stl', 'boxes.stl');
     const stored = k.fromBREP(storedText(shape));
     expect(k.subShapeCount(stored, 'face')).toBe(12);
     k.release(stored);
+    // A fine sphere: its facets lie in thousands of planes, and each is a face of the import.
     const sphere = k.makeSphere(20);
     const fine = new Uint8Array(k.exportStl(sphere, 0.02));
     k.release(sphere);
-    expect(() => service.importFile(fine, 'stl', 'ball.stl')).toThrow(/faces/);
+    const ball = k.fromBREP(storedText(service.importFile(fine, 'stl', 'ball.stl')));
+    expect(k.subShapeCount(ball, 'face')).toBeGreaterThan(2_000);
+    expect(k.isValid(ball)).toBe(true);
+    k.release(ball);
   });
 
   it('reports each stage of an STL import as it starts', () => {

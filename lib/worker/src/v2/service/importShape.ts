@@ -18,11 +18,6 @@ export type ImportFormat = 'step' | 'stl' | 'brep';
 
 /** The most triangles an STL may have to be read: each is a face until coplanar ones merge. */
 export const MAX_STL_TRIANGLES = 200_000;
-/**
- * The most faces an STL may make once coplanar triangles merge: each is a
- * face of the stored shape, built and named on every replay.
- */
-export const MAX_STL_FACES = 2_000;
 
 /**
  * An STL stores its points as 32-bit floats, so the triangles of one flat
@@ -139,7 +134,6 @@ function solidsOf(
     const sewn = k.sew([root], 1e-6);
     made.push(sewn);
     const solids: ShapeHandle[] = [];
-    let faces = 0;
     let skipped = 0;
     const shells = k.getSubShapes(sewn, 'shell');
     made.push(...shells);
@@ -153,13 +147,7 @@ function solidsOf(
       // Triangles that lie in one plane become one face, as a mesh of a machined part mostly does.
       const merged = k.unifySameDomainWithin(solid, STL_MERGE.linear, STL_MERGE.angular);
       made.push(merged);
-      faces += k.subShapeCount(merged, 'face');
       solids.push(merged);
-    }
-    if (faces > MAX_STL_FACES) {
-      throw new ImportRefusal(
-        `This STL mesh makes ${faces} faces; TweakCAD imports meshes of up to ${MAX_STL_FACES} faces. A STEP file of the part, or a coarser mesh, imports.`,
-      );
     }
     if (solids.length === 0 && skipped > 0) throw new ImportRefusal(OPEN_MESH);
     return { solids, skipped };
