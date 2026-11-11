@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
   BrowserTree,
   allowedEntries,
@@ -9,6 +9,10 @@ import {
   type BrowserTreeProps,
 } from './BrowserTree';
 import type { FeatureRow } from './features';
+import { setAllOpen, toggleNode } from './treeOpen';
+
+// The rows these tests read are inside nodes that start collapsed.
+beforeEach(() => setAllOpen(true));
 
 const row = (o: Partial<FeatureRow> & { id: string; type: string }): FeatureRow => ({
   name: o.id,
@@ -101,10 +105,41 @@ describe('the browser rows and menus', () => {
     );
   });
 
-  it('starts with the Origin closed, its planes, axes and point inside', () => {
-    const html = renderToStaticMarkup(<BrowserTree {...props([])} />);
-    expect(html).toContain('Origin');
-    for (const label of ['XY Plane', 'X Axis', 'Origin Point']) expect(html).not.toContain(label);
+  it('starts collapsed but for the document, and opens or closes every node at once', () => {
+    setAllOpen(false);
+    const top = renderToStaticMarkup(<BrowserTree {...props([])} />);
+    expect(top).toContain('Part');
+    expect(top).not.toContain('Origin');
+    toggleNode('part_1');
+    const part = renderToStaticMarkup(<BrowserTree {...props([])} />);
+    expect(part).toContain('Origin');
+    for (const label of ['XY Plane', 'X Axis', 'Origin Point']) expect(part).not.toContain(label);
+    setAllOpen(true);
+    const all = renderToStaticMarkup(<BrowserTree {...props([])} />);
+    for (const label of ['XY Plane', 'X Axis', 'Origin Point']) expect(all).toContain(label);
+    expect(all).toContain('aria-label="Expand all"');
+    expect(all).toContain('aria-label="Collapse all"');
+  });
+
+  it('lists the assemblies before the parts', () => {
+    const html = renderToStaticMarkup(
+      <BrowserTree {...props([], { assemblies: [{ id: 'asm_1', name: 'Top assembly' }] })} />,
+    );
+    expect(html.indexOf('Top assembly')).toBeLessThan(html.indexOf('>Part<'));
+  });
+
+  it('marks the active part with its radio, and the whole design with the document radio', () => {
+    const activating = { onActivatePart: none, activePart: 'part_1' };
+    const html = renderToStaticMarkup(<BrowserTree {...props([], { ...activating, designActive: false })} />);
+    expect(html).toMatch(/role="radio" aria-checked="true"[^>]*aria-label="Make Part active"/);
+    expect(html).toMatch(/role="radio" aria-checked="false"[^>]*aria-label="Show the whole design"/);
+    const design = renderToStaticMarkup(
+      <BrowserTree {...props([], { ...activating, activePart: null, designActive: true })} />,
+    );
+    expect(design).toMatch(/role="radio" aria-checked="false"[^>]*aria-label="Make Part active"/);
+    expect(design).toMatch(/role="radio" aria-checked="true"[^>]*aria-label="Show the whole design"/);
+    // A document whose root is a part has no design radio: the part is the design.
+    expect(renderToStaticMarkup(<BrowserTree {...props([], activating)} />)).not.toContain('Show the whole design');
   });
 
   it('lists derived components under Components, each with its eye, and says when there are none', () => {
@@ -136,6 +171,9 @@ describe('the browser rows and menus', () => {
       { ...BODY, key: 2, id: 'b2', name: 'Body 2', feature: 'feat_i' },
       { ...BODY, key: 3, id: 'b3', name: 'Body 3', feature: 'feat_i' },
     ];
+    setAllOpen(false);
+    toggleNode('part_1');
+    toggleNode('part_1/bodies');
     const html = renderToStaticMarkup(<BrowserTree {...props([imp], {}, bodies)} />);
     expect(html).toContain('bracket.step');
     expect(html).toContain('aria-label="Hide all bodies"');

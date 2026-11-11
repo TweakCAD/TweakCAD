@@ -63,6 +63,7 @@ import {
 } from './commands';
 import { shownAssembly } from './focus';
 import { useReadOnly } from '../storage/preview';
+import { toggleNode, useTreeOpen } from '../treeOpen';
 
 type Menu = {
   x: number;
@@ -79,7 +80,7 @@ export function AssemblyTree({ services }: { services: AppServices }) {
   const display = useSlice(services.display, (s) => s.display);
   const focus = useSlice(services.app, (s) => s.focus);
   const exploded = useSlice(services.app, (s) => s.exploded);
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const isOpen = useTreeOpen();
   const [menu, setMenu] = useState<Menu | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -104,14 +105,7 @@ export function AssemblyTree({ services }: { services: AppServices }) {
     };
   }, [menu]);
 
-  const toggle = (id: string) =>
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  const isOpen = (id: string) => !collapsed.has(id);
+  const toggle = toggleNode;
   const views = assembliesOf(doc).flatMap((a) => assemblyView(doc, String(a.id), display) ?? []);
 
   const row = (

@@ -46,10 +46,10 @@ import {
   shownRoot,
   type FeatureRow,
 } from './features';
-import { activePartOf, shownAssembly } from './assembly/focus';
+import { activePartOf, liveFocus, shownAssembly } from './assembly/focus';
 import { asmTimelineRows } from './assembly/asmFeatures';
 import { editJoint, isJointAction, jointMenu, jointTimelineRows, runJointAction } from './assembly/jointActions';
-import { editInPlace, renameJoint } from './assembly/commands';
+import { activatePart, editInPlace, renameJoint } from './assembly/commands';
 import { assemblyOf, jointLocked } from './assembly/assembly';
 import { componentTimelines } from './assembly/componentTimelines';
 import { freezeFeature, unfreezeFeature } from './modeling/freeze';
@@ -663,6 +663,8 @@ export function AppShell(props: AppShellProps) {
               const isRoot = root && 'part' in root && root.part === part;
               app.setState({ focus: isRoot ? null : { part }, panel: null, mode: { kind: 'model' }, exploded: null });
             }}
+            onActivatePart={(part) => activatePart(services, part)}
+            {...(root && 'assembly' in root ? { designActive: liveFocus(doc, focus) === null } : {})}
             selectedFeatures={litFeatures}
             selectedKeys={selectedKeys}
             selectedStandard={selectedStandard}

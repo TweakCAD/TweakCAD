@@ -315,6 +315,34 @@ export function startAssemblyPanel(services: AppServices, kind: string, label: s
   return { ok: true };
 }
 
+/**
+ * Makes `part` the part new features go into, as the browser's radio does,
+ * with the assembly the window shows (else the document's root assembly)
+ * still drawn around it: the part is edited in place at its first instance
+ * there. A part with no instance in that assembly, or a document whose root
+ * is a part, opens on its own. Null shows the document's root, with no part
+ * of an assembly active.
+ */
+export function activatePart(services: AppServices, part: string | null): void {
+  const doc = services.editor.document;
+  const root = shownRoot(doc);
+  if (part === null) {
+    clearSelection(services.selection);
+    services.app.setState({ focus: null, panel: null, mode: { kind: 'model' }, exploded: null });
+    return;
+  }
+  const assembly =
+    shownAssembly(doc, services.app.getState().focus) ?? (root && 'assembly' in root ? root.assembly : null);
+  const instance = assembly
+    ? rowsOf(assemblyOf(doc, assembly), 'instances').find((r) => {
+        const of = r.of as Json | undefined;
+        return of && isPlainObject(of.part) && of.part.id === part;
+      })
+    : undefined;
+  if (assembly && instance) editInPlace(services, assembly, String(instance.id));
+  else open(services, { part });
+}
+
 /** The part of an instance, for Open from its menu. */
 export function partOfInstance(services: AppServices, assembly: string, instance: string): string | null {
   const of = rowsOf(assemblyOf(services.editor.document, assembly), 'instances').find((r) => r.id === instance)?.of as
