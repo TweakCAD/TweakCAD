@@ -373,13 +373,9 @@ describe('frozen replay', () => {
   it('pauses on a shape map that disagrees with its stored shape, leaving the part as it was', () => {
     const { id, doc } = frozenFillet();
     const broken = structuredClone(doc);
-    const map = ((effectsOf(broken, id)[0]?.modify as Json).stored as Json).map as Json[];
-    const face = map.find(
-      (e) => (e.snapshot as Json).area !== undefined && (e.snapshot as Json).geometry !== undefined,
-    ) as Json;
-    (face.snapshot as Json).area = 1;
+    ((effectsOf(broken, id)[0]?.modify as Json).stored as Json).fingerprint = 'f'.repeat(64);
     const ev = run(broken);
-    expect(ev.pauses).toEqual([{ feature: id, message: expect.stringContaining('shape map snapshot disagrees') }]);
+    expect(ev.pauses).toEqual([{ feature: id, message: expect.stringContaining('shape map fingerprint disagrees') }]);
     expect(total(ev)).toBeCloseTo(1200, 6);
   });
 

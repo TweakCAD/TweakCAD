@@ -734,15 +734,11 @@ describe('core.import', () => {
 
   it('pauses on a map that no longer describes the stored shape', () => {
     const size = importedBox();
-    const entries = size.fixture.stored.map as Json[];
-    const faceEntry = entries.find(
-      (e) => (e.snapshot as Json).area !== undefined && (e.snapshot as Json).geometry !== undefined,
-    ) as Json;
-    (faceEntry.snapshot as Json).area = 123;
+    size.fixture.stored.fingerprint = 'f'.repeat(64);
     const ev = run(size.d, size.patch);
     expect(ev.pauses[0]).toEqual({
       feature: size.fixture.feature,
-      message: expect.stringContaining('shape map snapshot disagrees'),
+      message: expect.stringContaining('shape map fingerprint disagrees'),
     });
     expect(bodies(ev, size.d)).toEqual([]);
     expect(partOf(ev, size.d).shapes.size).toBe(0);

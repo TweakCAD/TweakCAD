@@ -2,9 +2,9 @@
  * `core.import` (13.3): replays the stored shape, so a newer importer or kernel
  * never changes an import. `units` and `upAxis` record what the importer did to
  * reach it. Identities come from the shape map, after the 13.2 load check, or,
- * for a derived map, from naming the shape again by the `import` rule once its
- * fingerprint matches. Frozen features load their stored shapes the same way,
- * from full maps only.
+ * for a derived map (a fingerprint and no entries), from naming the shape again
+ * by the `import` rule once its fingerprint matches. Frozen features and
+ * captured contexts load their stored shapes the same way, from full maps only.
  */
 import { OcctError, type ShapeHandle } from 'occt-wasm';
 import {
@@ -47,7 +47,7 @@ function decode(ctx: BuildContext, text: string): ShapeHandle {
  * `derivable`) names the shape by the `import` rule instead, and `bodies` are
  * then the outcomes for `namer.finish`. Pauses on an unknown representation,
  * an asset that is missing or altered, a shape with no root compound, and a
- * map that fails the load check or a fingerprint that differs.
+ * map or fingerprint that fails the load check.
  */
 export function loadStored(
   ctx: BuildContext,
@@ -67,14 +67,15 @@ export function loadStored(
   const shape = adapter.addShape(handle, ref);
   // The root of a stored shape is a compound holding the bodies (13.2).
   if (adapter.subShapes(shape)[0]?.kind !== 'compound') throw new FeaturePause('the stored shape has no root compound');
-  const derived = stored.derived as Json | undefined;
-  if (derived === undefined) {
-    namer.load(shape, stored.map as unknown as ShapeMapJson);
+  const map = stored.map as unknown as ShapeMapJson;
+  const fingerprint = stored.fingerprint as string | undefined;
+  if (map.length > 0 || fingerprint === undefined) {
+    namer.load(shape, map, fingerprint);
     return { ref: shape, handle, bodies: [] };
   }
   if (!derivable) throw new FeaturePause('only an import derives its shape map');
-  if (shapeFingerprint(shape, adapter) !== derived.fingerprint) {
-    throw new FeaturePause('the stored shape is numbered differently from when it was imported');
+  if (shapeFingerprint(shape, adapter) !== fingerprint) {
+    throw new FeaturePause('the stored shape is numbered differently from when it was written');
   }
   return { ref: shape, handle, bodies: nameImported(namer, shape, adapter) };
 }

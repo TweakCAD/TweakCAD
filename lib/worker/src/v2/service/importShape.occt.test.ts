@@ -185,7 +185,7 @@ describe('importing a file as a stored shape', { timeout: 60_000 }, () => {
   it('stores a derived map: no entries, only the fingerprint of the numbering', () => {
     const shape = service.importFile(file('step'), 'step', 'a.step');
     expect(shape.stored.map).toEqual([]);
-    expect(shape.stored.derived.fingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect(shape.stored.fingerprint).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it('names a derived import exactly as the full map of the same names would', () => {
@@ -206,7 +206,7 @@ describe('importing a file as a stored shape', { timeout: 60_000 }, () => {
       const derived = derive.finish(nameImported(derive, ref, adapter));
       const map = writeShapeMap(derived, ref, adapter) as unknown as ShapeMapJson;
       const load = startFeature(NamedState.empty(), { feature, ordinal: 0 }, adapter, names);
-      load.load(ref, map);
+      load.load(ref, map, shape.stored.fingerprint);
       const loaded = load.finish([]);
 
       expect(loaded.entities.size).toBe(derived.entities.size);
@@ -224,7 +224,7 @@ describe('importing a file as a stored shape', { timeout: 60_000 }, () => {
     const { doc } = importDoc(file('step'), 'step');
     const row = ((doc.parts as Json[])[0]?.timeline as Json[]).find((f) => f.type === 'core.import') as Json;
     const stored = (row.inputs as Json).stored as Json;
-    stored.derived = { fingerprint: '0'.repeat(64) };
+    stored.fingerprint = '0'.repeat(64);
     const display = service.evaluate(doc);
     expect(display.pauses.map((p) => p.message).join(' ')).toMatch(/numbered differently/);
   });

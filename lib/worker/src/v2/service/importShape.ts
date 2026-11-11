@@ -31,7 +31,7 @@ export interface ImportedShape {
     asset: string;
     representation: { name: 'brep'; version: 1 };
     map: unknown[];
-    derived: { fingerprint: string };
+    fingerprint: string;
   };
   /** The stored shape's asset row and the file's own, keyed by content hash. */
   assets: Record<string, { mediaType: string; name: string; size: number; data: { inline: { base64: string } } }>;
@@ -206,7 +206,7 @@ export function importShape(
     const source = contentHash(bytes);
     const base = name.replace(/\.[^.]*$/, '') || 'import';
     return {
-      stored: { asset: hash, representation: { name: 'brep', version: 1 }, map: [], derived: { fingerprint } },
+      stored: { asset: hash, representation: { name: 'brep', version: 1 }, map: [], fingerprint },
       assets: {
         [source]: {
           mediaType: MEDIA_TYPES[format],

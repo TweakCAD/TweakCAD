@@ -11,6 +11,7 @@ import {
   ladderOf,
   makeSet,
   startFeature,
+  shapeFingerprint,
   writeShapeMap,
   type OperationHistory,
   type SrcItem,
@@ -153,10 +154,12 @@ export function imported(d: DocBuilder, k: OcctKernel, solids: ShapeHandle[]): I
   const text = k.toBREP(k.copy(root));
   const bytes = new TextEncoder().encode(text);
   const hash = contentHash(bytes);
+  const decoded = adapter.addShape(k.fromBREP(text), 'decoded');
   Object.assign(stored, {
     asset: hash,
     representation: { name: 'brep', version: 1 },
     map: writeShapeMap(state, ref, adapter),
+    fingerprint: shapeFingerprint(decoded, adapter),
   });
   adapter.dispose();
   const base64 = btoa(String.fromCharCode(...bytes));

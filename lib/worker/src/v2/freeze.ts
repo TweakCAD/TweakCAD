@@ -11,8 +11,12 @@ import {
   contentHash,
   finest,
   makeSet,
+  numberingRows,
   quantityOf,
+  sameNumbering,
+  shapeFingerprint,
   writeShapeMap,
+  type NumberingRow,
   type ExprValue,
   type JsonValue,
   type NamedEntity,
@@ -20,6 +24,7 @@ import {
   type ShapeKey,
   type CaptureChain,
 } from '@tweakcad/format';
+import { NamingAdapter } from '@tweakcad/kernel/src/namingAdapter.ts';
 import { type Json, type PartResult } from './context';
 import { evaluateDocument, type Built, type EvaluateOptions, type Evaluation } from './evaluate';
 import { bodyHash, quaternionOf } from './builders/frozen';
@@ -55,7 +60,8 @@ function storedBody(ev: Evaluation, state: NamedState, solid: ShapeKey, assets: 
 /**
  * A stored shape (13.2): a root compound holding `solids`, written as BREP
  * without its mesh, its asset added to `assets`, with the shape map of
- * `state`; `capture` extends every name's chain, as a captured context's do.
+ * `state` and the fingerprint of the shape as its bytes decode; `capture`
+ * extends every name's chain, as a captured context's do.
  */
 export function storedShape(
   ev: Evaluation,
@@ -71,8 +77,10 @@ export function storedShape(
   try {
     const ref = adapter.addShape(root, label);
     const map = writeShapeMap(state, ref, adapter, capture);
-    const bytes = new TextEncoder().encode(k.toBREP(bare));
+    const text = k.toBREP(bare);
+    const bytes = new TextEncoder().encode(text);
     const hash = contentHash(bytes);
+    const fingerprint = decodedFingerprint(k, text, numberingRows(ref, adapter));
     let binary = '';
     for (const b of bytes) binary += String.fromCharCode(b);
     assets[hash] = {
@@ -81,10 +89,35 @@ export function storedShape(
       size: bytes.length,
       data: { inline: { base64: btoa(binary) } },
     };
-    return { asset: hash, representation: { name: 'brep', version: 1 }, map: JSON.parse(JSON.stringify(map)) as Json };
+    return {
+      asset: hash,
+      representation: { name: 'brep', version: 1 },
+      map: JSON.parse(JSON.stringify(map)) as Json,
+      fingerprint,
+    };
   } finally {
     k.release(bare);
     k.release(root);
+  }
+}
+
+/**
+ * The fingerprint of BREP `text` as replay decodes it, a text round trip
+ * keeping 15 digits. Refuses when the decoded shape is not numbered as `live`,
+ * the shape the map was written from: the map would name the wrong sub-shapes.
+ */
+function decodedFingerprint(k: OcctKernel, text: string, live: readonly NumberingRow[]): string {
+  const adapter = new NamingAdapter(k);
+  const decoded = k.fromBREP(text);
+  try {
+    const ref = adapter.addShape(decoded, 'decoded');
+    if (!sameNumbering(live, numberingRows(ref, adapter))) {
+      throw new FreezeError('the stored shape does not read back numbered as it was written');
+    }
+    return shapeFingerprint(ref, adapter);
+  } finally {
+    adapter.dispose();
+    k.release(decoded);
   }
 }
 
