@@ -11,10 +11,11 @@
  *
  * Keys. A `ShapeKey` is handed out per sub-shape and stays the same for every
  * shape that holds that sub-shape. Kernel hashes are remainders below 2³¹ and
- * can collide, so a hash only finds candidates: `isSame` picks the one that is
- * the same sub-shape, and two different sub-shapes are never merged. Within one
- * shape, two sub-shapes of a kind that share a hash are an error, since the
- * kernel reports history by hash and could not tell them apart.
+ * can collide, also within one shape, so a hash only finds a bucket of
+ * candidates: `isSame` picks the one that is the same sub-shape, and two
+ * different sub-shapes are never merged. The kernel reports history by hash
+ * alone, so a hash its history lists that stands for several sub-shapes is an
+ * error; a shared hash nothing lists is not.
  *
  * Orientation. A hash ignores orientation, but a kept face can turn over: a
  * cutter's floor left in a pocket, a profile that became an extrusion's start
@@ -57,6 +58,7 @@ import {
 import {
   NamingAdapterError,
   buildOperationHistory,
+  type HeldKey,
   type HistoryLists,
   type InputIndex,
   type ResultIndex,
@@ -91,6 +93,8 @@ const PERIODIC_V: ReadonlySet<string> = new Set(['torus']);
 
 interface Entry {
   key: ShapeKey;
+  /** Shared by the entries of one sub-shape held different ways round. */
+  same: number;
   kind: Kind;
   hash: number;
   handle: ShapeHandle;
@@ -107,7 +111,8 @@ interface ShapeRecord {
   root: Entry;
   /** Sub-shapes of each kind in first-visit order, one per (shape, location). */
   entries: Record<Kind, Entry[]>;
-  byHash: Record<Kind, Map<number, Entry>>;
+  /** The same entries by hash; a bucket holds more than one only when different sub-shapes share a hash. */
+  byHash: Record<Kind, Map<number, Entry[]>>;
   topology?: ShapeTopology;
 }
 
@@ -115,7 +120,7 @@ type WalkRecord = Omit<ShapeRecord, 'root'>;
 
 function emptyRecord(): WalkRecord {
   const entries = {} as Record<Kind, Entry[]>;
-  const byHash = {} as Record<Kind, Map<number, Entry>>;
+  const byHash = {} as Record<Kind, Map<number, Entry[]>>;
   for (const kind of KINDS) {
     entries[kind] = [];
     byHash[kind] = new Map();
@@ -124,6 +129,24 @@ function emptyRecord(): WalkRecord {
 }
 
 const unique = <T>(values: readonly T[]): T[] => [...new Set(values)];
+
+/** Entries by hash, as `HeldKey`s, one per key. */
+function heldByHash(entries: Iterable<Entry>): Map<number, HeldKey[]> {
+  const byHash = new Map<number, HeldKey[]>();
+  for (const { hash, key, same } of entries) {
+    const held = byHash.get(hash) ?? [];
+    if (!held.some((h) => h.key === key)) held.push({ key, same });
+    byHash.set(hash, held);
+  }
+  return byHash;
+}
+
+/** The one entry a listed hash stands for in `bucket`; several are an error, as the kernel named only the hash. */
+function onlyListed(bucket: readonly Entry[] | undefined, hash: number, what: string): Entry | undefined {
+  const distinct = unique((bucket ?? []).map((entry) => entry.same));
+  if (distinct.length > 1) throw new NamingAdapterError('collision', `Listed hash ${hash} stands for several ${what}`);
+  return bucket?.[0];
+}
 
 const point3 = (p: Vec3): { x: number; y: number; z: number } => ({ x: p[0], y: p[1], z: p[2] });
 
@@ -172,8 +195,10 @@ export class NamingAdapter implements KernelFacts {
   /** The key a sub-shape has in a registered shape. */
   keyIn(shape: ShapeRef, subShape: ShapeHandle): ShapeKey {
     const kind = this.kindOf(subShape);
-    const found = this.record(shape).byHash[kind].get(this.k.hashCode(subShape, this.hashBound));
-    if (!found || !this.k.isSame(found.handle, subShape)) {
+    const found = this.record(shape)
+      .byHash[kind].get(this.k.hashCode(subShape, this.hashBound))
+      ?.find((entry) => this.k.isSame(entry.handle, subShape));
+    if (!found) {
       throw new NamingAdapterError('unknown', `This ${kind} is not part of shape ${shape}`);
     }
     return found.key;
@@ -211,7 +236,7 @@ export class NamingAdapter implements KernelFacts {
     const { byHash } = this.record(history.result);
     const capFaces = (hashes: readonly number[]) =>
       hashes.map((hash) => {
-        const face = byHash.face.get(hash);
+        const face = onlyListed(byHash.face.get(hash), hash, 'faces of the result');
         if (!face) throw new NamingAdapterError('malformed', `Cap hash ${hash} is no face of the result`);
         return face.key;
       });
@@ -237,13 +262,19 @@ export class NamingAdapter implements KernelFacts {
     const { byHash } = this.record(result);
     const spineEdges = this.record(spine).byHash.edge;
     const profileEdge = (hash: number) =>
-      profiles.map((p) => this.record(p).byHash.edge.get(hash)).find((e) => e !== undefined);
+      onlyListed(
+        profiles.flatMap((p) => this.record(p).byHash.edge.get(hash) ?? []),
+        hash,
+        'edges of the profiles',
+      );
     const pairs: { path: ShapeKey; profile: ShapeKey; faces: ShapeKey[] }[] = [];
     for (let i = 0; i < list.length;) {
-      const path = spineEdges.get(list[i] as number);
+      const path = onlyListed(spineEdges.get(list[i] as number), list[i] as number, 'edges of the spine');
       const profile = profileEdge(list[i + 1] as number);
       const count = list[i + 2] as number;
-      const faces = list.slice(i + 3, i + 3 + count).map((hash) => byHash.face.get(hash));
+      const faces = list
+        .slice(i + 3, i + 3 + count)
+        .map((hash) => onlyListed(byHash.face.get(hash), hash, 'faces of the sweep'));
       if (!path || !profile || faces.some((f) => !f))
         throw new NamingAdapterError('malformed', 'A spine pair is no edge pair and faces of the sweep');
       pairs.push({ path: path.key, profile: profile.key, faces: faces.map((f) => (f as Entry).key) });
@@ -375,29 +406,19 @@ export class NamingAdapter implements KernelFacts {
   }
 
   private buildHistory(lists: HistoryLists, inputs: OperationHistory['inputs'], result: ShapeRef): OperationHistory {
-    const input: { faces: Map<number, ShapeKey[]>; edges: Map<number, ShapeKey[]> } = {
-      faces: new Map(),
-      edges: new Map(),
+    const records = inputs.map(({ shape }) => this.record(shape));
+    const input: InputIndex = {
+      faces: heldByHash(records.flatMap((record) => record.entries.face)),
+      edges: heldByHash(records.flatMap((record) => record.entries.edge)),
     };
-    for (const { shape } of inputs) {
-      const record = this.record(shape);
-      for (const face of record.entries.face)
-        input.faces.set(face.hash, unique([...(input.faces.get(face.hash) ?? []), face.key]));
-      for (const edge of record.entries.edge)
-        input.edges.set(edge.hash, unique([...(input.edges.get(edge.hash) ?? []), edge.key]));
-    }
-    return buildOperationHistory(lists, input satisfies InputIndex, this.resultIndex(this.record(result)), {
-      result,
-      inputs,
-    });
+    return buildOperationHistory(lists, input, this.resultIndex(this.record(result)), { result, inputs });
   }
 
   private resultIndex(record: ShapeRecord): ResultIndex {
-    const keysByHash = (entries: readonly Entry[]) => new Map(entries.map((entry) => [entry.hash, entry.key]));
     const others = KINDS.filter((kind) => kind !== 'face' && kind !== 'edge').flatMap((kind) => record.entries[kind]);
     return {
-      faces: keysByHash(record.entries.face),
-      edges: keysByHash(record.entries.edge),
+      faces: heldByHash(record.entries.face),
+      edges: heldByHash(record.entries.edge),
       others: new Set(others.map((entry) => entry.hash)),
     };
   }
@@ -427,22 +448,23 @@ export class NamingAdapter implements KernelFacts {
       const hash = this.k.hashCode(handle, this.hashBound);
 
       // One entry per (shape, location) in a shape, whatever the orientation.
-      const inShape = walk.byHash[kind].get(hash);
+      const inShape = walk.byHash[kind].get(hash)?.find((held) => this.k.isSame(held.handle, handle));
       if (inShape) {
-        this.requireSame(inShape, handle);
         this.k.release(handle);
         return inShape;
       }
 
       const orientation = ORIENTED.has(kind) ? this.k.shapeOrientation(handle) : '';
-      const known = this.find(kind, hash, handle, orientation);
+      const same = this.sameAs(kind, hash, handle);
+      const known = same.find((held) => held.orientation === orientation);
       if (known) {
         this.k.release(handle);
         this.adopt(known, walk);
         return known;
       }
 
-      entry = { key: this.nextKey++, kind, hash, handle, orientation, uses: [] };
+      const key = this.nextKey++;
+      entry = { key, same: same[0]?.same ?? key, kind, hash, handle, orientation, uses: [] };
     } catch (e) {
       // Not yet held by an entry: the handle is still this call's to release.
       this.k.release(handle);
@@ -465,30 +487,21 @@ export class NamingAdapter implements KernelFacts {
 
   /** Enter an entry known from another shape, with what it holds, no kernel calls needed. */
   private adopt(entry: Entry, walk: WalkRecord): void {
-    if (walk.byHash[entry.kind].has(entry.hash)) return;
+    if (walk.byHash[entry.kind].get(entry.hash)?.some((held) => held.same === entry.same)) return;
     this.enter(entry, walk);
     for (const child of entry.uses) this.adopt(this.entry(child), walk);
   }
 
   private enter(entry: Entry, walk: WalkRecord): void {
     walk.entries[entry.kind].push(entry);
-    walk.byHash[entry.kind].set(entry.hash, entry);
+    const bucket = walk.byHash[entry.kind].get(entry.hash);
+    if (bucket) bucket.push(entry);
+    else walk.byHash[entry.kind].set(entry.hash, [entry]);
   }
 
-  /** The entry already standing for this sub-shape, if any; an entry of another shape that only shares its hash is passed over. */
-  private find(kind: Kind, hash: number, handle: ShapeHandle, orientation: string): Entry | undefined {
-    let found: Entry | undefined;
-    for (const entry of this.byHash.get(hash) ?? []) {
-      if (entry.kind !== kind || !this.k.isSame(entry.handle, handle)) continue;
-      if (entry.orientation === orientation) found = entry;
-    }
-    return found;
-  }
-
-  private requireSame(entry: Entry, handle: ShapeHandle): void {
-    if (!this.k.isSame(entry.handle, handle)) {
-      throw new NamingAdapterError('collision', `Two different ${entry.kind}s share hash ${entry.hash}`);
-    }
+  /** The entries already standing for this sub-shape, one per orientation; entries that only share its hash are passed over. */
+  private sameAs(kind: Kind, hash: number, handle: ShapeHandle): Entry[] {
+    return (this.byHash.get(hash) ?? []).filter((entry) => entry.kind === kind && this.k.isSame(entry.handle, handle));
   }
 
   private record(shape: ShapeRef): ShapeRecord {
@@ -568,18 +581,14 @@ export class NamingAdapter implements KernelFacts {
   /** A face's boundary loops. Composed orientations already run with the face on the left of its outward normal. */
   private loops(face: Entry): FaceGeometry['loops'] {
     const outerWire = this.k.outerWire(face.handle);
-    const outerHash = this.k.hashCode(outerWire, this.hashBound);
-    this.k.release(outerWire);
-
     const wires = this.k.iterShapes(face.handle).filter((wire) => {
       if (this.kindOf(wire) === 'wire') return true;
       this.k.release(wire);
       return false;
     });
-    const loops = wires.map((wire) => ({
-      outer: this.k.hashCode(wire, this.hashBound) === outerHash,
-      loop: this.wireLoop(wire),
-    }));
+    const outer = wires.map((wire) => this.k.isSame(wire, outerWire));
+    this.k.release(outerWire);
+    const loops = wires.map((wire, i) => ({ outer: outer[i] === true, loop: this.wireLoop(wire) }));
     for (const wire of wires) this.k.release(wire);
     return [...loops.filter((l) => l.outer), ...loops.filter((l) => !l.outer)].map((l) => l.loop);
   }
@@ -599,13 +608,13 @@ export class NamingAdapter implements KernelFacts {
     if (orientation !== 'forward' && orientation !== 'reversed') {
       throw new NamingAdapterError('unsupported', `A wire edge with orientation "${orientation}" has no direction`);
     }
-    const known = this.find('edge', this.k.hashCode(edge, this.hashBound), edge, '');
+    const [known] = this.sameAs('edge', this.k.hashCode(edge, this.hashBound), edge);
     if (!known) throw new NamingAdapterError('unknown', 'A wire holds an edge this adapter never walked');
 
     let from: ShapeKey | undefined;
     let to: ShapeKey | undefined;
     for (const vertex of this.k.iterShapes(edge)) {
-      const key = this.find('vertex', this.k.hashCode(vertex, this.hashBound), vertex, '')?.key;
+      const key = this.sameAs('vertex', this.k.hashCode(vertex, this.hashBound), vertex)[0]?.key;
       const end = this.k.shapeOrientation(vertex);
       if (end === 'forward') from = key;
       if (end === 'reversed') to = key;
