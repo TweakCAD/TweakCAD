@@ -99,7 +99,7 @@ describe.skipIf(!corpus)('real files against reference solids', () => {
         bodiesMadeBy: (part, before, features) => Promise.resolve(service.bodiesMadeBy(part, before, features)),
         locateFacesOnSurfaces: (part, before, surfaces) =>
           Promise.resolve(service.locateFacesOnSurfaces(part, before, surfaces)),
-        importFile: (bytes, format, feature, name) => Promise.resolve(service.importFile(bytes, format, feature, name)),
+        importFile: (bytes, format, name) => Promise.resolve(service.importFile(bytes, format, name)),
       };
       return { k, service, client };
     };

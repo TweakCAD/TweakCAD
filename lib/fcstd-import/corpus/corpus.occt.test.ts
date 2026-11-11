@@ -96,8 +96,7 @@ async function processFile(file: string, gcs: GcsWrapper): Promise<FileRecord> {
         ofFaces?: number[],
       ) => Promise.resolve(service.locate(part, before, brep, kind, indices, ofFaces)),
       bodyRecords: (part: string, before: string | undefined) => Promise.resolve(service.bodyRecords(part, before)),
-      importFile: (b: Uint8Array, format: 'brep', feature: string, name: string) =>
-        Promise.resolve(service.importFile(b, format, feature, name)),
+      importFile: (b: Uint8Array, format: 'brep', name: string) => Promise.resolve(service.importFile(b, format, name)),
       shapeMeasures: (brep: string) => Promise.resolve(service.shapeMeasures(brep)),
       stepMeasures: (part: string, feature: string) => Promise.resolve(service.stepMeasures(part, feature)),
     };

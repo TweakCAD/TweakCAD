@@ -150,6 +150,19 @@ describe('assets and imports', () => {
     const broken = read(doc({ assets: { [ASSET]: asset() } }, { timeline: [feature(1, 'core.import', badMap)] }));
     expect(codes(broken, 'refuse')).toEqual(['bad-value /parts/0/timeline/0/inputs/stored/map/0/children/set/0']);
   });
+
+  it('reads a derived map on an import only, with no entries and a well-formed fingerprint', () => {
+    const at = (inputs: Json) =>
+      read(doc({ assets: { [ASSET]: asset() } }, { timeline: [feature(1, 'core.import', inputs)] }));
+    const derived = (map: Json[], fingerprint: string): Json => ({ ...stored(map), derived: { fingerprint } });
+    expect(at(importInputs({ stored: derived([], 'a'.repeat(64)) })).diagnostics).toEqual([]);
+    expect(codes(at(importInputs({ stored: derived([entry([])], 'a'.repeat(64)) })), 'refuse')).toEqual([
+      'bad-value /parts/0/timeline/0/inputs/stored/map',
+    ]);
+    expect(codes(at(importInputs({ stored: derived([], 'A'.repeat(64)) })), 'refuse')).toEqual([
+      'bad-hash /parts/0/timeline/0/inputs/stored/derived/fingerprint',
+    ]);
+  });
 });
 
 describe('frozen features', () => {
@@ -174,6 +187,15 @@ describe('frozen features', () => {
     expect(codes(result, 'pause')).toEqual([]);
     const live = read(doc({}, { timeline: [feature(1, 'acme.box', { size: val('10 mm') })] }));
     expect(codes(live, 'pause')).toEqual(['unknown-variant /parts/0/timeline/0/type']);
+  });
+
+  it('refuses a derived map on a frozen effect, whose names come from another build', () => {
+    const shape = { ...stored(), derived: { fingerprint: 'a'.repeat(64) } };
+    const f = feature(1, 'acme.box', {}, { frozen: frozen([{ create: { ladder: [], branch: [], stored: shape } }]) });
+    const result = read(doc({ assets: { [ASSET]: asset() } }, { timeline: [f] }));
+    expect(codes(result, 'refuse')).toEqual([
+      'bad-value /parts/0/timeline/0/frozen/frozen/effects/0/create/stored/derived',
+    ]);
   });
 
   it('refuses a typed literal for a value that does not exist', () => {

@@ -126,8 +126,7 @@ const client = (s: EvaluationService) => ({
   locate: (part: string, before: string | undefined, brep: string, kind: 'edge' | 'face', indices: number[] | 'all') =>
     Promise.resolve(s.locate(part, before, brep, kind, indices)),
   bodyRecords: (part: string, before: string | undefined) => Promise.resolve(s.bodyRecords(part, before)),
-  importFile: (b: Uint8Array, format: 'brep', feature: string, name: string) =>
-    Promise.resolve(s.importFile(b, format, feature, name)),
+  importFile: (b: Uint8Array, format: 'brep', name: string) => Promise.resolve(s.importFile(b, format, name)),
   shapeMeasures: (brep: string) => Promise.resolve(s.shapeMeasures(brep)),
   stepMeasures: (part: string, feature: string) => Promise.resolve(s.stepMeasures(part, feature)),
 });
@@ -227,7 +226,7 @@ describe('FreeCAD export', { timeout: 120_000 }, () => {
           locate: (part, before, brep, kind, indices) =>
             Promise.resolve(back.locate(part, before, brep, kind, indices)),
           bodyRecords: (part, before) => Promise.resolve(back.bodyRecords(part, before)),
-          importFile: (b, format, feature, name) => Promise.resolve(back.importFile(b, format, feature, name)),
+          importFile: (b, format, name) => Promise.resolve(back.importFile(b, format, name)),
           shapeMeasures: (brep) => Promise.resolve(back.shapeMeasures(brep)),
           stepMeasures: (part, feature) => Promise.resolve(back.stepMeasures(part, feature)),
         },

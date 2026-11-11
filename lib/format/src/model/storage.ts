@@ -131,10 +131,26 @@ function readShapeMap(r: Reader, v: unknown, path: string): void {
   });
 }
 
-/** A stored shape (13.2). */
-export function readStoredShape(r: Reader, v: unknown, path: string): void {
-  const o = r.object(v, path, { required: ['asset', 'representation', 'map'] });
+const FINGERPRINT = /^[0-9a-f]{64}$/;
+
+/**
+ * A stored shape (13.2). `derivable`: the holder is a `core.import`, the one
+ * place a map may be derived, with no entries and a fingerprint.
+ */
+export function readStoredShape(r: Reader, v: unknown, path: string, derivable = false): void {
+  const o = r.object(v, path, { required: ['asset', 'representation', 'map'], optional: ['derived'] });
   if (!o) return;
+  if ('derived' in o) {
+    const dp = child(path, 'derived');
+    if (!derivable) r.diagnostics.refuse('bad-value', dp, 'only an import derives its shape map');
+    const d = r.object(o.derived, dp, { required: ['fingerprint'] });
+    if (d && (typeof d.fingerprint !== 'string' || !FINGERPRINT.test(d.fingerprint))) {
+      r.diagnostics.refuse('bad-hash', child(dp, 'fingerprint'), 'a fingerprint is 64 lower-case hex digits');
+    }
+    if (Array.isArray(o.map) && o.map.length > 0) {
+      r.diagnostics.refuse('bad-value', child(path, 'map'), 'a derived shape map has no entries');
+    }
+  }
   assetUse(r, o.asset, child(path, 'asset'));
   const rep = r.object(o.representation, child(path, 'representation'), { required: ['name', 'version'] });
   if (

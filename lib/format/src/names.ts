@@ -29,6 +29,15 @@ export function checkNameTable(table: unknown): NameTableCheck {
   return result;
 }
 
+/** Strings that are well-formed name hashes, anywhere in `value`. */
+function hashesIn(value: unknown, out: Set<string>): Set<string> {
+  if (typeof value === 'string') {
+    if (isNameHash(value)) out.add(value);
+  } else if (Array.isArray(value)) for (const item of value) hashesIn(item, out);
+  else if (isPlainObject(value)) for (const item of Object.values(value)) hashesIn(item, out);
+  return out;
+}
+
 /** Collects name objects while a document is built or written. */
 export class NameTable {
   private readonly entries = new Map<string, JsonValue>();
@@ -55,6 +64,24 @@ export class NameTable {
 
   get size(): number {
     return this.entries.size;
+  }
+
+  /**
+   * The entries a written value needs (9.8): every name hash anywhere in
+   * `value`, with the hashes those entries contain, transitively.
+   */
+  usedBy(value: unknown): NameTableJson {
+    const used = new Set<string>();
+    const queue = [...hashesIn(value, new Set())];
+    while (queue.length > 0) {
+      const hash = queue.pop() as string;
+      if (used.has(hash)) continue;
+      const entry = this.entries.get(hash);
+      if (entry === undefined) continue;
+      used.add(hash);
+      queue.push(...hashesIn(entry, new Set()));
+    }
+    return this.toJson(used);
   }
 
   /** The table restricted to `used` hashes, as written to a document. */

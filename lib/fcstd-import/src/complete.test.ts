@@ -42,7 +42,7 @@ function clientOf(pausing: (d: Json) => string[] = () => []) {
       return Promise.resolve([{ reference: { entity: 'found' }, names: {} }]);
     },
     bodyRecords: () => Promise.resolve([]),
-    importFile: () => Promise.resolve({ assets: {}, names: {}, stored: { kept: true } }),
+    importFile: () => Promise.resolve({ assets: {}, stored: { kept: true } }),
     shapeMeasures: () => Promise.resolve(measures),
     stepMeasures: () => Promise.resolve(measures),
   };

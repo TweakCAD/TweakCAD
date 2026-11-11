@@ -1965,11 +1965,10 @@ export class EvaluationService {
   importFile(
     bytes: Uint8Array,
     format: ImportFormat,
-    feature: string,
     name: string,
     report?: (p: ImportProgress) => void,
   ): ImportedShape {
-    return importShape(this.kernel, bytes, format, feature, name, report);
+    return importShape(this.kernel, bytes, format, name, report);
   }
 
   /**

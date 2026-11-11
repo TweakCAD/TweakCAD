@@ -203,7 +203,7 @@ export function frozenOf(built: Built): FrozenFeature {
     values,
     ...(outputs.length > 0 ? { outputs } : {}),
   };
-  return { frozen: { frozen: payload }, assets, names: ev.names.toJson() as Json };
+  return { frozen: { frozen: payload }, assets, names: ev.names.usedBy(payload) as Json };
 }
 
 /**

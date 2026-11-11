@@ -300,15 +300,14 @@ export class ServiceClient {
     return this.#api.exportFile(format, scope, options);
   }
 
-  /** Reads a file into the stored shape of the `core.import` feature `feature`; `onProgress` hears each stage as it starts. */
+  /** Reads a file into the stored shape of a `core.import`; `onProgress` hears each stage as it starts. */
   importFile(
     bytes: Uint8Array,
     format: ImportFormat,
-    feature: string,
     name: string,
     onProgress?: (p: ImportProgress) => void,
   ): Promise<ImportedShape> {
-    return this.#api.importFile(bytes, format, feature, name, onProgress && Comlink.proxy(onProgress));
+    return this.#api.importFile(bytes, format, name, onProgress && Comlink.proxy(onProgress));
   }
 
   /** The references of a part's live bodies just before a feature. */

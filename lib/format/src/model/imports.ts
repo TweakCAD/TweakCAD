@@ -15,7 +15,7 @@ function readImportInputs(r: Reader, values: ValueIndex, inputs: Json, path: str
     const f = r.object(source.payload, source.path, { required: ['asset'] });
     if (f) assetUse(r, f.asset, child(source.path, 'asset'));
   } else if (source) r.object(source.payload, source.path, { required: [] });
-  readStoredShape(r, o.stored, child(path, 'stored'));
+  readStoredShape(r, o.stored, child(path, 'stored'), true);
   const imp = r.object(o.importer, child(path, 'importer'), { required: ['format', 'version'] });
   if (imp) {
     r.string(imp.format, child(path, 'importer/format'));

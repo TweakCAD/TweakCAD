@@ -48,9 +48,8 @@ export interface LocateClient {
   importFile(
     bytes: Uint8Array,
     format: 'brep',
-    feature: string,
     name: string,
-  ): Promise<{ stored: unknown; assets: Record<string, unknown>; names: NameTableJson }>;
+  ): Promise<{ stored: unknown; assets: Record<string, unknown> }>;
   shapeMeasures(brep: string): Promise<Measured | null>;
   stepMeasures(part: string, feature: string): Promise<Measured | null>;
 }
@@ -163,9 +162,8 @@ function agrees(want: Measured, got: Measured): boolean {
 /** Puts FreeCAD's stored shape in `check`'s place in the timeline, or where the step it was waiting for goes. */
 async function standIn(doc: Json, check: Check, client: LocateClient, at: (row: Json) => void): Promise<boolean> {
   try {
-    const shape = await client.importFile(check.brep, 'brep', check.feature, check.name);
+    const shape = await client.importFile(check.brep, 'brep', check.name);
     Object.assign(doc.assets as Json, shape.assets);
-    Object.assign(doc.names as Json, shape.names);
     at(check.row(shape.stored as Json));
     suppressBefore(doc, check.part, check.feature);
     return true;
@@ -337,9 +335,8 @@ export async function complete(
     if (step.before !== undefined && !timeline.some((f) => f.id === step.before)) step.before = undefined;
     if (step.kind === 'shape') {
       try {
-        const shape = await client.importFile(step.brep, 'brep', step.id, step.name);
+        const shape = await client.importFile(step.brep, 'brep', step.name);
         Object.assign(doc.assets as Json, shape.assets);
-        Object.assign(doc.names as Json, shape.names);
         insert(doc, step, step.row(shape.stored as Json));
         if (step.replaces) suppressBefore(doc, step.part, step.id);
       } catch (e) {

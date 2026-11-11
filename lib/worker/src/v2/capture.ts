@@ -147,7 +147,8 @@ export function captureContext(
     capturedAt: options.capturedAt ?? (row.capturedAt as string),
   };
   document.assets = { ...(document.assets as Json), ...assets };
-  document.names = { ...(document.names as Json), ...(ev.names.toJson() as Json) };
+  // Only the names the captured maps hold: an import's derived names stay out of the document.
+  document.names = { ...(document.names as Json), ...(ev.names.usedBy(entries) as Json) };
   return { document, evaluation: ev };
 }
 

@@ -1,11 +1,22 @@
 /**
  * `core.import` (13.3): replays the stored shape, so a newer importer or kernel
  * never changes an import. `units` and `upAxis` record what the importer did to
- * reach it. Identities come from the shape map, after the 13.2 load check.
- * Frozen features load their stored shapes the same way.
+ * reach it. Identities come from the shape map, after the 13.2 load check, or,
+ * for a derived map, from naming the shape again by the `import` rule once its
+ * fingerprint matches. Frozen features load their stored shapes the same way,
+ * from full maps only.
  */
 import { OcctError, type ShapeHandle } from 'occt-wasm';
-import { contentHash, startFeature, type FeatureNamer, type ShapeMapJson, type ShapeRef } from '@tweakcad/format';
+import {
+  contentHash,
+  nameImported,
+  shapeFingerprint,
+  startFeature,
+  type BodyOutcome,
+  type FeatureNamer,
+  type ShapeMapJson,
+  type ShapeRef,
+} from '@tweakcad/format';
 import { FeaturePause, registerBuilder, type BuildContext, type Json } from '../context';
 
 /** An asset's bytes as text, verified against its row (13.1, 13.2). */
@@ -32,16 +43,19 @@ function decode(ctx: BuildContext, text: string): ShapeHandle {
 
 /**
  * Decodes a stored shape (13.2) and gives its sub-shapes the identities of its
- * map through `namer`; its solids become bodies. Pauses on an unknown
- * representation, an asset that is missing or altered, a shape with no root
- * compound, and a map that fails the load check.
+ * map through `namer`; its solids become bodies. A derived map (allowed when
+ * `derivable`) names the shape by the `import` rule instead, and `bodies` are
+ * then the outcomes for `namer.finish`. Pauses on an unknown representation,
+ * an asset that is missing or altered, a shape with no root compound, and a
+ * map that fails the load check or a fingerprint that differs.
  */
 export function loadStored(
   ctx: BuildContext,
   namer: FeatureNamer,
   stored: Json,
   ref: string,
-): { ref: ShapeRef; handle: ShapeHandle } {
+  derivable = false,
+): { ref: ShapeRef; handle: ShapeHandle; bodies: BodyOutcome[] } {
   const representation = stored.representation as Json;
   if (representation.name !== 'brep' || representation.version !== 1) {
     throw new FeaturePause(
@@ -53,16 +67,24 @@ export function loadStored(
   const shape = adapter.addShape(handle, ref);
   // The root of a stored shape is a compound holding the bodies (13.2).
   if (adapter.subShapes(shape)[0]?.kind !== 'compound') throw new FeaturePause('the stored shape has no root compound');
-  namer.load(shape, stored.map as unknown as ShapeMapJson);
-  return { ref: shape, handle };
+  const derived = stored.derived as Json | undefined;
+  if (derived === undefined) {
+    namer.load(shape, stored.map as unknown as ShapeMapJson);
+    return { ref: shape, handle, bodies: [] };
+  }
+  if (!derivable) throw new FeaturePause('only an import derives its shape map');
+  if (shapeFingerprint(shape, adapter) !== derived.fingerprint) {
+    throw new FeaturePause('the stored shape is numbered differently from when it was imported');
+  }
+  return { ref: shape, handle, bodies: nameImported(namer, shape, adapter) };
 }
 
 registerBuilder('core.import', (ctx) => {
   const { inputs, id, ordinal, part } = ctx;
   const { adapter, names } = ctx.ev;
   const namer = startFeature(part.state, { feature: id, ordinal }, adapter, names);
-  const { ref, handle } = loadStored(ctx, namer, inputs.stored as Json, `import:${id}`);
-  const state = namer.finish([]);
+  const { ref, handle, bodies } = loadStored(ctx, namer, inputs.stored as Json, `import:${id}`, true);
+  const state = namer.finish(bodies);
   const { solids } = adapter.topology(ref);
   if (solids.length === 0) throw new FeaturePause('imported surfaces are not built yet');
   if (solids.some((s) => state.get(s.solid) === undefined))

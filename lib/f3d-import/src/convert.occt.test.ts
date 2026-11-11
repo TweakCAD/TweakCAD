@@ -76,8 +76,8 @@ const client = {
     before: string | undefined,
     surfaces: Parameters<EvaluationService['locateFacesOnSurfaces']>[2],
   ) => Promise.resolve(service.locateFacesOnSurfaces(part, before, [...surfaces])),
-  importFile: (bytes: Uint8Array, format: 'step', feature: string, name: string) =>
-    Promise.resolve(service.importFile(bytes, format, feature, name)),
+  importFile: (bytes: Uint8Array, format: 'step', name: string) =>
+    Promise.resolve(service.importFile(bytes, format, name)),
 };
 
 const SKETCH = 1;

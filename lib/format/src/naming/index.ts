@@ -51,3 +51,4 @@ export {
   type ShapeMapJson,
   type ShapeMapMismatch,
 } from './shapeMap';
+export { nameImported, shapeFingerprint } from './derived';
