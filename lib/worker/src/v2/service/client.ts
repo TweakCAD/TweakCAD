@@ -8,7 +8,7 @@ import * as Comlink from 'comlink';
 import type { EntityRecord } from '@tweakcad/format';
 import type { ServiceWorkerApi } from './worker';
 import type { FcstdExport } from '../fcstd/export';
-import type { ImportFormat, ImportedShape } from './importShape';
+import type { ImportFormat, ImportedShape, ImportProgress } from './importShape';
 import type { SurfaceSpec } from './onSurfaces';
 import { diffDocs } from './docPatch';
 import type {
@@ -40,7 +40,7 @@ import type {
 } from './types';
 
 export type * from './types';
-export type { ImportFormat, ImportedShape } from './importShape';
+export type { ImportFormat, ImportedShape, ImportProgress } from './importShape';
 export { edgeAt, faceAt, matrixOf } from './picking';
 
 /**
@@ -300,9 +300,15 @@ export class ServiceClient {
     return this.#api.exportFile(format, scope, options);
   }
 
-  /** Reads a file into the stored shape of the `core.import` feature `feature`. */
-  importFile(bytes: Uint8Array, format: ImportFormat, feature: string, name: string): Promise<ImportedShape> {
-    return this.#api.importFile(bytes, format, feature, name);
+  /** Reads a file into the stored shape of the `core.import` feature `feature`; `onProgress` hears each stage as it starts. */
+  importFile(
+    bytes: Uint8Array,
+    format: ImportFormat,
+    feature: string,
+    name: string,
+    onProgress?: (p: ImportProgress) => void,
+  ): Promise<ImportedShape> {
+    return this.#api.importFile(bytes, format, feature, name, onProgress && Comlink.proxy(onProgress));
   }
 
   /** The references of a part's live bodies just before a feature. */

@@ -12,7 +12,7 @@ import type { Json } from '../context';
 import { EvaluationService } from './service';
 import { buffers } from './transfer';
 import { applyPatch, type PatchOp } from './docPatch';
-import type { ImportFormat } from './importShape';
+import type { ImportFormat, ImportProgress } from './importShape';
 import type { SurfaceSpec } from './onSurfaces';
 import type {
   BeforeScope,
@@ -152,8 +152,15 @@ const api = {
     return Comlink.transfer(bytes, buffers(bytes));
   },
 
-  async importFile(bytes: Uint8Array, format: ImportFormat, feature: string, name: string) {
-    return (await service()).importFile(bytes, format, feature, name);
+  /** Reads a file into an import's stored shape; `onProgress` hears each stage as it starts. */
+  async importFile(
+    bytes: Uint8Array,
+    format: ImportFormat,
+    feature: string,
+    name: string,
+    onProgress?: (p: ImportProgress) => void,
+  ) {
+    return (await service()).importFile(bytes, format, feature, name, onProgress && ((p) => void onProgress(p)));
   },
 
   async bodyRecords(part: string, before: string | undefined) {

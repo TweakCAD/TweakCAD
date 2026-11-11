@@ -9,7 +9,7 @@ import { readDocument } from '@tweakcad/format';
 import { DocBuilder } from '../docBuilder';
 import type { Json } from '../context';
 import { EvaluationService } from './service';
-import { ImportRefusal, type ImportFormat } from './importShape';
+import { ImportRefusal, type ImportFormat, type ImportProgress } from './importShape';
 
 let k: OcctKernel;
 let service: EvaluationService;
@@ -99,6 +99,18 @@ describe('importing a file as a stored shape', { timeout: 60_000 }, () => {
     const fine = new Uint8Array(k.exportStl(sphere, 0.02));
     k.release(sphere);
     expect(() => service.importFile(fine, 'stl', 'feat_AAAAAAAAAAAAAAAAAAAAAAAAAA', 'ball.stl')).toThrow(/faces/);
+  });
+
+  it('reports each stage of an STL import as it starts', () => {
+    const stages: ImportProgress[] = [];
+    service.importFile(file('stl'), 'stl', 'feat_AAAAAAAAAAAAAAAAAAAAAAAAAA', 'two-boxes.stl', (p) => stages.push(p));
+    expect(stages).toEqual([
+      { stage: 'reading' },
+      { stage: 'sewing', triangles: 24 },
+      { stage: 'solids', done: 0, total: 2 },
+      { stage: 'solids', done: 1, total: 2 },
+      { stage: 'naming', faces: 12 },
+    ]);
   });
 
   it('refuses an STL mesh with a hole in it, rather than making an open shell a body', () => {

@@ -78,7 +78,7 @@ import { evaluateCached, namesHeld, stepsOf, valuesFor, type Recorded } from './
 import { DEFAULT_COLOR, PartStyles, readProperties, type Properties } from './styles';
 import { asciiStl, binaryStl } from './stl';
 import { build3mf, type ThreeMfBody } from './threemf';
-import { importShape, type ImportFormat, type ImportedShape } from './importShape';
+import { importShape, type ImportFormat, type ImportedShape, type ImportProgress } from './importShape';
 import { bodyIdentity } from './identity';
 export { bodyIdentity };
 import { exportFcstd, type FcstdExport, type PlacedShape } from '../fcstd/export';
@@ -1962,8 +1962,14 @@ export class EvaluationService {
    * Reads a STEP, STL or BREP file into the stored shape of the `core.import`
    * feature `feature` (13.3). The kept evaluation is not touched.
    */
-  importFile(bytes: Uint8Array, format: ImportFormat, feature: string, name: string): ImportedShape {
-    return importShape(this.kernel, bytes, format, feature, name);
+  importFile(
+    bytes: Uint8Array,
+    format: ImportFormat,
+    feature: string,
+    name: string,
+    report?: (p: ImportProgress) => void,
+  ): ImportedShape {
+    return importShape(this.kernel, bytes, format, feature, name, report);
   }
 
   /**

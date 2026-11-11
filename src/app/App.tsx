@@ -35,6 +35,10 @@ import { COMPONENT_FILE, importComponent } from './assembly/importComponent';
 import { f3dImportMessage, importF3dFile } from './io/f3d';
 import { importFreeCad } from './io/freecad';
 import { GEOMETRY_FILES, importGeometry } from './io/geometry';
+import { cancelImports, ownWorkerImports } from './io/importJobs';
+
+/** Geometry imports, each on a worker of its own. */
+const importClient = ownWorkerImports(() => ServiceClient.spawn());
 import { activePart } from './modeling/commands';
 import { bootApp, type AppServices } from './services';
 import { AutoExportPanel } from './storage/AutoExportPanel';
@@ -276,7 +280,9 @@ export function App() {
   const onNew = useCallback(() => {
     if (!services) return;
     void mayDiscard().then((ok) => {
-      if (ok) services.session.newDocument();
+      if (!ok) return;
+      cancelImports();
+      services.session.newDocument();
     });
   }, [services, mayDiscard]);
 
@@ -285,7 +291,9 @@ export function App() {
     void mayDiscard().then(async (ok) => {
       if (!ok) return;
       try {
-        reportOutcome('Open failed', await services.session.open(), () => `Opened ${storageName(services)}`);
+        const opened = await services.session.open();
+        if (opened.ok === true) cancelImports();
+        reportOutcome('Open failed', opened, () => `Opened ${storageName(services)}`);
       } catch (e) {
         reportError('Open failed')(e);
       }
@@ -329,8 +337,7 @@ export function App() {
 
   const onImport = useCallback(
     (format: ImportFormat = 'step') => {
-      const client = clientRef.current;
-      if (!services || !client) return;
+      if (!services) return;
       // Into the part the window works on now, whatever is opened while the file is chosen and read.
       const part = activePart(services);
       if (!part) {
@@ -350,7 +357,11 @@ export function App() {
           !(await confirm({ ...tooLarge, confirmLabel: 'Import anyway', cancelLabel: 'Cancel', tone: 'danger' }))
         )
           return;
-        const outcome = await importGeometry(services.editor, client, file, format, part);
+        const outcome = await importGeometry(services.editor, importClient, file, format, part);
+        if (!outcome.ok && 'dropped' in outcome) {
+          consoleLog('info', `Import of ${file.name} stopped: ${outcome.message}`, 'file');
+          return;
+        }
         if (!outcome.ok) {
           consoleLog('error', `Import of ${file.name} failed: ${outcome.message}`, 'file');
           enqueueToast({ tone: 'warning', title: 'Import failed', message: outcome.message });
