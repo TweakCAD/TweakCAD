@@ -23,7 +23,6 @@ import {
   type EntityRecord,
   type ShapeRef,
 } from '@tweakcad/format';
-import { NamingAdapterError } from '@tweakcad/kernel/src/namingAdapter.ts';
 import {
   ANGLE,
   FLAG,
@@ -119,7 +118,6 @@ const RATIO_VALUE = { type: 'number', quantity: 'ratio' } as const;
 function pauseMessage(e: unknown): string | undefined {
   if (e instanceof FeaturePause || e instanceof ValuePause || e instanceof SketchSolvePause || e instanceof NamingPause)
     return e.message;
-  if (e instanceof NamingAdapterError && e.code === 'collision') return `two sub-shapes share a hash: ${e.message}`;
   if (e instanceof OcctError) return `the kernel could not build it: ${e.message}`;
   return undefined;
 }

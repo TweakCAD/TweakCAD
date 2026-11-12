@@ -1,26 +1,24 @@
 /**
  * Turns the kernel's run-length history lists into an `OperationHistory`.
  *
- * Works on hashes and keys only, so it runs without the kernel. The rules
- * follow what occt-wasm actually reports:
+ * Works on positions and keys only, so it runs without the kernel. The kernel
+ * names a sub-shape by its input, its kind and its position among that kind of
+ * sub-shape of its shape, in the order the adapter's walk enters them, so two
+ * sub-shapes are never mixed up, whatever their hashes. The rules follow what
+ * occt-wasm actually reports:
  *
  * - the kernel's delete lists are unreliable and never read: an input is
  *   deleted when it is not in the result and has no image of its own kind;
- * - `generated` lists mix faces, edges and hashes that are not in the result:
- *   entries are sorted by kind against the result and the rest dropped;
+ * - `generated` lists mix faces, edges and other kinds: entries are sorted by
+ *   kind and the rest dropped;
  * - a generated face does not save its source from being deleted, the same as
- *   OCCT's own `BRepTools_History`;
- * - the lists name sub-shapes by hash alone, so a listed hash that stands for
- *   more than one sub-shape, of the inputs or of the result, has no answer and
- *   is refused. A shared hash nothing lists is no problem.
+ *   OCCT's own `BRepTools_History`.
  */
 
 import type { OperationHistory, ShapeKey, ShapeRef, SubShapeHistory } from '@tweakcad/format';
 import type { EvolutionData } from 'occt-wasm';
 
 export type NamingAdapterErrorCode =
-  /** A hash the kernel's history lists stands for more than one sub-shape. */
-  | 'collision'
   /** The kernel has no call that gives this data exactly. */
   | 'unsupported'
   /** A key or shape reference this adapter does not hold. */
@@ -38,8 +36,11 @@ export class NamingAdapterError extends Error {
   }
 }
 
-/** The hash lists `OperationHistory` is built from. */
-export type HistoryLists = Pick<EvolutionData, 'modified' | 'generated' | 'edgeModified' | 'edgeGenerated'>;
+/** The position lists `OperationHistory` is built from. */
+export type HistoryLists = Pick<
+  EvolutionData,
+  'modifiedIndexed' | 'generatedIndexed' | 'edgeModifiedIndexed' | 'edgeGeneratedIndexed'
+>;
 
 /**
  * A sub-shape's key, and `same`, an id every key of that sub-shape shares: a
@@ -50,64 +51,65 @@ export interface HeldKey {
   same: number;
 }
 
-/** Input sub-shapes by hash. Keys with different `same` share a hash only by chance. */
-export interface InputIndex {
-  faces: ReadonlyMap<number, readonly HeldKey[]>;
-  edges: ReadonlyMap<number, readonly HeldKey[]>;
+/** One input's faces and edges, each at its kernel position. */
+export interface InputSubShapes {
+  faces: readonly HeldKey[];
+  edges: readonly HeldKey[];
 }
 
-/** Result sub-shapes by hash, one key per sub-shape. */
-export interface ResultIndex {
-  faces: ReadonlyMap<number, readonly HeldKey[]>;
-  edges: ReadonlyMap<number, readonly HeldKey[]>;
-  /** Hashes of every other kind, so a listed hash can be told apart from these. */
-  others: ReadonlySet<number>;
+/** The kernel's kind numbers: a sub-shape's kind is its index here. */
+export const KERNEL_KINDS = ['compound', 'compsolid', 'solid', 'shell', 'face', 'wire', 'edge', 'vertex'] as const;
+const FACE = KERNEL_KINDS.indexOf('face');
+const EDGE = KERNEL_KINDS.indexOf('edge');
+
+/** The result's sub-shapes of each kernel kind, each at its kernel position. */
+export type ResultSubShapes = readonly (readonly HeldKey[])[];
+
+/** One run: an input sub-shape and the result sub-shapes listed for it, as `[kind, position]`. */
+export interface IndexedRun {
+  input: number;
+  position: number;
+  images: [kind: number, position: number][];
 }
 
 /**
- * Decode `[input, count, result_0 … result_count-1, input, count, …]`. A count
- * running past the end means the list is not in this form: an error, since
- * dropping the tail would lose history without a trace.
+ * Decode `[input, position, count, kind, position, …]`. A count running past
+ * the end means the list is not in this form: an error, since dropping the
+ * tail would lose history without a trace.
  */
-export function decodeRunLength(encoded: readonly number[]): [number, number[]][] {
-  const entries: [number, number[]][] = [];
+export function decodeIndexed(encoded: readonly number[]): IndexedRun[] {
+  const runs: IndexedRun[] = [];
   let i = 0;
   while (i < encoded.length) {
-    const input = encoded[i];
-    const count = encoded[i + 1];
-    if (input === undefined || count === undefined || i + 2 + count > encoded.length) {
-      throw new NamingAdapterError('malformed', `Run-length list ends inside the entry at ${i}`);
+    const [input, position, count] = [encoded[i], encoded[i + 1], encoded[i + 2]];
+    if (input === undefined || position === undefined || count === undefined || i + 3 + 2 * count > encoded.length) {
+      throw new NamingAdapterError('malformed', `Indexed history list ends inside the entry at ${i}`);
     }
-    entries.push([input, encoded.slice(i + 2, i + 2 + count)]);
-    i += 2 + count;
+    const images: [number, number][] = [];
+    for (let j = 0; j < count; j++) images.push([encoded[i + 3 + 2 * j] as number, encoded[i + 4 + 2 * j] as number]);
+    runs.push({ input, position, images });
+    i += 3 + 2 * count;
   }
-  return entries;
+  return runs;
 }
 
 type Kind = 'face' | 'edge';
 
-/** The key of a listed hash in the result, if it is a sub-shape of that kind. */
-function resultKey(hash: number, kind: Kind, result: ResultIndex): ShapeKey | undefined {
-  const faces = result.faces.get(hash) ?? [];
-  const edges = result.edges.get(hash) ?? [];
-  if (faces.length + edges.length + (result.others.has(hash) ? 1 : 0) > 1) {
-    throw new NamingAdapterError('collision', `Listed hash ${hash} stands for several sub-shapes of the result`);
-  }
-  return (kind === 'face' ? faces : edges)[0]?.key;
+/** The input sub-shape a run names. */
+function inputHeld(run: IndexedRun, kind: Kind, inputs: readonly InputSubShapes[]): HeldKey {
+  const held = inputs[run.input]?.[kind === 'face' ? 'faces' : 'edges'][run.position];
+  if (!held) throw new NamingAdapterError('malformed', `Input ${run.input} has no ${kind} at ${run.position}`);
+  return held;
 }
 
-/** The keys of the one input sub-shape a listed hash stands for, if any. */
-function inputKeys(hash: number, kind: Kind, inputs: ReadonlyMap<number, readonly HeldKey[]>): ShapeKey[] | undefined {
-  const held = inputs.get(hash);
-  if (!held) return undefined;
-  if (new Set(held.map((h) => h.same)).size > 1) {
-    throw new NamingAdapterError('collision', `Listed hash ${hash} stands for several input ${kind}s`);
-  }
-  return held.map((h) => h.key);
+/** The keys of a run's images of one kind. */
+function imageKeys(run: IndexedRun, kind: number, result: ResultSubShapes): ShapeKey[] {
+  return run.images.flatMap(([k, position]) => {
+    const held = result[k]?.[position];
+    if (!held) throw new NamingAdapterError('malformed', `The result has no ${KERNEL_KINDS[k] ?? k} at ${position}`);
+    return k === kind ? [held.key] : [];
+  });
 }
-
-const keysOf = (held: ReadonlyMap<number, readonly HeldKey[]>): ShapeKey[] =>
-  [...held.values()].flat().map((h) => h.key);
 
 function appendUnique(map: Map<ShapeKey, ShapeKey[]>, key: ShapeKey, values: readonly ShapeKey[]): void {
   const list = map.get(key) ?? [];
@@ -117,46 +119,44 @@ function appendUnique(map: Map<ShapeKey, ShapeKey[]>, key: ShapeKey, values: rea
   map.set(key, list);
 }
 
-/** What an input of one kind became, with images of its own kind only. */
+/** What the inputs of one kind became, with images of their own kind only. */
 function subShapeHistory(
-  inputs: ReadonlyMap<number, readonly HeldKey[]>,
-  results: ReadonlyMap<number, readonly HeldKey[]>,
+  inputs: readonly InputSubShapes[],
+  result: ResultSubShapes,
   modified: readonly number[],
   kind: Kind,
-  result: ResultIndex,
 ): { history: Omit<SubShapeHistory, 'added'>; images: Set<ShapeKey> } {
+  const kernelKind = kind === 'face' ? FACE : EDGE;
+  const held = inputs.flatMap((input) => (kind === 'face' ? input.faces : input.edges));
+  const results = result[kernelKind] ?? [];
+
   const images = new Map<ShapeKey, ShapeKey[]>();
-  for (const [hash, listed] of decodeRunLength(modified)) {
-    const keys = inputKeys(hash, kind, inputs);
-    if (!keys) continue;
-    const found = listed.flatMap((h) => resultKey(h, kind, result) ?? []);
-    for (const key of keys) appendUnique(images, key, found);
+  for (const run of decodeIndexed(modified)) {
+    appendUnique(images, inputHeld(run, kind, inputs).key, imageKeys(run, kernelKind, result));
   }
 
   // The same sub-shape held the other way round has its own key: it is that
   // input's image even though the kernel reports nothing for it.
-  for (const [hash, held] of inputs) {
-    for (const image of results.get(hash) ?? []) {
-      for (const { key, same } of held) {
-        if (same === image.same && key !== image.key) appendUnique(images, key, [image.key]);
-      }
+  const resultBySame = new Map<number, HeldKey[]>();
+  for (const r of results) resultBySame.set(r.same, [...(resultBySame.get(r.same) ?? []), r]);
+  for (const { key, same } of held) {
+    for (const image of resultBySame.get(same) ?? []) {
+      if (image.key !== key) appendUnique(images, key, [image.key]);
     }
   }
 
-  const inResult = new Set(keysOf(results));
+  const inResult = new Set(results.map((r) => r.key));
   const kept: ShapeKey[] = [];
   const became = new Map<ShapeKey, readonly ShapeKey[]>();
   const deleted: ShapeKey[] = [];
   const seen = new Set<ShapeKey>();
-  for (const held of inputs.values()) {
-    for (const { key } of held) {
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const others = (images.get(key) ?? []).filter((image) => image !== key);
-      if (others.length > 0) became.set(key, inResult.has(key) ? [key, ...others] : others);
-      else if (inResult.has(key)) kept.push(key);
-      else deleted.push(key);
-    }
+  for (const { key } of held) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const others = (images.get(key) ?? []).filter((image) => image !== key);
+    if (others.length > 0) became.set(key, inResult.has(key) ? [key, ...others] : others);
+    else if (inResult.has(key)) kept.push(key);
+    else deleted.push(key);
   }
   return {
     history: { kept, modified: became, deleted },
@@ -167,47 +167,46 @@ function subShapeHistory(
 /** Result faces generated from each input, leaving out what the input side kept. */
 function generatedFaces(
   encoded: readonly number[],
-  inputs: ReadonlyMap<number, readonly HeldKey[]>,
+  inputs: readonly InputSubShapes[],
   kind: Kind,
   kept: ReadonlySet<ShapeKey>,
-  result: ResultIndex,
+  result: ResultSubShapes,
 ): Map<ShapeKey, ShapeKey[]> {
   const generated = new Map<ShapeKey, ShapeKey[]>();
-  for (const [hash, listed] of decodeRunLength(encoded)) {
-    const keys = inputKeys(hash, kind, inputs);
-    if (!keys) continue;
-    const faces = listed.flatMap((h) => resultKey(h, 'face', result) ?? []).filter((face) => !kept.has(face));
-    if (faces.length === 0) continue;
-    for (const key of keys) appendUnique(generated, key, faces);
+  for (const run of decodeIndexed(encoded)) {
+    const source = inputHeld(run, kind, inputs).key;
+    const faces = imageKeys(run, FACE, result).filter((face) => !kept.has(face));
+    if (faces.length > 0) appendUnique(generated, source, faces);
   }
   return generated;
 }
 
-/** Result edges named in a `generated` list of a known input: they have history, just no slot. */
+/** Result edges named in a `generated` list: they have history, just no slot. */
 function generatedEdges(
   encoded: readonly number[],
-  inputs: ReadonlyMap<number, readonly HeldKey[]>,
+  inputs: readonly InputSubShapes[],
   kind: Kind,
-  result: ResultIndex,
+  result: ResultSubShapes,
 ): ShapeKey[] {
-  return decodeRunLength(encoded).flatMap(([hash, listed]) =>
-    inputKeys(hash, kind, inputs) ? listed.flatMap((h) => resultKey(h, 'edge', result) ?? []) : [],
-  );
+  return decodeIndexed(encoded).flatMap((run) => {
+    inputHeld(run, kind, inputs);
+    return imageKeys(run, EDGE, result);
+  });
 }
 
 /** One operation's history, in the keys of its inputs and result. */
 export function buildOperationHistory(
   lists: HistoryLists,
-  input: InputIndex,
-  result: ResultIndex,
+  inputs: readonly InputSubShapes[],
+  result: ResultSubShapes,
   head: { result: ShapeRef; inputs: OperationHistory['inputs'] },
 ): OperationHistory {
-  const faces = subShapeHistory(input.faces, result.faces, lists.modified, 'face', result);
-  const edges = subShapeHistory(input.edges, result.edges, lists.edgeModified, 'edge', result);
+  const faces = subShapeHistory(inputs, result, lists.modifiedIndexed, 'face');
+  const edges = subShapeHistory(inputs, result, lists.edgeModifiedIndexed, 'edge');
 
   const keptFaces = new Set(faces.history.kept);
-  const facesFromFace = generatedFaces(lists.generated, input.faces, 'face', keptFaces, result);
-  const facesFromEdge = generatedFaces(lists.edgeGenerated, input.edges, 'edge', keptFaces, result);
+  const facesFromFace = generatedFaces(lists.generatedIndexed, inputs, 'face', keptFaces, result);
+  const facesFromEdge = generatedFaces(lists.edgeGeneratedIndexed, inputs, 'edge', keptFaces, result);
 
   const facesWithHistory = new Set([
     ...keptFaces,
@@ -218,15 +217,16 @@ export function buildOperationHistory(
   const edgesWithHistory = new Set([
     ...edges.history.kept,
     ...edges.images,
-    ...generatedEdges(lists.generated, input.faces, 'face', result),
-    ...generatedEdges(lists.edgeGenerated, input.edges, 'edge', result),
+    ...generatedEdges(lists.generatedIndexed, inputs, 'face', result),
+    ...generatedEdges(lists.edgeGeneratedIndexed, inputs, 'edge', result),
   ]);
 
+  const keysOf = (kind: number) => (result[kind] ?? []).map((r) => r.key);
   return {
     result: head.result,
     inputs: head.inputs,
-    faces: { ...faces.history, added: keysOf(result.faces).filter((k) => !facesWithHistory.has(k)) },
-    edges: { ...edges.history, added: keysOf(result.edges).filter((k) => !edgesWithHistory.has(k)) },
+    faces: { ...faces.history, added: keysOf(FACE).filter((k) => !facesWithHistory.has(k)) },
+    edges: { ...edges.history, added: keysOf(EDGE).filter((k) => !edgesWithHistory.has(k)) },
     facesFromFace,
     facesFromEdge,
   };

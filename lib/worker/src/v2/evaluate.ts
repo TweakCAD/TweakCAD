@@ -15,7 +15,7 @@ import {
   type Diagnostic,
   type JsonValue,
 } from '@tweakcad/format';
-import { NamingAdapter, NamingAdapterError } from '@tweakcad/kernel/src/namingAdapter.ts';
+import { NamingAdapter } from '@tweakcad/kernel/src/namingAdapter.ts';
 import {
   FLAG,
   FeaturePause,
@@ -339,11 +339,9 @@ function buildFeature(
     const message =
       e instanceof FeaturePause || e instanceof ValuePause || e instanceof SketchSolvePause || e instanceof NamingPause
         ? e.message
-        : e instanceof NamingAdapterError && e.code === 'collision'
-          ? `two sub-shapes share a hash: ${e.message}`
-          : e instanceof OcctError
-            ? `the kernel could not build the feature: ${e.message}`
-            : undefined;
+        : e instanceof OcctError
+          ? `the kernel could not build the feature: ${e.message}`
+          : undefined;
     if (message === undefined) throw e;
     ev.pauses.push({ feature: id, message });
     Object.assign(part, saved);
