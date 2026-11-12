@@ -43,7 +43,7 @@ const TOOLS: RibbonToolGroup[] = [
 
 async function cloudApp(): Promise<{ services: AppServices; revision: string }> {
   const site = new FakeSite();
-  const cloud = new CloudProjects(site, site);
+  const cloud = new CloudProjects(site);
   const { id } = await cloud.create('Plate');
   const workingCopy = new MemoryWorkingCopy();
   const ids = seededIds(13);

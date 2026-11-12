@@ -34,7 +34,7 @@ const nameIn = (text: string | null | undefined) => {
 async function project() {
   const api = new FakeSite();
   const thumbnail = new Blob(['png']);
-  const cloud = new CloudProjects(api, api, () => Promise.resolve(thumbnail));
+  const cloud = new CloudProjects(api, () => Promise.resolve(thumbnail));
   const workingCopy = new MemoryWorkingCopy();
   const ids = seededIds(41);
   const editor = new Editor(newDocument({ ids, name: 'First' }), { ids });

@@ -2,7 +2,7 @@
  * The site's project API over memory, for tests: etags, stored files and
  * revisions behave as the site's do, and it reads its own signed URLs.
  */
-import { CloudConflictError, type CloudApi, type CloudRevision, type UrlReader } from './cloud';
+import { CloudConflictError, type CloudApi, type CloudRevision } from './cloud';
 
 interface FakeProject {
   name: string;
@@ -11,7 +11,7 @@ interface FakeProject {
   revisions: (CloudRevision & { text: string })[];
 }
 
-export class FakeSite implements CloudApi, UrlReader {
+export class FakeSite implements CloudApi {
   readonly projects = new Map<string, FakeProject>();
   readonly files = new Map<string, Uint8Array>();
   readonly uploads: string[] = [];
@@ -47,7 +47,7 @@ export class FakeSite implements CloudApi, UrlReader {
     const p = this.project(id);
     return Promise.resolve({
       project: { name: p.name },
-      downloadUrl: p.text === null ? null : `doc:${id}`,
+      hasDocument: p.text !== null,
       etag: p.text === null ? null : `e${p.etag}`,
     });
   }
@@ -91,8 +91,9 @@ export class FakeSite implements CloudApi, UrlReader {
   listRevisions(id: string) {
     return Promise.resolve({ items: this.project(id).revisions.map(({ text: _text, ...r }) => r), nextCursor: null });
   }
-  revisionUrl(id: string, revisionId: string) {
-    return Promise.resolve(`rev:${id}:${revisionId}`);
+  loadRevision(id: string, revisionId: string) {
+    const r = this.projects.get(id)?.revisions.find((x) => x.versionId === revisionId);
+    return r ? Promise.resolve(r.text) : Promise.reject(new Error('not_found: Revision not found.'));
   }
   async restoreRevision(id: string, revisionId: string, opts: { ifMatch?: string | null }) {
     const p = this.project(id);
@@ -110,17 +111,8 @@ export class FakeSite implements CloudApi, UrlReader {
     this.uploads.push(hash);
     return Promise.resolve();
   }
-  referenceUrl(id: string, hash: string) {
-    if (!this.files.has(`${id}/${hash}`)) return Promise.reject(new Error('not_found: Reference not found.'));
-    return Promise.resolve(`ref:${id}/${hash}`);
-  }
-  bytes(url: string) {
-    const b = this.files.get(url.slice('ref:'.length));
-    return b ? Promise.resolve(b) : Promise.reject(new Error('404'));
-  }
-  text(url: string) {
-    const [, id, rev] = url.split(':');
-    const r = this.projects.get(id ?? '')?.revisions.find((x) => x.versionId === rev);
-    return r ? Promise.resolve(r.text) : Promise.reject(new Error('404'));
+  loadReference(id: string, hash: string) {
+    const b = this.files.get(`${id}/${hash}`);
+    return b ? Promise.resolve(b) : Promise.reject(new Error('not_found: Reference not found.'));
   }
 }

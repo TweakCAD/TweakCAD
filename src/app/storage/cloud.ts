@@ -46,7 +46,7 @@ export interface CloudApi {
   list?(): Promise<{ items: { name: string }[] }>;
   create(input: { name: string; tags: string[] }): Promise<{ id: string; slug: string; name: string }>;
   rename(projectId: string, name: string): Promise<unknown>;
-  load(projectId: string): Promise<{ project: { name: string }; downloadUrl: string | null; etag: string | null }>;
+  load(projectId: string): Promise<{ project: { name: string }; hasDocument: boolean; etag: string | null }>;
   loadDocument(projectId: string): Promise<{ text: string; etag: string | null }>;
   save(projectId: string, cadjson: Blob, meta: { ifMatch?: string | null }): Promise<{ etag: string; savedAt: string }>;
   createVersion(
@@ -57,14 +57,16 @@ export interface CloudApi {
     projectId: string,
     opts: { cursor?: string | undefined; limit?: number | undefined },
   ): Promise<{ items: CloudRevision[]; nextCursor: string | null }>;
-  revisionUrl(projectId: string, revisionId: string): Promise<string>;
+  /** One revision's document text. */
+  loadRevision(projectId: string, revisionId: string): Promise<string>;
   restoreRevision(
     projectId: string,
     revisionId: string,
     opts: { ifMatch?: string | null },
   ): Promise<{ etag: string; snapshotVersionId: string }>;
   putReference(projectId: string, hash: string, body: Uint8Array): Promise<void>;
-  referenceUrl(projectId: string, hash: string): Promise<string>;
+  /** One stored file's bytes. */
+  loadReference(projectId: string, hash: string): Promise<Uint8Array>;
 }
 
 export interface CloudRevision {
@@ -74,25 +76,6 @@ export interface CloudRevision {
   sizeBytes: number;
   authorId: string | null;
 }
-
-/** A signed bucket URL's body. The bucket is another origin: no cookies go with it. */
-export interface UrlReader {
-  bytes(url: string): Promise<Uint8Array>;
-  text(url: string): Promise<string>;
-}
-
-export const fetchUrls: UrlReader = {
-  async bytes(url) {
-    const res = await fetch(url, { credentials: 'omit' });
-    if (!res.ok) throw new Error(`The file could not be read (${res.status}).`);
-    return new Uint8Array(await res.arrayBuffer());
-  },
-  async text(url) {
-    const res = await fetch(url, { credentials: 'omit' });
-    if (!res.ok) throw new Error(`The revision could not be read (${res.status}).`);
-    return res.text();
-  },
-};
 
 /** An opened cloud project. `doc` is null when the project has no document yet. */
 export interface CloudOpened {
@@ -118,7 +101,6 @@ export class CloudProjects {
 
   constructor(
     private readonly api: CloudApi,
-    private readonly urls: UrlReader = fetchUrls,
     /** A thumbnail of the view for a new revision, or null without one. */
     private readonly thumbnail: () => Promise<Blob | null> = () => Promise.resolve(null),
   ) {}
@@ -160,9 +142,7 @@ export class CloudProjects {
     const loaded = loadDocument(text);
     if (!loaded.ok) throw new CloudDocumentError(loaded.message);
     const known = this.storedAssets(projectId);
-    const result = await internalizeAssets(loaded.document, async (hash) =>
-      this.urls.bytes(await this.api.referenceUrl(projectId, hash)),
-    );
+    const result = await internalizeAssets(loaded.document, (hash) => this.api.loadReference(projectId, hash));
     // Fetching a file proves the server holds it, so the next save skips it.
     for (const hash of result.fetched) known.add(hash);
     return { doc: result.doc, missing: result.missing };
@@ -177,7 +157,7 @@ export class CloudProjects {
     const project = await this.api.load(projectId);
     const name = project.project.name;
     this.names.set(projectId, name);
-    if (!project.downloadUrl) {
+    if (!project.hasDocument) {
       if (project.etag) this.etags.set(projectId, project.etag);
       return { name, doc: null, missing: [] };
     }
@@ -255,7 +235,7 @@ export class CloudProjects {
 
   /** One revision's document, read like any document the app opens. */
   async openRevision(projectId: string, revisionId: string): Promise<{ doc: Doc; missing: string[] }> {
-    const text = await this.urls.text(await this.api.revisionUrl(projectId, revisionId));
+    const text = await this.api.loadRevision(projectId, revisionId);
     return this.read(projectId, text);
   }
 
