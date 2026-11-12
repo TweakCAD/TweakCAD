@@ -127,6 +127,19 @@ import type {
 
 /** The display deflection, as fine as the app has always shown. */
 const DISPLAY = { linearDeflection: 0.05, angularDeflection: 0.1 };
+
+/**
+ * Two planar faces an import made that meet within this angle are facets of
+ * one curved surface of a mesh (a hole, a round), and the edge between them is
+ * not drawn. A sharper edge of a mesh part (a chamfer, a corner) still is.
+ */
+const FACET_SEAM_COS = Math.cos((30 * Math.PI) / 180);
+
+/** The ids of a part row's `core.import` features. */
+function importFeatures(row: Json): Set<string> {
+  const timeline = Array.isArray(row.timeline) ? (row.timeline as Json[]) : [];
+  return new Set(timeline.filter((f) => f.type === 'core.import').map((f) => String(f.id)));
+}
 type Deflection = typeof DISPLAY;
 
 /** The mesh of a body the display does not send: one the client holds, or a hidden body's. */
@@ -1227,7 +1240,18 @@ export class EvaluationService {
     }
     sortRanges(faces);
 
-    const drawn = new Map(adapter.topology(ref).edges.map((e) => [e.edge, e.form === 'normal']));
+    const imports = importFeatures(def.row);
+    /** An edge an import made between two of its planar faces that meet smoothly: a facet seam of a mesh. */
+    const facetSeam = (edge: ShapeKey, faces: readonly { face: ShapeKey }[]) => {
+      const by = state.get(edge)?.createdBy;
+      if (by === undefined || !imports.has(by) || faces.length !== 2) return false;
+      const [a, b] = faces.map((f) => adapter.planeNormal(f.face));
+      if (!a || !b) return false;
+      return Math.abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) >= FACET_SEAM_COS;
+    };
+    const drawn = new Map(
+      adapter.topology(ref).edges.map((e) => [e.edge, e.form === 'normal' && !facetSeam(e.edge, e.faces)]),
+    );
     const wire = k.wireframe(handle, { deflection: options.linearDeflection, source: 'triangulation' });
     const segments: number[] = [];
     const edges: number[] = [];

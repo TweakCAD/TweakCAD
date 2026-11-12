@@ -556,6 +556,22 @@ describe('a box', () => {
   });
 });
 
+describe('plane normals', () => {
+  it('reads the plane of a planar face, as its measures do, and none for a curved one', () => {
+    start();
+    const ref = adapter.addShape(k.makeCylinder(3, 20));
+    for (const face of adapter.topology(ref).faces) {
+      const m = adapter.measures(face);
+      const normal = adapter.planeNormal(face);
+      if (m.surface === 'plane') {
+        expect(normal).not.toBeNull();
+        close(normal as Vec3, m.normal as Vec3);
+      } else expect(normal).toBeNull();
+    }
+    expect(adapter.topology(ref).faces.filter((f) => adapter.planeNormal(f) !== null)).toHaveLength(2);
+  });
+});
+
 describe('seams and degenerate edges', () => {
   it('reports a cylinder: one seam, counted twice on the wall', () => {
     start();
