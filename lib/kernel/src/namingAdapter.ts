@@ -13,9 +13,11 @@
  * shape that holds that sub-shape. Kernel hashes are remainders below 2³¹ and
  * can collide, also within one shape, so a hash only finds a bucket of
  * candidates: `isSame` picks the one that is the same sub-shape, and two
- * different sub-shapes are never merged. The kernel reports history by hash
- * alone, so a hash its history lists that stands for several sub-shapes is an
- * error; a shared hash nothing lists is not.
+ * different sub-shapes are never merged. History never goes by hash: the
+ * kernel names a sub-shape by its position among that kind of sub-shape of
+ * its shape, the order the walk enters them in, which is the order of the
+ * kernel's own `TopExp::MapShapes`. The kernel's counts are checked against
+ * the walk's before a history is read.
  *
  * Orientation. A hash ignores orientation, but a kept face can turn over: a
  * cutter's floor left in a pocket, a profile that became an extrusion's start
@@ -59,9 +61,8 @@ import {
   NamingAdapterError,
   buildOperationHistory,
   type HeldKey,
-  type HistoryLists,
-  type InputIndex,
-  type ResultIndex,
+  type InputSubShapes,
+  type ResultSubShapes,
 } from './namingAdapterHistory.ts';
 
 export { NamingAdapterError, type NamingAdapterErrorCode } from './namingAdapterHistory.ts';
@@ -69,7 +70,7 @@ export { NamingAdapterError, type NamingAdapterErrorCode } from './namingAdapter
 /** The largest upper bound the kernel's hash takes. */
 export const HASH_BOUND = 2147483647;
 
-/** The 13.2 index order. */
+/** The 13.2 index order, which is also the kernel's kind numbering. */
 const KINDS = ['compound', 'compsolid', 'solid', 'shell', 'face', 'wire', 'edge', 'vertex'] as const;
 type Kind = (typeof KINDS)[number];
 
@@ -111,7 +112,7 @@ interface Entry {
 
 interface ShapeRecord {
   root: Entry;
-  /** Sub-shapes of each kind in first-visit order, one per (shape, location). */
+  /** Sub-shapes of each kind in first-visit order, one per (shape, location): the kernel's `getSubShapes` order. */
   entries: Record<Kind, Entry[]>;
   /** The same entries by hash; a bucket holds more than one only when different sub-shapes share a hash. */
   byHash: Record<Kind, Map<number, Entry[]>>;
@@ -132,22 +133,13 @@ function emptyRecord(): WalkRecord {
 
 const unique = <T>(values: readonly T[]): T[] => [...new Set(values)];
 
-/** Entries by hash, as `HeldKey`s, one per key. */
-function heldByHash(entries: Iterable<Entry>): Map<number, HeldKey[]> {
-  const byHash = new Map<number, HeldKey[]>();
-  for (const { hash, key, same } of entries) {
-    const held = byHash.get(hash) ?? [];
-    if (!held.some((h) => h.key === key)) held.push({ key, same });
-    byHash.set(hash, held);
-  }
-  return byHash;
-}
+const heldKey = ({ key, same }: Entry): HeldKey => ({ key, same });
 
-/** The one entry a listed hash stands for in `bucket`; several are an error, as the kernel named only the hash. */
-function onlyListed(bucket: readonly Entry[] | undefined, hash: number, what: string): Entry | undefined {
-  const distinct = unique((bucket ?? []).map((entry) => entry.same));
-  if (distinct.length > 1) throw new NamingAdapterError('collision', `Listed hash ${hash} stands for several ${what}`);
-  return bucket?.[0];
+/** The entry at a kernel position, or a `malformed` error naming what the list said. */
+function at(entries: readonly Entry[], position: number | undefined, what: string): Entry {
+  const entry = position === undefined ? undefined : entries[position];
+  if (!entry) throw new NamingAdapterError('malformed', `There is no ${what} at ${position}`);
+  return entry;
 }
 
 const point3 = (p: Vec3): { x: number; y: number; z: number } => ({ x: p[0], y: p[1], z: p[2] });
@@ -235,15 +227,11 @@ export class NamingAdapter implements KernelFacts {
       inputs.map((shape) => ({ shape, use: 'target' as const })),
       ref,
     );
-    const { byHash } = this.record(history.result);
-    const capFaces = (hashes: readonly number[]) =>
-      hashes.map((hash) => {
-        const face = onlyListed(byHash.face.get(hash), hash, 'faces of the result');
-        if (!face) throw new NamingAdapterError('malformed', `Cap hash ${hash} is no face of the result`);
-        return face.key;
-      });
-    const first = capFaces(evolution.firstShape);
-    const last = capFaces(evolution.lastShape);
+    const faces = this.record(history.result).entries.face;
+    const capFaces = (positions: readonly number[]) =>
+      positions.map((position) => at(faces, position, 'cap face in the result').key);
+    const first = capFaces(evolution.firstShapeIndexed);
+    const last = capFaces(evolution.lastShapeIndexed);
     const caps = new Set([...first, ...last]);
     return {
       ...history,
@@ -253,33 +241,29 @@ export class NamingAdapter implements KernelFacts {
     };
   }
 
-  /** `spineGenerated`, runs of `[spine edge, profile edge, count, face...]`, as keys. */
+  /** `spineGeneratedIndexed`, runs of `[spine edge, profile edge, count, face...]`, as keys. The profile is the first. */
   private spinePairs(
     evolution: EvolutionData,
     profiles: readonly ShapeRef[],
     spine: ShapeRef,
     result: ShapeRef,
   ): NonNullable<OperationHistory['spine']> {
-    const list = evolution.spineGenerated;
-    const { byHash } = this.record(result);
-    const spineEdges = this.record(spine).byHash.edge;
-    const profileEdge = (hash: number) =>
-      onlyListed(
-        profiles.flatMap((p) => this.record(p).byHash.edge.get(hash) ?? []),
-        hash,
-        'edges of the profiles',
-      );
+    const list = evolution.spineGeneratedIndexed;
+    const faces = this.record(result).entries.face;
+    const spineEdges = this.record(spine).entries.edge;
+    const [profile] = profiles;
+    const profileEdges = profile === undefined ? [] : this.record(profile).entries.edge;
     const pairs: { path: ShapeKey; profile: ShapeKey; faces: ShapeKey[] }[] = [];
     for (let i = 0; i < list.length;) {
-      const path = onlyListed(spineEdges.get(list[i] as number), list[i] as number, 'edges of the spine');
-      const profile = profileEdge(list[i + 1] as number);
-      const count = list[i + 2] as number;
-      const faces = list
-        .slice(i + 3, i + 3 + count)
-        .map((hash) => onlyListed(byHash.face.get(hash), hash, 'faces of the sweep'));
-      if (!path || !profile || faces.some((f) => !f))
-        throw new NamingAdapterError('malformed', 'A spine pair is no edge pair and faces of the sweep');
-      pairs.push({ path: path.key, profile: profile.key, faces: faces.map((f) => (f as Entry).key) });
+      const count = list[i + 2];
+      if (count === undefined || i + 3 + count > list.length) {
+        throw new NamingAdapterError('malformed', `The spine list ends inside the entry at ${i}`);
+      }
+      pairs.push({
+        path: at(spineEdges, list[i], 'edge of the spine').key,
+        profile: at(profileEdges, list[i + 1], 'edge of the profile').key,
+        faces: list.slice(i + 3, i + 3 + count).map((f) => at(faces, f, 'face of the sweep').key),
+      });
       i += 3 + count;
     }
     return pairs;
@@ -428,22 +412,49 @@ export class NamingAdapter implements KernelFacts {
     this.solidOfFace.clear();
   }
 
-  private buildHistory(lists: HistoryLists, inputs: OperationHistory['inputs'], result: ShapeRef): OperationHistory {
-    const records = inputs.map(({ shape }) => this.record(shape));
-    const input: InputIndex = {
-      faces: heldByHash(records.flatMap((record) => record.entries.face)),
-      edges: heldByHash(records.flatMap((record) => record.entries.edge)),
-    };
-    return buildOperationHistory(lists, input, this.resultIndex(this.record(result)), { result, inputs });
-  }
-
-  private resultIndex(record: ShapeRecord): ResultIndex {
-    const others = KINDS.filter((kind) => kind !== 'face' && kind !== 'edge').flatMap((kind) => record.entries[kind]);
-    return {
-      faces: heldByHash(record.entries.face),
-      edges: heldByHash(record.entries.edge),
-      others: new Set(others.map((entry) => entry.hash)),
-    };
+  /**
+   * The kernel numbers its inputs in the order it read them, and `inputs` may
+   * list them in another (by role): each kernel input is matched to the given
+   * one with its root hash and face and edge counts, two that match alike in
+   * the order given. An input the kernel read that is not given, or a given one
+   * it did not read, or other result counts, mean the history was read against
+   * the wrong shapes: an error, not a history that names the wrong sub-shapes.
+   */
+  private buildHistory(
+    evolution: EvolutionData,
+    inputs: OperationHistory['inputs'],
+    result: ShapeRef,
+  ): OperationHistory {
+    const given = inputs.map(({ shape }) => this.record(shape));
+    const resultRecord = this.record(result);
+    const mismatch = () =>
+      new NamingAdapterError(
+        'malformed',
+        `The kernel's history reads other shapes than ${inputs.map((i) => i.shape).join(', ')} into ${result}`,
+      );
+    let records = given;
+    const reported = evolution.inputShapes;
+    if (reported.length > 0) {
+      const signature = (r: ShapeRecord) => [r.root.hash, r.entries.face.length, r.entries.edge.length].join();
+      const unused = given.map((_, i) => i);
+      records = [];
+      for (let i = 0; i * 3 < reported.length; i++) {
+        const want = reported.slice(3 * i, 3 * i + 3).join();
+        const alike = unused.filter((j) => signature(given[j] as ShapeRecord) === want);
+        const pick = alike.includes(i) ? i : alike[0];
+        if (pick === undefined) throw mismatch();
+        unused.splice(unused.indexOf(pick), 1);
+        records.push(given[pick] as ShapeRecord);
+      }
+      const counts = [resultRecord.entries.face.length, resultRecord.entries.edge.length];
+      if (unused.length > 0 || evolution.resultCounts.join() !== counts.join()) throw mismatch();
+    }
+    const inputSubShapes: InputSubShapes[] = records.map((r) => ({
+      faces: r.entries.face.map(heldKey),
+      edges: r.entries.edge.map(heldKey),
+    }));
+    const resultSubShapes: ResultSubShapes = KINDS.map((kind) => resultRecord.entries[kind].map(heldKey));
+    return buildOperationHistory(evolution, inputSubShapes, resultSubShapes, { result, inputs });
   }
 
   /** A handle to the same shape that does not depend on the caller's. */

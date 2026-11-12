@@ -7,7 +7,6 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { BooleanOp, OcctKernel, type EvolutionData, type ShapeHandle } from 'occt-wasm';
 import type { OperationHistory, ShapeKey, ShapeRef, Vec3 } from '@tweakcad/format';
 import { HASH_BOUND, NamingAdapter, NamingAdapterError } from './namingAdapter.ts';
-import { decodeRunLength } from './namingAdapterHistory.ts';
 import { cross, dot, sub } from './namingAdapterGeometry.ts';
 
 let k: OcctKernel;
@@ -157,16 +156,28 @@ describe('kernel behaviour the adapter relies on', () => {
     expect(history.edges.deleted).toEqual([edge?.edge]);
   });
 
-  it('lists generated hashes outside the result in a boolean, which the adapter drops', () => {
+  it('lists generated sub-shapes outside the result in a boolean, which the indexed lists leave out', () => {
     start();
     const a = box(0, 0, 0, 30, 10, 10);
     const b = box(10, -1, 5, 5, 12, 6);
     const refs = [adapter.addShape(a), adapter.addShape(b)];
     const evolution = k.cutWithHistory(a, b, adapter.faceHashes(refs), HASH_BOUND);
     const faces = new Set(k.subShapeHashes(evolution.result, 'face', HASH_BOUND));
-    const listed = decodeRunLength(evolution.generated).flatMap(([, list]) => list);
+    const listed: number[] = [];
+    for (let i = 0; i < evolution.generated.length; i += 2 + (evolution.generated[i + 1] as number)) {
+      listed.push(...evolution.generated.slice(i + 2, i + 2 + (evolution.generated[i + 1] as number)));
+    }
     expect(listed.length).toBeGreaterThan(0);
     expect(listed.filter((h) => !faces.has(h)).length).toBeGreaterThan(0);
+    // The indexed list names the same sub-shapes, less those the result does not hold.
+    const held = new Set(
+      (['face', 'edge', 'vertex'] as const).flatMap((kind) => k.subShapeHashes(evolution.result, kind, HASH_BOUND)),
+    );
+    let indexed = 0;
+    for (let i = 0; i < evolution.generatedIndexed.length; i += 3 + 2 * (evolution.generatedIndexed[i + 2] as number)) {
+      indexed += evolution.generatedIndexed[i + 2] as number;
+    }
+    expect(indexed).toBe(listed.filter((h) => held.has(h)).length);
 
     const history = adapter.history(evolution, [
       { shape: refs[0] as ShapeRef, use: 'target' },
@@ -295,25 +306,89 @@ describe('keys', () => {
     expect(k.shapeCount).toBe(held);
   });
 
-  /** A box with a slot cut across it, its history read by an adapter with `bound`. */
-  function slotCut(bound: number): { history: OperationHistory; collided: boolean } {
+  it('enters each kind of sub-shape in the order the kernel lists them', () => {
+    start();
+    const plate = box(0, 0, 0, 30, 20, 5);
+    const hole = k.located(k.makeCylinder(3, 20), [1, 0, 0, 10, 0, 1, 0, 10, 0, 0, 1, -5]);
+    const cut = k.cutWithHistory(plate, hole, [], HASH_BOUND).result;
+    const face = k.getSubShapes(cut, 'face')[2] as ShapeHandle;
+    // Shared, moved and turned-over sub-shapes, and a cut solid the adapter has seen before.
+    const shape = k.makeCompound([
+      cut,
+      k.located(cut, [1, 0, 0, 50, 0, 1, 0, 0, 0, 0, 1, 0]),
+      cut,
+      k.reverseShape(face),
+      box(5, 5, 5, 1, 1, 1),
+    ]);
+    adapter.addShape(cut);
+    const ref = adapter.addShape(shape);
+    for (const kind of ['solid', 'shell', 'face', 'wire', 'edge', 'vertex'] as const) {
+      const walked = adapter.subShapes(ref).filter((s) => s.kind === kind);
+      const listed = k.getSubShapes(shape, kind);
+      expect(walked.length).toBe(listed.length);
+      walked.forEach((s, i) => expect(k.isSame(adapter.handleOf(s.key), listed[i] as ShapeHandle)).toBe(true));
+    }
+  });
+
+  /** Two boxes, one cut across the other: a boolean of two inputs. */
+  function slotCut(bound: number): OperationHistory {
     const a = box(0, 0, 0, 30, 10, 10);
     const b = box(10, -1, 5, 5, 12, 6);
-    start(bound);
     const refs = [adapter.addShape(a), adapter.addShape(b)];
     const evolution = k.cutWithHistory(a, b, adapter.faceHashes(refs), bound);
-    // Faces or edges of one kind that share a hash, across the inputs or within the result.
-    const repeats = (hashes: number[]) => new Set(hashes).size < hashes.length;
-    const collided = (['face', 'edge'] as const).some(
-      (kind) =>
-        repeats([...k.subShapeHashes(a, kind, bound), ...k.subShapeHashes(b, kind, bound)]) ||
-        repeats(k.subShapeHashes(evolution.result, kind, bound)),
-    );
-    const history = adapter.history(evolution, [
+    return adapter.history(evolution, [
       { shape: refs[0] as ShapeRef, use: 'target' },
       { shape: refs[1] as ShapeRef, use: 'tool' },
     ]);
-    return { history, collided };
+  }
+
+  /** A box with its top front edge rounded. */
+  function roundedEdge(bound: number): OperationHistory {
+    const shape = box(0, 0, 0, 10, 10, 10);
+    const ref = adapter.addShape(shape);
+    const edge = adapter.topology(ref).edges.find((e) => {
+      const m = adapter.measures(e.edge).midpoint as Vec3;
+      return m[2] === 10 && m[1] === 0;
+    })?.edge as ShapeKey;
+    const evolution = k.filletWithHistory(shape, [adapter.handleOf(edge)], 1, adapter.faceHashes([ref]), bound);
+    const history = adapter.history(evolution, [{ shape: ref, use: 'target' }]);
+    expect(history.facesFromEdge.get(edge)).toHaveLength(1);
+    return history;
+  }
+
+  /** A square swept along a path with a corner. */
+  function sweptSquare(bound: number): OperationHistory {
+    const wire = (points: [number, number, number][], closed: boolean): ShapeHandle => {
+      const ends = closed ? [...points, points[0] as [number, number, number]] : points;
+      return k.makeWire(
+        ends.slice(1).map((b, i) => {
+          const a = ends[i] as [number, number, number];
+          return k.makeLineEdge({ x: a[0], y: a[1], z: a[2] }, { x: b[0], y: b[1], z: b[2] });
+        }),
+      );
+    };
+    const section = wire(
+      [
+        [-1, -1, 0],
+        [1, -1, 0],
+        [1, 1, 0],
+        [-1, 1, 0],
+      ],
+      true,
+    );
+    const path = wire(
+      [
+        [0, 0, 0],
+        [0, 0, 10],
+        [0, 10, 10],
+      ],
+      false,
+    );
+    const [sectionRef, pathRef] = [adapter.addShape(section), adapter.addShape(path)];
+    const history = adapter.sweepHistory(k.sweepWithHistory(section, path, [], bound), sectionRef, undefined, pathRef);
+    expect(history.spine).toHaveLength(8);
+    expect(history.caps?.first).toHaveLength(1);
+    return history;
   }
 
   /** A history with each key replaced by where its face or edge is, so two adapters' histories compare. */
@@ -337,35 +412,55 @@ describe('keys', () => {
       edges: side(history.edges),
       facesFromFace: map(history.facesFromFace),
       facesFromEdge: map(history.facesFromEdge),
+      caps: history.caps && { first: list(history.caps.first), last: list(history.caps.last) },
+      spine: history.spine?.map((pair) => [at(pair.path), at(pair.profile), list(pair.faces)]).sort(),
     };
   }
 
-  it('reads a history as with every hash apart when its listed hashes stand for one sub-shape each', () => {
-    const want = located(slotCut(HASH_BOUND).history);
+  it.each([
+    ['a boolean', slotCut],
+    ['a fillet', roundedEdge],
+    ['a sweep', sweptSquare],
+  ])('reads the history of %s with every hash shared as with every hash apart', (_, operation) => {
+    start();
+    const want = located(operation(HASH_BOUND));
     adapter.dispose();
     k.releaseAll();
-    // A bound under which faces or edges share hashes but no hash the history lists is shared.
-    let found = false;
-    for (let bound = 1000; bound < 20000 && !found; bound++) {
-      try {
-        const read = slotCut(bound);
-        if (!read.collided) continue;
-        found = true;
-        expectKeysExist(read.history);
-        expectInputsPartitioned(read.history);
-        expect(located(read.history)).toEqual(want);
-      } catch (e) {
-        if (!(e instanceof NamingAdapterError && e.code === 'collision')) throw e;
-      } finally {
-        adapter.dispose();
-        k.releaseAll();
-      }
-    }
-    expect(found).toBe(true);
+    start(1);
+    const history = operation(1);
+    expectKeysExist(history);
+    expectInputsPartitioned(history);
+    expect(located(history)).toEqual(want);
   });
 
-  it('refuses a history whose listed hash stands for several sub-shapes', () => {
-    expect(() => slotCut(1)).toThrow(expect.objectContaining({ code: 'collision' }));
+  it('matches inputs listed by role to the order the kernel read them in', () => {
+    start();
+    const a = box(0, 0, 0, 30, 10, 10);
+    const b = box(10, -1, 5, 5, 12, 6);
+    const refs = [adapter.addShape(a), adapter.addShape(b)] as [ShapeRef, ShapeRef];
+    const read = (order: ShapeRef[]) =>
+      adapter.history(
+        k.cutWithHistory(a, b, adapter.faceHashes(refs), HASH_BOUND),
+        order.map((shape) => ({ shape, use: 'target' as const })),
+      );
+    const want = located(read(refs));
+    expect(located(read([refs[1], refs[0]]))).toEqual(want);
+  });
+
+  it('refuses a history read against other shapes than the kernel read', () => {
+    start();
+    const a = box(0, 0, 0, 30, 10, 10);
+    const b = box(10, -1, 5, 5, 12, 6);
+    const refs = [adapter.addShape(a), adapter.addShape(b), adapter.addShape(box(10, -1, 5, 5, 12, 6))];
+    const evolution = k.cutWithHistory(a, b, adapter.faceHashes(refs), HASH_BOUND);
+    const read = (inputs: (ShapeRef | undefined)[]) => () =>
+      adapter.history(
+        evolution,
+        inputs.map((shape) => ({ shape: shape as ShapeRef, use: 'target' as const })),
+      );
+    expect(read([refs[0], refs[2]])).toThrow(expect.objectContaining({ code: 'malformed' }));
+    expect(read([refs[0]])).toThrow(expect.objectContaining({ code: 'malformed' }));
+    expect(read([refs[0], refs[1], refs[2]])).toThrow(expect.objectContaining({ code: 'malformed' }));
   });
 
   it('keeps one key for a sub-shape across shapes', () => {
@@ -739,8 +834,9 @@ describe('exact geometry', () => {
 
   it('reads a mirrored cylinder, whose frame is left-handed', () => {
     start();
-    const { history } = step([k.makeCylinder(3, 10)], (hashes, bound) =>
-      k.mirrorWithHistory(k.makeCylinder(3, 10), { x: 15, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }, hashes, bound),
+    const cylinder = k.makeCylinder(3, 10);
+    const { history } = step([cylinder], (hashes, bound) =>
+      k.mirrorWithHistory(cylinder, { x: 15, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }, hashes, bound),
     );
     const wall = facesWhere(history.result, (c) => c[2] === 5)[0] as ShapeKey;
     const surface = adapter.faceGeometry(wall).surface;
