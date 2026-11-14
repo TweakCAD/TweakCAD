@@ -364,8 +364,12 @@ export class Viewport {
     this.requestRender();
   }
 
-  /** The canvas as a JPEG data URL. */
+  /** The canvas as a JPEG data URL, with a camera move that is under way finished first. */
   screenshot(quality = 0.8): string {
+    if (this.animating) {
+      this.animStartTime = performance.now() - this.animDuration;
+      this.updateAnimation();
+    }
     this.renderer.render(this.scene, this.camera);
     return this.renderer.domElement.toDataURL('image/jpeg', quality);
   }
