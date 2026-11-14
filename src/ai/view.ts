@@ -52,14 +52,32 @@ export function viewZoom(ctx: AiContext, args: Args): Json {
   return { ok: true };
 }
 
+/** How long a screenshot waits for an animation frame, in milliseconds. */
+export const FRAME_WAIT_MS = 100;
+
+/**
+ * Resolves at the next animation frame, or after `FRAME_WAIT_MS` when none
+ * comes: a hidden tab gets no frames, and `screenshot` draws the scene itself.
+ */
+function nextFrame(): Promise<void> {
+  if (typeof requestAnimationFrame !== 'function') return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(() => {
+      cancelAnimationFrame(frame);
+      resolve();
+    }, FRAME_WAIT_MS);
+    const frame = requestAnimationFrame(() => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
 /** The viewport as a JPEG, at most `SCREENSHOT_SIZE` on its long side, once the newest rebuild is drawn. */
 export async function viewScreenshot(ctx: AiContext): Promise<ToolImageValue> {
   const vp = viewport(ctx);
   await settledDisplay(ctx);
-  // A frame for the newest display, so the picture shows it.
-  await new Promise<void>((resolve) =>
-    typeof requestAnimationFrame === 'function' ? requestAnimationFrame(() => resolve()) : resolve(),
-  );
+  await nextFrame();
   const full = vp.screenshot(0.8);
   const canvas = vp.getCanvas();
   const scale = Math.min(1, SCREENSHOT_SIZE / Math.max(canvas.width, canvas.height, 1));

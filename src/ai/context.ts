@@ -16,7 +16,7 @@ export interface ViewControl {
   setStandardView(view: 'front' | 'back' | 'top' | 'bottom' | 'left' | 'right' | 'home'): void;
   zoomIn(): void;
   zoomOut(): void;
-  /** The canvas drawn now, as a JPEG data URL. */
+  /** The canvas drawn now, a camera move under way finished first, as a JPEG data URL. */
   screenshot(quality?: number): string;
   getCanvas(): HTMLCanvasElement;
 }
