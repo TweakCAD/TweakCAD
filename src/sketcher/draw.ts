@@ -36,6 +36,7 @@ export const COLORS = {
   preview: 0x22c55e,
   snapPoint: 0xff7a00,
   snapMidpoint: 0x8b5cf6,
+  snapCurve: 0x0ea5e9,
   snapGrid: 0x22c55e,
   point: 0xffffff,
   pointStroke: 0x3b82f6,
@@ -105,13 +106,20 @@ function badge(symbol: string, fg: string, bg: string, border: string): THREE.Te
   g.strokeStyle = fg;
   g.fillStyle = fg;
   g.lineWidth = 5;
-  if (symbol === 'ring' || symbol === 'square') {
+  if (symbol === 'ring' || symbol === 'square' || symbol === 'cross') {
     g.clearRect(0, 0, size, size);
     g.strokeStyle = fg;
     g.lineWidth = 7;
     if (symbol === 'ring') {
       g.beginPath();
       g.arc(32, 32, 22, 0, 2 * Math.PI);
+      g.stroke();
+    } else if (symbol === 'cross') {
+      g.beginPath();
+      g.moveTo(14, 14);
+      g.lineTo(50, 50);
+      g.moveTo(50, 14);
+      g.lineTo(14, 50);
       g.stroke();
     } else g.strokeRect(12, 12, 40, 40);
   } else {
@@ -477,13 +485,15 @@ export class SketchDrawing {
     const [symbol, color] =
       snap.kind === 'midpoint'
         ? ['square', COLORS.snapMidpoint]
-        : snap.kind === 'grid'
-          ? ['ring', COLORS.snapGrid]
-          : snap.kind === 'axisX'
-            ? ['ring', COLORS.gridXAxis]
-            : snap.kind === 'axisY'
-              ? ['ring', COLORS.gridYAxis]
-              : ['ring', COLORS.snapPoint];
+        : snap.kind === 'curve'
+          ? ['cross', COLORS.snapCurve]
+          : snap.kind === 'grid'
+            ? ['ring', COLORS.snapGrid]
+            : snap.kind === 'axisX'
+              ? ['ring', COLORS.gridXAxis]
+              : snap.kind === 'axisY'
+                ? ['ring', COLORS.gridYAxis]
+                : ['ring', COLORS.snapPoint];
     const tex = cachedBadge(`snap:${symbol}:${color}`, () =>
       badge(symbol, hex(color), 'rgba(0,0,0,0)', 'rgba(0,0,0,0)'),
     );

@@ -98,6 +98,56 @@ describe('snapping', () => {
     expect(readsClean(t.editor)).toBe(true);
   });
 
+  it("puts an arc's ends on two circles with a point-on-curve constraint each, in three clicks", () => {
+    const t = openTestSession(gcs);
+    t.session.setTool('circle');
+    t.click(50, 50);
+    t.click(60, 50);
+    t.click(50, 50);
+    t.click(70, 50);
+    const [inner, outer] = rowsOf(t.inputs(), 'curves');
+    const before = commands(t);
+    t.session.setTool('arc');
+    t.move(59.8, 51);
+    const marker = t.host.group.getObjectByName('snap');
+    expect(marker?.position.x).toBeCloseTo(50 + (10 * 9.8) / Math.hypot(9.8, 1), 9);
+    t.click(59.8, 51);
+    t.click(51, 69.6);
+    t.click(65, 63);
+    expect(commands(t)).toBe(before + 1);
+    const inputs = t.inputs();
+    const arc = rowsOf(inputs, 'curves').at(-1) as Json;
+    expect(arc.kind).toBe('arc');
+    const ends = [arc.start as string, arc.end as string];
+    const on = rowsOf(inputs, 'constraints').filter((c) => c.kind === 'pointOnCurve');
+    expect(on).toHaveLength(2);
+    const center = pointXY(inputs, inner?.center as string);
+    for (const [circle, radius] of [
+      [inner, 10],
+      [outer, 20],
+    ] as const) {
+      const c = on.find((r) => (r.curve as Json).curve && ((r.curve as Json).curve as Json).id === circle?.id);
+      const point = ((c?.point as Json)?.point as Json)?.id as string;
+      expect(ends).toContain(point);
+      const [x, y] = pointXY(inputs, point);
+      expect(Math.hypot(x - center[0], y - center[1])).toBeCloseTo(radius, 6);
+    }
+    expect(readsClean(t.editor)).toBe(true);
+  });
+
+  it('drops a click snapped onto a curve that an undo took away', () => {
+    const t = openTestSession(gcs);
+    t.session.setTool('circle');
+    t.click(50, 50);
+    t.click(60, 50);
+    t.session.setTool('line');
+    t.click(60.3, 50.2);
+    t.editor.undo();
+    t.click(80, 80);
+    expect(kinds(t.inputs(), 'curves')).toEqual([]);
+    expect(rowsOf(t.inputs(), 'constraints').filter((c) => c.kind === 'pointOnCurve')).toEqual([]);
+  });
+
   it('snaps to the grid when grid snapping is on', () => {
     const t = openTestSession(gcs);
     t.session.setOptions({ gridSnap: true });

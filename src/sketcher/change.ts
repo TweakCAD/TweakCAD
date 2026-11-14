@@ -11,6 +11,7 @@ import {
   namedIds,
   pointOperand,
   curveOperand,
+  curveRef,
   standardOperand,
   table,
   type Json,
@@ -154,6 +155,11 @@ export class Draft {
       case 'midpoint': {
         const id = this.point(snap.at);
         this.constrain('midpoint', { point: pointOperand(id), curve: curveOperand(snap.curve) }, true);
+        return id;
+      }
+      case 'curve': {
+        const id = this.point(snap.at);
+        this.constrain('pointOnCurve', { point: pointOperand(id), curve: curveRef(snap.curve, snap.external) }, true);
         return id;
       }
       case 'axisX':
