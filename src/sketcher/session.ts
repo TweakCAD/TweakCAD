@@ -1288,8 +1288,9 @@ export class SketchSession {
     this.working = this.base;
     this.geometry = this.geometryOf(this.base);
     // A tool's pending point may be gone after an undo.
-    const pending = this.pendingPoints();
-    if (pending.some((id) => !this.geometry.points.has(id))) this.toolState = { kind: 'idle' };
+    const pending = this.pendingIds();
+    if (pending.some((id) => !this.geometry.points.has(id) && !this.geometry.curves.has(id)))
+      this.toolState = { kind: 'idle' };
     // Regions are detected again from the new rows, so a picked region is dropped.
     this.selection = this.selection.filter((id) => regionIndex(id) === null && this.exists(id));
     if (this.hover && (regionIndex(this.hover) !== null || !this.exists(this.hover))) this.hover = null;
@@ -1301,9 +1302,11 @@ export class SketchSession {
     this.changed();
   }
 
-  private pendingPoints(): string[] {
+  /** The points and curves a tool's pending clicks stand on, and its first pick when that has gone. */
+  private pendingIds(): string[] {
     const s = this.toolState;
-    const of = (snap: Snap | undefined) => (snap?.kind === 'point' ? [snap.id] : []);
+    const of = (snap: Snap | undefined) =>
+      snap?.kind === 'point' ? [snap.id] : snap?.kind === 'midpoint' || snap?.kind === 'curve' ? [snap.curve] : [];
     if (s.kind === 'line' || s.kind === 'lineArc') return of(s.start);
     if (s.kind === 'rectangle') return of(s.first);
     if (s.kind === 'circle') return of(s.center);
@@ -1435,10 +1438,11 @@ export class SketchSession {
     return this.pointCurveOf(id) !== undefined;
   }
 
+  /** The snap at `uv`; a drag (`exclude` given) snaps to points, axes and the grid only, as it writes no constraint. */
   private snapFor(uv: P2, exclude?: ReadonlySet<string>): Snap {
     return snapAt(this.geometry, uv, {
       pixel: this.pixel,
-      ...(exclude ? { exclude } : {}),
+      ...(exclude ? { exclude, curves: false } : {}),
       grid: this.options.gridSnap ? GRID_SPACING : null,
     });
   }
