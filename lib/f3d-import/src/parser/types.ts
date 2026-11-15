@@ -270,6 +270,49 @@ export type F3dShell = {
   inner: F3dParameter | null;
 };
 
+/**
+ * A hole: its centres and the plane it starts on, in model space (cm), and the
+ * sizes it owns. A hole placed by its distances to edges stores no centre.
+ */
+export type F3dHole = {
+  kind: 'hole';
+  id: number;
+  centres: [number, number, number][];
+  /** The plane of the face it starts on. */
+  plane: F3dPlane | null;
+  /** By role: `HoleDiameter`, `HoleDepth`, `TipAngle`, `CSDiameter`, `CSAngle`, `CBDiameter`, `CBDepth`. */
+  sizes: Record<string, F3dParameter>;
+};
+
+/**
+ * A construction plane. Every kind stores the plane it made, as a frame in
+ * model space (cm); an offset from a plane also holds that plane and the
+ * offset's parameter. The other kinds (at an angle, tangent, midplane…) are
+ * not decoded: their frame is all that is read.
+ */
+export type F3dConstructionPlane = {
+  kind: 'constructionPlane';
+  id: number;
+  /** Plane to model, a 4×4 row-major matrix in cm: x, y and normal as columns. */
+  matrix: number[] | null;
+  /** The plane it is offset from, for an offset plane: an origin plane, or another construction plane by id. */
+  base: 'xy' | 'xz' | 'yz' | number | null;
+  /** The offset's parameter, for an offset plane. */
+  offset: F3dParameter | null;
+};
+
+/**
+ * A modelling feature of the file that is not translated: kept in the timeline
+ * at its place, with what it is and the parameters it owns.
+ */
+export type F3dUnsupported = {
+  kind: 'unsupported';
+  id: number;
+  /** What the file's feature is, in words: `thicken`, `loft`, `extrude`. */
+  what: string;
+  parameters: F3dParameter[];
+};
+
 /** A box, cylinder, sphere or torus on a frame, with its sizes by role. */
 export type F3dPrimitive = {
   kind: 'primitive';
@@ -294,7 +337,10 @@ export type F3dFeature =
   | F3dMirror
   | F3dPattern
   | F3dShell
-  | F3dPrimitive;
+  | F3dPrimitive
+  | F3dConstructionPlane
+  | F3dHole
+  | F3dUnsupported;
 
 export type F3dComponent = {
   id: number;

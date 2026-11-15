@@ -22,8 +22,10 @@ const step = (before: string | undefined, id = 'f'): RoundStep => ({
   before,
   object: `Fillet ${id}`,
   id,
+  kept: { id, type: 'f3d.fillet', inputs: { feature: 'fillet', parameters: [] } },
   sets: [
     {
+      unknown: 0,
       pairs: [
         [
           { kind: 'sphere', center: [0, 0, 0], radius: 1 },
@@ -111,26 +113,46 @@ describe('complete', () => {
     expect(((row.sets as Json[])[0] as Json).refs).toHaveLength(1);
   });
 
-  it('counts the edges not found', async () => {
+  it('keeps the edges found and one reference to pick again for those not found, and counts them', async () => {
+    const d = doc();
     const notes = await complete(
-      doc(),
+      d,
       [step(undefined)],
-      client({ locateOnSurfaces: () => Promise.resolve([[{ reference: { entity: {} }, names: {} }], []]) }),
+      client({ locateOnSurfaces: () => Promise.resolve([[{ reference: { entity: { e: 1 } }, names: {} }], []]) }),
     );
     expect(notes.map((n) => n.message)).toEqual([
-      '1 of its 2 edges were not found in the imported model and were left out',
+      '1 of its 2 edges were not found in the imported model: it is kept and pauses until they are picked again',
+    ]);
+    const row = (((d.parts as Json[])[0] as Json).timeline as Json[])[2] as Json;
+    expect(((row.sets as Json[])[0] as Json).refs).toEqual([
+      { entity: { e: 1 } },
+      { entity: { id: [], branch: [], side: [], nb: { set: [] }, n: 1, snapshot: {} } },
     ]);
   });
 
-  it('leaves out a step the worker cannot finish, and goes on', async () => {
+  it('keeps a fillet none of whose edges are found, to pick them again', async () => {
+    const d = doc();
+    await complete(d, [step(undefined)], client({ locateOnSurfaces: () => Promise.resolve([[]]) }));
+    expect(ids(d)).toEqual(['a', 'b', 'f']);
+  });
+
+  it('keeps a step the worker cannot finish untranslated, with why, and goes on', async () => {
     const d = doc();
     let n = 0;
     const flaky = client({ evaluate: () => (++n === 1 ? Promise.reject(new Error('no')) : Promise.resolve()) });
     const notes = await complete(d, [step(undefined, 'x'), step(undefined, 'y')], flaky);
     expect(notes).toEqual([
-      { severity: 'warning', object: 'Fillet x', message: 'it could not be finished, so it was left out: no' },
+      {
+        severity: 'warning',
+        object: 'Fillet x',
+        message:
+          'not translated (it could not be finished: no): kept in the timeline, where it and what depends on it pause',
+      },
     ]);
-    expect(ids(d)).toEqual(['a', 'b', 'y']);
+    expect(ids(d)).toEqual(['a', 'b', 'x', 'y']);
+    const kept = (((d.parts as Json[])[0] as Json).timeline as Json[])[2] as Json;
+    expect(kept.type).toBe('f3d.fillet');
+    expect((kept.inputs as Json).reason).toBe('it could not be finished: no');
   });
 
   it('reports each sketch it checks and each step it finishes', async () => {

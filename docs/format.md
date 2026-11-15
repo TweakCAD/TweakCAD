@@ -1569,9 +1569,14 @@ differently and the feature pauses rather than attach a wrong identity.
   asset hash}`. The report is an asset of media type `application/json`:
   `{format, version, notes}`, each note `{severity: "info" | "warning",
   object, message}`, naming what the importer could not map and the object
-  of the source file it concerns. A step the importer cannot map comes in as `core.import` with
-  `{"kept": {}}`, with the source program's data under its namespace in
-  `extensions`.
+  of the source file it concerns. A feature of the source that the importer
+  cannot translate comes in at its place in the timeline as a row of the
+  importer's own type (`<namespace>.<kind>`, for example `f3d.thicken`), whose
+  inputs hold what the source says of it; a reader keeps it and pauses it,
+  and what depends on it, as an unknown feature type (chapter 18). A step
+  that is translated but has an input the importer cannot find (a fillet's
+  edge) is written as its own feature, with that input as a reference to
+  reconnect (9.2).
 
 ## 14. Timeline state
 

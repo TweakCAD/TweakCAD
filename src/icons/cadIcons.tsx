@@ -121,6 +121,28 @@ export function HoleIcon({
   );
 }
 
+// ---- Untranslated ----
+/** A dashed square with a question mark: a feature of another program's type, kept but not built. */
+export function UntranslatedIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+      <rect x="2" y="2" width="12" height="12" rx="2" stroke={color} strokeWidth={strokeWidth} strokeDasharray="2 2" />
+      <path
+        d="M6.3 6.4C6.3 5.4 7.1 4.8 8 4.8C8.9 4.8 9.7 5.4 9.7 6.3C9.7 7.4 8 7.6 8 8.8"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+      />
+      <circle cx="8" cy="11" r="0.6" fill={color} />
+    </svg>
+  );
+}
+
 // ---- Cut (Boolean Subtract) ----
 /** Two overlapping shapes with minus - represents boolean cut */
 export function CutIcon({
@@ -1564,6 +1586,8 @@ export function getFeatureIcon(featureType: string, size = 14): ReactElement {
       return <MoveIcon size={size} />;
     case 'importedGeometry':
       return <ExtrudeIcon size={size} />;
+    case 'untranslated':
+      return <UntranslatedIcon size={size} />;
     case 'component':
       // Reuse ExtrudeIcon as a placeholder until a component-specific
       // glyph lands; pairs with the indigo color below for distinctness.
@@ -1602,6 +1626,7 @@ export const featureTypeColors: Record<string, string> = {
   boolean: '#8b5cf6', // purple — matches the ribbon Combine/Cut
   move: '#0ea5e9', // sky — a placement, not new material
   importedGeometry: '#64748b', // slate
+  untranslated: '#94a3b8', // light slate: kept, not built
   // Primitives key on their shape (see `featureIconType`) and share one
   // teal, because they are one feature type doing one job.
   primitive: '#14b8a6',

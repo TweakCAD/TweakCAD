@@ -11,7 +11,7 @@ import type { DesignIndex } from './designIndex';
 import { primaryRange, readPrologue, refAt, refsIn } from './designIndex';
 import { readPrimitives } from './primitives';
 import { ByteReader } from './byteReader';
-import { readTransforms } from './transforms';
+import { readConstructionPlanes, readHoles, readTransforms } from './transforms';
 import type {
   F3dChamfer,
   F3dEdgeRecipe,
@@ -47,7 +47,10 @@ const REGION_MEMBER_BYTES = 40;
 const OWNERS = new Set([TYPE_PARAMETER_OWNER, 'A085449A']);
 
 /** Timeline items that change the model and are not read yet, by class. */
-const LEFT_OUT: Record<string, string> = {
+/** Modelling features with no translation yet, by record type: they come in as features that are not translated. */
+const UNSUPPORTED: Record<string, string> = {
+  '803DEC43': 'construction axis',
+  '5F40832C': 'construction point',
   B1E5B971: 'derived body',
   '2A94257F': 'combine',
   '65CA3206': 'split body',
@@ -59,7 +62,6 @@ const LEFT_OUT: Record<string, string> = {
   '29EF07D3': 'delete face',
   '4A782808': 'remove body',
   E8063467: 'shell',
-  '1C037A07': 'hole',
   '584D9526': 'thread',
   FCBB1707: 'sweep',
   B6678572: 'loft',
@@ -415,6 +417,10 @@ export function readFeatures(index: DesignIndex, parameters: readonly F3dParamet
   const owned = parametersByFeature(index, parameters);
   const features: F3dFeature[] = [];
   const unreadable: Record<string, number> = {};
+  /** A record of a modelling feature that is not read: it keeps its place in the timeline. */
+  const unsupported = (id: number, what: string): void => {
+    features.push({ kind: 'unsupported', id, what, parameters: [...(owned.get(id) ?? [])] });
+  };
 
   for (const id of index.idsOf.get(TYPE_SKETCH_FEATURE) ?? []) {
     const sketchId = refsOf(index, id).find((r) => typeKey(index, r.id) === TYPE_SKETCH)?.id;
@@ -423,23 +429,31 @@ export function readFeatures(index: DesignIndex, parameters: readonly F3dParamet
   for (const id of index.idsOf.get(TYPE_EXTRUDE) ?? []) {
     const extrude = readExtrude(index, id, owned.get(id) ?? []);
     if (extrude) features.push(extrude);
-    else unreadable['extrude'] = (unreadable['extrude'] ?? 0) + 1;
+    else unsupported(id, 'extrude');
   }
 
   for (const id of index.idsOf.get(TYPE_REVOLVE) ?? []) {
     const revolve = readRevolve(index, id, owned.get(id) ?? []);
     if (revolve) features.push(revolve);
-    else unreadable['revolve'] = (unreadable['revolve'] ?? 0) + 1;
+    else unsupported(id, 'revolve');
   }
 
   features.push(...readTransforms(index, (id) => owned.get(id) ?? []));
+  features.push(...readConstructionPlanes(index, (id) => owned.get(id) ?? []));
+  features.push(...readHoles(index, (id) => owned.get(id) ?? []));
 
   const { primitives, unread } = readPrimitives(index, OPERATIONS, (id) => owned.get(id) ?? []);
   features.push(...primitives);
-  if (unread > 0) unreadable['primitive'] = unread;
+  for (const id of unread) unsupported(id, 'primitive');
 
   for (const id of index.idsOf.get(TYPE_FILLET) ?? []) features.push(readFillet(index, id, owned.get(id) ?? []));
   for (const id of index.idsOf.get(TYPE_CHAMFER) ?? []) features.push(readChamfer(index, id, owned.get(id) ?? []));
+
+  // Every other modelling feature keeps its place, as a feature that is not translated.
+  for (const [key, what] of Object.entries(UNSUPPORTED)) {
+    const read = new Set(features.map((f) => f.id));
+    for (const id of index.idsOf.get(key) ?? []) if (!read.has(id)) unsupported(id, what);
+  }
 
   const known = new Set(features.map((f) => f.id));
   const timeline = readRootTimeline(index).filter((id) => known.has(id));
@@ -455,11 +469,5 @@ export function readFeatures(index: DesignIndex, parameters: readonly F3dParamet
   }
   while (next < off.length) order.push(off[next++] as number);
 
-  const leftOut: Record<string, number> = {};
-  for (const [key, what] of Object.entries(LEFT_OUT)) {
-    const left = (index.idsOf.get(key) ?? []).filter((id) => !known.has(id)).length;
-    if (left > 0) leftOut[what] = (leftOut[what] ?? 0) + left;
-  }
-
-  return { features, order, unreadable, leftOut };
+  return { features, order, unreadable, leftOut: {} };
 }

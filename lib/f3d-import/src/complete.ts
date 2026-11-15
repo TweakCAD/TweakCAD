@@ -76,6 +76,20 @@ function upTo(doc: Json, step: Step): Json {
 /** Finishing never draws what it builds. */
 const UNMESHED = { meshes: false };
 
+/** A reference the user picks again (9.2: an empty identity): it stands for edges that were not found. */
+const RECONNECT: Json = { entity: { id: [], branch: [], side: [], nb: { set: [] }, n: 1, snapshot: {} } };
+
+const UNTRANSLATED = 'kept in the timeline, where it and what depends on it pause';
+
+/** Keeps a step that cannot be finished as its untranslated row, with why. */
+function keep(doc: Json, step: Step, why: string, notes: ImportNote[]): void {
+  const row = structuredClone(step.kept);
+  (row.inputs as Json).reason = why;
+  if (step.kind === 'store') timelineOf(doc, step.part).unshift(row);
+  else insert(doc, step, row);
+  notes.push({ severity: 'warning', object: step.object, message: `not translated (${why}): ${UNTRANSLATED}` });
+}
+
 function insert(doc: Json, step: Step, row: Json): void {
   const timeline = timelineOf(doc, step.part);
   const at = step.before === undefined ? -1 : timeline.findIndex((f) => f.id === step.before);
@@ -88,28 +102,25 @@ async function finishRound(doc: Json, step: RoundStep, client: F3dClient, notes:
   let missing = 0;
   let total = 0;
   for (const set of step.sets) {
-    const found = await client.locateOnSurfaces(step.part, undefined, set.pairs);
-    total += found.length;
-    missing += found.filter((f) => f.length === 0).length;
+    const found = set.pairs.length > 0 ? await client.locateOnSurfaces(step.part, undefined, set.pairs) : [];
+    total += found.length + set.unknown;
+    missing += found.filter((f) => f.length === 0).length + set.unknown;
     // Two pairs can name one edge.
     const edges = [...new Map(found.flat().map((e) => [JSON.stringify(e.reference), e])).values()];
-    if (edges.length === 0) continue;
     Object.assign(doc.names as Json, ...edges.map((e) => e.names));
-    sets.push(set.row(edges.map((e) => e.reference)));
-  }
-  if (sets.length === 0) {
-    notes.push({
-      severity: 'warning',
-      object: step.object,
-      message: 'none of its edges were found in the imported model, so it was left out',
-    });
-    return;
+    // Edges not found stand as one reference to pick again: the feature pauses until they are.
+    const refs = edges.map((e) => e.reference);
+    if (set.unknown > 0 || found.some((f) => f.length === 0)) refs.push(RECONNECT as { entity: unknown });
+    sets.push(set.row(refs));
   }
   if (missing > 0)
     notes.push({
       severity: 'warning',
       object: step.object,
-      message: `${missing} of its ${total} edges were not found in the imported model and were left out`,
+      message:
+        missing === total
+          ? 'none of its edges were found in the imported model: it is kept and pauses until they are picked again'
+          : `${missing} of its ${total} edges were not found in the imported model: it is kept and pauses until they are picked again`,
     });
   insert(doc, step, step.row(sets));
 }
@@ -122,23 +133,18 @@ async function finishBodies(doc: Json, step: BodyStep, client: F3dClient, notes:
     Object.assign(doc.names as Json, ...found.map((b) => b.names));
     groups.push(found.map((b) => b.reference));
   }
-  const faces: { face: Json; body: Json }[] = [];
+  const faces: { face: Json; body: Json; surface: number }[] = [];
   if (plan.surfaces.length > 0) {
-    for (const list of await client.locateFacesOnSurfaces(step.part, undefined, plan.surfaces)) {
+    for (const [surface, list] of (await client.locateFacesOnSurfaces(step.part, undefined, plan.surfaces)).entries()) {
       for (const f of list) {
         Object.assign(doc.names as Json, f.face.names, f.body.names);
-        faces.push({ face: f.face.reference, body: f.body.reference });
+        faces.push({ face: f.face.reference, body: f.body.reference, surface });
       }
     }
   }
   const row = plan.row(groups, faces, step.id);
   if (row) insert(doc, step, row);
-  else if (!plan.quiet)
-    notes.push({
-      severity: 'warning',
-      object: step.object,
-      message: 'what it works on was not found in the imported model, so it was left out',
-    });
+  else if (!plan.quiet) keep(doc, step, 'what it works on was not found in the imported model', notes);
 }
 
 /** A part's stored bodies made into its Base Feature's shape, written first in the part. Only the shape's own asset is kept: the file is the source. */
@@ -178,11 +184,12 @@ export async function complete(
     try {
       await finishStore(doc, step, client, notes);
     } catch (e) {
-      notes.push({
-        severity: 'warning',
-        object: step.object,
-        message: `its ${step.bodies === 1 ? 'body' : `${step.bodies} bodies`} could not be made into solids, so it was left out: ${e instanceof Error ? e.message : String(e)}`,
-      });
+      keep(
+        doc,
+        step,
+        `its ${step.bodies === 1 ? 'body' : `${step.bodies} bodies`} could not be made into solids: ${e instanceof Error ? e.message : String(e)}`,
+        notes,
+      );
     }
   }
   let dropped = 0;
@@ -238,11 +245,7 @@ export async function complete(
       else await finishBodies(doc, step, client, notes);
     } catch (e) {
       // One feature that cannot be finished does not cost the rest of the file.
-      notes.push({
-        severity: 'warning',
-        object: step.object,
-        message: `it could not be finished, so it was left out: ${e instanceof Error ? e.message : String(e)}`,
-      });
+      keep(doc, step, `it could not be finished: ${e instanceof Error ? e.message : String(e)}`, notes);
     }
   }
   return notes;

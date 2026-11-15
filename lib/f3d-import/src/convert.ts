@@ -42,12 +42,29 @@ import { STORED_BODY, UNLINKED } from './parser/types';
 import { readAsm } from './parser/asm';
 import { AsmBodies, BodyRefusal, type ReadBody } from './parser/asmBodies';
 import { writeStep } from './stepBodies';
-import type { F3dComponent, F3dDesign, F3dFeature, F3dSketch } from './parser/types';
-import { frameOfMatrix, invertMatrix, multiplyMatrix } from './placement';
+import type { F3dComponent, F3dDesign, F3dExtrude, F3dFeature, F3dParameter, F3dSketch } from './parser/types';
+import {
+  CM_TO_MM,
+  compose,
+  dot,
+  frameOfMatrix,
+  invert,
+  invertMatrix,
+  mm,
+  multiplyMatrix,
+  placementText,
+  rotateByMatrix,
+  sub,
+  vectorText,
+  type Placement,
+  type SketchFrame,
+} from './placement';
+import { LENGTH } from './parameters';
 import type { FaceIndex } from './parser/brep';
 import { convertSketch, type SketchStats } from './sketch';
 import { TurnedFaces, turnFeature, Z_UP_TURN } from './turn';
-import { Writer, type Json } from './writer';
+import { STANDARD_FRAMES, standardParallel, Writer, type Json } from './writer';
+import { holeOutcome } from './holes';
 
 export interface ImportNote {
   severity: 'info' | 'warning';
@@ -62,12 +79,14 @@ interface StepBase {
   before: string | undefined;
   object: string;
   id: string;
+  /** The row that keeps the feature untranslated when it cannot be finished; the reason goes in its inputs then. */
+  kept: Json;
 }
 
 /** A fillet or chamfer: its edges found by surface, then written before `before`. */
 export interface RoundStep extends StepBase {
   kind: 'round';
-  sets: { pairs: [SurfaceSpec, SurfaceSpec][]; row(refs: Json[]): Json }[];
+  sets: { pairs: [SurfaceSpec, SurfaceSpec][]; unknown: number; row(refs: Json[]): Json }[];
   row(sets: Json[]): Json;
 }
 
@@ -132,7 +151,7 @@ const LEFT_OUT_TEXT: Record<LeftOut, string> = {
   surface: 'surface extrude',
   noProfile: 'extrude or revolve with no profile',
   noRegion: 'extrude or revolve whose profile was not found',
-  startsFromFace: 'extrude starting from a face that is not parallel to its sketch',
+  startsFromFace: 'extrude starting from a face not found in the stored bodies',
   toObject: 'extrude up to a face that is not parallel to its sketch',
   noDistance: 'extrude of no length',
   thin: 'thin extrude',
@@ -149,6 +168,83 @@ const LABELS: Record<string, string> = {
 };
 
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+
+/**
+ * A feature of the file that is not translated: a row of the file's own type
+ * (`f3d.<kind>`), holding what it is, why it is not translated when that is
+ * known, and the parameters it owns. The app keeps a row of a type it does not
+ * know and pauses it, and what depends on it.
+ */
+export function keptRow(
+  w: Writer,
+  label: string,
+  what: string,
+  why: string | null,
+  parameters: readonly F3dParameter[] = [],
+  id?: string,
+): Json {
+  const inputs: Json = {
+    feature: what,
+    parameters: parameters.map((p) => ({ name: p.name, role: p.role, expression: p.expression })),
+  };
+  if (why) inputs.reason = why;
+  return w.feature(`f3d.${typeName(what)}`, label, inputs, id);
+}
+
+/**
+ * An attached frame (7.3) in `plane` mode on `support`, whose frame is `base`,
+ * placed at `at`. When the offset is only a distance along the support's
+ * normal and `distance` is the value object of that distance, the offset's z
+ * is written as its expression, so the frame follows the parameter.
+ */
+function attachedTo(w: Writer, support: Json, base: Placement, at: Placement, distance?: Json): Json {
+  const offset = compose(invert(base), at);
+  const [x, y, z] = offset.position;
+  const def = (distance?.def as { expr?: { text: string; refs: Json } } | undefined)?.expr;
+  let text = placementText(offset);
+  let refs: Json = {};
+  // The position is in the support's frame: its z is the distance along the normal, whatever the turn.
+  if (def && Object.keys(def.refs).length > 0 && Math.hypot(x, y) < 1e-9) {
+    const along = z < 0 ? `-(${def.text})` : def.text;
+    const turn = text.slice(`placement(${vectorText(offset.position)}, `.length, -1);
+    text = `placement(vector(0 mm, 0 mm, ${along}), ${turn})`;
+    refs = def.refs;
+  }
+  return {
+    attach: {
+      support: [support],
+      mode: w.choice('plane'),
+      offset: w.val(text, refs as Parameters<Writer['val']>[1]),
+      flip: w.flag(false),
+    },
+  };
+}
+
+/** A kind in words as a type name in the `f3d` namespace: `delete face` is `f3d.deleteFace`. */
+function typeName(what: string): string {
+  const words = what.split(/[^a-zA-Z0-9]+/).filter((x) => x !== '');
+  return words
+    .map((x, i) => (i === 0 ? x.toLowerCase() : x.charAt(0).toUpperCase() + x.slice(1).toLowerCase()))
+    .join('');
+}
+
+const capitalized = (what: string): string => what.charAt(0).toUpperCase() + what.slice(1);
+
+/** A point through a rigid row-major matrix. */
+function applyMatrix(m: readonly number[], p: readonly [number, number, number]): [number, number, number] {
+  const at = (i: number) => m[i] as number;
+  return [
+    at(0) * p[0] + at(1) * p[1] + at(2) * p[2] + at(3) * CM_TO_MM,
+    at(4) * p[0] + at(5) * p[1] + at(6) * p[2] + at(7) * CM_TO_MM,
+    at(8) * p[0] + at(9) * p[1] + at(10) * p[2] + at(11) * CM_TO_MM,
+  ];
+}
+
+/** The parameters an extrude owns, for a row that keeps it untranslated. */
+const ownedOf = (e: F3dExtrude): F3dParameter[] =>
+  [e.along, e.against, e.side1Offset, e.side2Offset, e.profileOffset, e.taper, e.side2Taper, e.wall].filter(
+    (p): p is F3dParameter => p !== null,
+  );
 
 /** Whether a matrix turns the frame inside out. */
 function isMirror(m: readonly number[]): boolean {
@@ -208,11 +304,12 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
   const count = (what: string, n = 1): void => {
     leftOut[what] = (leftOut[what] ?? 0) + n;
   };
+  /** Features kept in the timeline untranslated, by what they are (and why, for one the file names something of). */
+  const untranslated: Record<string, string[]> = {};
   let text = 0;
   let unread = 0;
   let storedMissing = 0;
   const storedRefusals: Record<string, number> = {};
-  let lost = 0;
   let extrudes = 0;
   let revolves = 0;
   const allParts: PartDraft[] = [];
@@ -278,8 +375,35 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
       for (const s of part.pending) s.before = row.id as string;
       part.pending = [];
     };
+    /**
+     * A feature of the file that is not translated: a row of the file's own
+     * type (`f3d.<kind>`) at its place, holding what it is, why it is not
+     * translated when that is known, and the parameters it owns. The app keeps
+     * a row of a type it does not know and pauses it, and what depends on it.
+     */
+    const placeholder = (
+      part: PartDraft,
+      label: string,
+      what: string,
+      why: string | null,
+      parameters: readonly F3dParameter[] = [],
+    ): Json => {
+      const row = keptRow(w, label, what, why, parameters);
+      add(part, row);
+      (untranslated[why ?? what] ??= []).push(label);
+      return row;
+    };
 
     const records = new Map(design.sketches.map((s) => [s.id, s]));
+    /** Construction planes written, by part: a sketch lying on one is attached to it. */
+    const planes = new Map<string, { feature: string; frame: SketchFrame }[]>();
+    /** The plane of `part` a frame lies on: the same normal (either sense) and its origin in the plane. */
+    const planeUnder = (part: PartDraft, frame: SketchFrame) =>
+      (planes.get(part.id) ?? []).find(
+        (p) =>
+          Math.abs(Math.abs(dot(p.frame.normal, frame.normal)) - 1) < 1e-9 &&
+          Math.abs(dot(sub(frame.origin, p.frame.origin), p.frame.normal)) < 1e-6,
+      );
     /** Sketches written, by part: a feature can use a sketch of another component, which it gets a copy of. */
     const placed = new Map<string, PlacedSketch>();
     const counted = new Set<number>();
@@ -298,8 +422,11 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
       stats.push(rows.stats);
       const matrix = sketch.placement ?? IDENTITY;
       const frame = frameOfMatrix(part.toPart ? multiplyMatrix(part.toPart, matrix) : matrix);
+      const on = planeUnder(part, frame);
       const row = w.feature('core.sketch', sketchName(sketch), {
-        frame: w.frame(frame.placement, frame.normal),
+        frame: on
+          ? attachedTo(w, { object: { feature: { id: on.feature } } }, on.frame.placement, frame.placement)
+          : w.frame(frame.placement, frame.normal),
         ...rows.inputs,
       });
       add(part, row);
@@ -331,15 +458,17 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
     };
 
     const features = new Map(design.features.map((f) => [f.id, f]));
+    /** Construction planes written, by the file's record. */
+    const planeRows = new Map<number, { feature: string; part: string; frame: SketchFrame }>();
     let extrudeLabels = 0;
     let revolveLabels = 0;
     let fillets = 0;
     let chamfers = 0;
     const rows = new Map<number, WrittenFeature>();
     const round = (record: number, part: PartDraft, label: string, id: string, feature: RoundFeature): void => {
-      lost += feature.lost;
       if (feature.sets.length === 0) {
-        count('fillet or chamfer with no edges found');
+        const row = placeholder(part, label, label.replace(/ \d+$/, '').toLowerCase(), 'no edges or no size read');
+        rows.set(record, { id: row.id as string, part: part.id, op: 'round' });
         return;
       }
       const step: RoundStep = {
@@ -348,6 +477,7 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
         before: undefined,
         object: label,
         id,
+        kept: keptRow(w, label, label.replace(/ \d+$/, '').toLowerCase(), null, [], id),
         sets: feature.sets,
         row: feature.row,
       };
@@ -356,7 +486,9 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
       rows.set(record, { id, part: part.id, op: 'round' });
     };
     const counters: Record<string, number> = {};
-    const copiesLeftOut = 'pasted body' in design.leftOut || 'component from bodies' in design.leftOut;
+    const copiesLeftOut = design.features.some(
+      (f) => f.kind === 'unsupported' && (f.what === 'pasted body' || f.what === 'component from bodies'),
+    );
     const transforms: TransformContext = {
       w,
       plan,
@@ -366,9 +498,10 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
       copiesLeftOut,
     };
     const draftOf = (id: string): PartDraft => [...drafts.values()].find((p) => p.id === id) ?? rootPart;
-    const transform = (record: number, label: string, outcome: Outcome): void => {
+    const transform = (record: number, label: string, outcome: Outcome, home: PartDraft = rootPart): void => {
       if ('leftOut' in outcome) {
-        count(outcome.leftOut);
+        const row = placeholder(home, label, label.replace(/ \d+$/, '').toLowerCase(), outcome.leftOut);
+        rows.set(record, { id: row.id as string, part: home.id, op: 'new' });
         return;
       }
       const id = o.ids('feat');
@@ -386,6 +519,7 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
         before: undefined,
         object: label,
         id,
+        kept: keptRow(w, label, label.replace(/ \d+$/, '').toLowerCase(), null, [], id),
         plan: outcome.plan,
       };
       steps.push(step);
@@ -403,10 +537,65 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
       const part = partOfFeature(raw);
       const f = turns && part === rootPart ? turnFeature(raw) : raw;
       const ctx = context(part);
-      if (f.kind === 'extrude') {
+      if (f.kind === 'constructionPlane') {
+        const n = (counters.plane = (counters.plane ?? 0) + 1);
+        const label = `Plane ${n}`;
+        if (!f.matrix) {
+          const kept = placeholder(part, label, 'construction plane', 'its plane was not read');
+          rows.set(f.id, { id: kept.id as string, part: part.id, op: 'new' });
+          continue;
+        }
+        const frame = frameOfMatrix(part.toPart ? multiplyMatrix(part.toPart, f.matrix) : f.matrix);
+        const base = typeof f.base === 'number' ? planeRows.get(f.base) : undefined;
+        let input: Json;
+        if (f.offset && base && base.part === part.id) {
+          input = attachedTo(
+            w,
+            { object: { feature: { id: base.feature } } },
+            base.frame.placement,
+            frame.placement,
+            plan.value(f.offset, mm(Math.abs(f.offset.value * CM_TO_MM)), LENGTH),
+          );
+        } else if (f.offset && typeof f.base === 'string') {
+          const name = standardParallel(frame.normal);
+          input = attachedTo(
+            w,
+            { standard: { name } },
+            STANDARD_FRAMES[name].placement,
+            frame.placement,
+            plan.value(f.offset, mm(Math.abs(f.offset.value * CM_TO_MM)), LENGTH),
+          );
+        } else input = { fixed: { placement: w.val(placementText(frame.placement)) } };
+        const row = w.feature('core.constructionPlane', label, { frame: input });
+        add(part, row);
+        rows.set(f.id, { id: row.id as string, part: part.id, op: 'new' });
+        planeRows.set(f.id, { feature: row.id as string, part: part.id, frame });
+        planes.set(part.id, [...(planes.get(part.id) ?? []), { feature: row.id as string, frame }]);
+      } else if (f.kind === 'hole') {
+        const label = `Hole ${(counters.hole = (counters.hole ?? 0) + 1)}`;
+        // A component's part has its own coordinates; the turned root's are the turned model's.
+        const local = part === rootPart ? null : part.toPart;
+        const outcome = holeOutcome(
+          w,
+          plan,
+          f,
+          label,
+          part.id,
+          (p) => (local ? applyMatrix(local, p) : p),
+          (v) => (local ? rotateByMatrix(local, v) : v),
+        );
+        transform(f.id, label, outcome, part);
+      } else if (f.kind === 'unsupported') {
+        const n = (counters[f.what] = (counters[f.what] ?? 0) + 1);
+        const row = placeholder(part, `${capitalized(f.what)} ${n}`, f.what, null, f.parameters);
+        rows.set(f.id, { id: row.id as string, part: part.id, op: 'new' });
+      } else if (f.kind === 'extrude') {
         const row = extrudeRow(ctx, f, `Extrude ${extrudeLabels + 1}`);
-        if (typeof row === 'string') count(LEFT_OUT_TEXT[row]);
-        else if (isFaceStop(row)) {
+        if (typeof row === 'string') {
+          extrudeLabels++;
+          const kept = placeholder(part, `Extrude ${extrudeLabels}`, 'extrude', LEFT_OUT_TEXT[row], ownedOf(f));
+          rows.set(f.id, { id: kept.id as string, part: part.id, op: OPERATIONS[f.operation] });
+        } else if (isFaceStop(row)) {
           extrudes++;
           extrudeLabels++;
           const stop = row;
@@ -414,12 +603,13 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
             plan: {
               part: part.id,
               groups: [],
-              surfaces: [stop.stop],
-              // The stop is the face's whole surface, so any face on it will do: the largest, whose name is plainest.
-              row: (_groups, faces, id) => {
-                const face = largestFace(faces.map((x) => x.face));
-                return face ? stop.row(face, id) : null;
-              },
+              surfaces: stop.faces,
+              // A start or stop is the face's whole surface, so any face on it will do: the largest, whose name is plainest.
+              row: (_groups, faces, id) =>
+                stop.row(
+                  stop.faces.map((_, i) => largestFace(faces.filter((x) => x.surface === i).map((x) => x.face))),
+                  id,
+                ),
             },
           });
           (rows.get(f.id) as { op: string }).op = OPERATIONS[f.operation];
@@ -431,8 +621,11 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
         }
       } else if (f.kind === 'revolve') {
         const row = revolveRow(ctx, f, `Revolve ${revolveLabels + 1}`);
-        if (typeof row === 'string') count(LEFT_OUT_TEXT[row]);
-        else {
+        if (typeof row === 'string') {
+          revolveLabels++;
+          const kept = placeholder(part, `Revolve ${revolveLabels}`, 'revolve', LEFT_OUT_TEXT[row]);
+          rows.set(f.id, { id: kept.id as string, part: part.id, op: OPERATIONS[f.operation] });
+        } else {
           revolves++;
           revolveLabels++;
           add(part, row);
@@ -448,8 +641,10 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
         const label = `Chamfer ${chamfers}`;
         const stepId = o.ids('feat');
         const feature = chamferFeature(ctx, f, label, stepId);
-        if (feature === 'uneven') count('chamfer of two distances');
-        else round(f.id, part, label, stepId, feature);
+        if (feature === 'uneven') {
+          const kept = placeholder(part, label, 'chamfer', 'chamfer of two distances');
+          rows.set(f.id, { id: kept.id as string, part: part.id, op: 'round' });
+        } else round(f.id, part, label, stepId, feature);
       } else {
         const label = `${LABELS[f.kind]} ${(counters[f.kind] = (counters[f.kind] ?? 0) + 1)}`;
         const outcomeOf = (g: typeof f, tc: TransformContext): Outcome =>
@@ -472,7 +667,7 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
         const lands = 'leftOut' in outcome ? undefined : 'row' in outcome ? outcome.part : outcome.plan.part;
         if (turns && lands === rootPart.id)
           outcome = outcomeOf(turnFeature(plain), { ...transforms, faces: turnedFaces });
-        transform(f.id, label, outcome);
+        transform(f.id, label, outcome, part);
       }
     }
     for (const s of design.sketches) if (!counted.has(s.id)) emit(s.id, partOf(s.componentId));
@@ -532,6 +727,7 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
         before: undefined,
         object: 'Base Feature',
         id,
+        kept: keptRow(w, 'Base Feature', 'base feature', null, [], id),
         text: writeStep(read),
         bodies: read.length,
         row: (stored) =>
@@ -620,11 +816,11 @@ export function convertDesign(top: F3dDesign, o: ConvertOptions): Conversion {
       object: 'document',
       message: `${unread} sketch points or curves could not be read`,
     });
-  if (lost > 0)
+  for (const [what, labels] of Object.entries(untranslated))
     notes.push({
       severity: 'warning',
-      object: 'document',
-      message: `${lost} rounded ${lost === 1 ? 'edge was' : 'edges were'} not found in the file's stored bodies and left out`,
+      object: labels.join(', '),
+      message: `not translated (${what}): kept in the timeline, where it and what depends on it pause`,
     });
   for (const [what, n] of Object.entries(leftOut)) {
     if (what !== STORED_BODY && what !== UNLINKED)

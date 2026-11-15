@@ -25,7 +25,7 @@ export function readPrimitives(
   index: DesignIndex,
   operations: Record<number, F3dExtrude['operation']>,
   ownedBy: (id: number) => readonly F3dParameter[],
-): { primitives: F3dPrimitive[]; unread: number } {
+): { primitives: F3dPrimitive[]; unread: number[] } {
   const view = new DataView(index.bulk.buffer, index.bulk.byteOffset, index.bulk.byteLength);
   const matrixIn = (range: RecordRange | undefined): number[] | null => {
     if (range) {
@@ -37,7 +37,7 @@ export function readPrimitives(
     return null;
   };
   const primitives: F3dPrimitive[] = [];
-  let unread = 0;
+  const unread: number[] = [];
   for (const [key, shape] of Object.entries(SHAPES)) {
     for (const id of index.idsOf.get(key) ?? []) {
       const range = primaryRange(index, id);
@@ -49,7 +49,7 @@ export function readPrimitives(
       const plane = holder ? matrixIn(primaryRange(index, holder.id)) : null;
       const onPlane = matrixIn(range) ?? AT_THE_ORIGIN;
       if (!operation || !plane) {
-        unread++;
+        unread.push(id);
         continue;
       }
       const sizes: Record<string, F3dParameter> = {};

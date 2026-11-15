@@ -2,8 +2,9 @@
  * Extrudes, revolves, fillets and chamfers as feature rows.
  *
  * An extrude's sides, tapers and start map straight onto `core.extrude`. A face
- * the file extrudes from or up to is read from the stored bodies: a plane
- * parallel to the sketch is a distance, anything else is left out. A fillet
+ * the file extrudes from is the start's object, found in the model as built; a
+ * face it runs up to is a distance when it is a plane parallel to the sketch,
+ * and a stop found in the model as built otherwise. A fillet
  * names an edge by the two faces either side of it as they stood when it was
  * picked, so those faces' surfaces go to the worker, which finds the edges that
  * lie on both in the model as built.
@@ -46,13 +47,18 @@ export interface FeatureContext {
 
 export type LeftOut = 'surface' | 'noProfile' | 'noRegion' | 'startsFromFace' | 'toObject' | 'noDistance' | 'thin';
 
-/** An extrude that stops on a face of the model: the face is found once what comes before it is built. */
+/**
+ * An extrude that starts from or stops on faces of the model: the faces are
+ * found once what comes before it is built, one per surface in `faces` (or
+ * none found), and `row` writes the feature, or null when it cannot.
+ */
 export interface FaceStop {
-  stop: SurfaceSpec;
-  row(face: Json, id: string): Json;
+  faces: SurfaceSpec[];
+  row(found: readonly (Json | undefined)[], id: string): Json | null;
 }
 
-export const isFaceStop = (row: Json | FaceStop): row is FaceStop => 'stop' in row && typeof row.row === 'function';
+export const isFaceStop = (row: Json | FaceStop): row is FaceStop =>
+  Array.isArray(row.faces) && typeof row.row === 'function';
 
 export const OPERATIONS = { newBody: 'new', join: 'join', cut: 'cut', intersect: 'intersect' } as const;
 
@@ -111,22 +117,39 @@ export function extrudeRow(c: FeatureContext, e: F3dExtrude, name: string): Json
   /** +1 when the file's vector runs along the sketch's normal. */
   const facing = dot(e.vector, sketch.normal) >= 0 ? 1 : -1;
   const forward = e.reversed ? -1 : 1;
-  // How far the start sits from the sketch plane, along the normal.
-  let startHeight = 0;
+  const profileOffset = e.profileOffset && Math.abs(e.profileOffset.value) > 1e-12 ? e.profileOffset : null;
+  // Fusion's From Object: the start is that face, found in the model as built. A plane parallel to the
+  // sketch also gives the start's height, which a stop measures from and which stands in when the face is not found.
+  let startSpec: SurfaceSpec | null = null;
+  let startHeight: number | null = 0;
   let startFace = 0;
   if (e.start === 'face') {
-    const height = parallelHeight(c, e.faces[0], sketch);
-    if (height === null) return 'startsFromFace';
-    startHeight = height;
+    const named = e.faces[0];
+    const surface = named ? surfaceOf(c.faces, named) : null;
+    if (!surface) return 'startsFromFace';
+    startSpec = surfaceSpec(surface);
+    startHeight = parallelHeight(c, named, sketch);
     startFace = 1;
-  }
-  if (e.profileOffset && Math.abs(e.profileOffset.value) > 1e-12) startHeight += size(e.profileOffset) * facing;
+  } else if (profileOffset) startHeight = size(profileOffset) * facing;
 
   const taper = (p: F3dParameter | null): Json => plan.value(p, deg(angleOf(p)), ANGLE);
   const distance = (d: number, p: F3dParameter | null): Json => ({
     distance: { d: plan.value(p && p.value > 0 ? p : null, mm(d), LENGTH) },
   });
-  const build = (sign: number, sides: Json[], id?: string): Json => {
+  /** The start: from a face found in the model, else the plane at the start's height, along `direction`. */
+  const startOf = (reversed: boolean, face: Json | undefined): Json | undefined => {
+    const along = reversed ? -1 : 1;
+    if (face) {
+      // The profile offset runs along the file's vector; `direction` is the sketch normal, maybe reversed.
+      const offset = profileOffset ? size(profileOffset) * facing * along : 0;
+      const linked = profileOffset && offset > 0 ? profileOffset : null;
+      return { object: { face, offset: plan.value(linked, mm(offset), LENGTH) } };
+    }
+    const height =
+      (startSpec ? (startHeight ?? 0) + (profileOffset ? size(profileOffset) * facing : 0) : startHeight) ?? 0;
+    return height !== 0 ? { offset: { d: w.val(mm(height * along)) } } : undefined;
+  };
+  const build = (sign: number, sides: Json[], id?: string, face?: Json): Json => {
     const reversed = sign < 0;
     const inputs: Json = {
       profiles: makeSet(refs),
@@ -135,37 +158,61 @@ export function extrudeRow(c: FeatureContext, e: F3dExtrude, name: string): Json
       thin: { solid: {} },
       operation: w.operation(OPERATIONS[e.operation]),
     };
-    if (startHeight !== 0) inputs.start = { offset: { d: w.val(mm(reversed ? -startHeight : startHeight)) } };
+    const start = startOf(reversed, face);
+    if (start) inputs.start = start;
     return w.feature('core.extrude', name, inputs, id);
   };
+  /**
+   * The row now, or, when it starts from or stops on a face, once those faces are found. A start face
+   * that is not found falls back to the start's height when it has one; a stop face must be found.
+   */
+  const finish = (make: (start: Json | undefined, stop: Json | undefined, id?: string) => Json, stop?: SurfaceSpec) => {
+    const faces = [...(startSpec ? [startSpec] : []), ...(stop ? [stop] : [])];
+    if (faces.length === 0) return make(undefined, undefined);
+    const fs: FaceStop = {
+      faces,
+      row: (found, id) => {
+        const start = startSpec ? found[0] : undefined;
+        const end = stop ? found[faces.length - 1] : undefined;
+        if (stop && !end) return null;
+        if (startSpec && !start && startHeight === null) return null;
+        return make(start, end, id);
+      },
+    };
+    return fs;
+  };
+  const simple = (sign: number, sides: Json[]) => finish((start, _stop, id) => build(sign, sides, id, start));
   const side = (extent: Json, p: F3dParameter | null = e.taper): Json => ({ extent, taper: taper(p) });
   const flip = facing * forward;
 
-  // Up to a face: a plane parallel to the sketch is a distance; any other face is a stop found in the model as built.
+  // Up to a face: a plane parallel to the sketch, from a start of known height, is a distance; any
+  // other face is a stop found in the model as built.
   if (e.side1Offset) {
     if (e.sides !== 'one') return 'toObject';
-    const target = parallelHeight(c, e.faces[startFace], sketch);
-    if (target === null) {
-      const named = e.faces[startFace];
+    const named = e.faces[startFace];
+    const target = parallelHeight(c, named, sketch);
+    const from =
+      startHeight === null ? null : startHeight + (startSpec && profileOffset ? size(profileOffset) * facing : 0);
+    if (target === null || from === null) {
       const surface = named ? surfaceOf(c.faces, named) : null;
       if (!surface) return 'toObject';
       const offset = e.side1Offset;
       const extent = (face: Json): Json => ({
         toFace: { face, offset: plan.value(offset.value !== 0 ? offset : null, mm(size(offset)), LENGTH) },
       });
-      return { stop: surfaceSpec(surface), row: (face, id) => build(flip, [side(extent(face))], id) };
+      return finish((start, stop, id) => build(flip, [side(extent(stop as Json))], id, start), surfaceSpec(surface));
     }
-    const gap = target - startHeight;
+    const gap = target - from;
     const reach = gap >= 0 ? gap + size(e.side1Offset) : gap - size(e.side1Offset);
     if (Math.abs(reach) < 1e-9) return 'noDistance';
-    return build(reach >= 0 ? 1 : -1, [side(distance(Math.abs(reach), null))]);
+    return simple(reach >= 0 ? 1 : -1, [side(distance(Math.abs(reach), null))]);
   }
 
   if (e.sides === 'symmetric') {
-    if (!e.along) return build(1, [side({ throughAll: {} }), side({ throughAll: {} })]);
+    if (!e.along) return simple(1, [side({ throughAll: {} }), side({ throughAll: {} })]);
     if (e.along.value === 0) return 'noDistance';
     const half = Math.abs(size(e.along));
-    return build(1, [
+    return simple(1, [
       side({
         symmetric: { d: plan.value(e.along.value > 0 ? e.along : null, mm(half), LENGTH), measure: w.choice('half') },
       }),
@@ -178,15 +225,15 @@ export function extrudeRow(c: FeatureContext, e: F3dExtrude, name: string): Json
     // The first side runs a positive distance: one that does not is the second side the other way round.
     if (e.along && e.along.value <= 0) {
       if (e.against && e.against.value <= 0) return 'noDistance';
-      return build(-flip, [side(extent(e.against), e.side2Taper), side(extent(e.along))]);
+      return simple(-flip, [side(extent(e.against), e.side2Taper), side(extent(e.along))]);
     }
-    return build(flip, [side(extent(e.along)), side(extent(e.against), e.side2Taper)]);
+    return simple(flip, [side(extent(e.along)), side(extent(e.against), e.side2Taper)]);
   }
 
-  if (!e.along) return build(flip, [side({ throughAll: {} })]);
+  if (!e.along) return simple(flip, [side({ throughAll: {} })]);
   const along = size(e.along);
   if (along === 0) return 'noDistance';
-  return build(along < 0 ? -flip : flip, [side(distance(Math.abs(along), e.along))]);
+  return simple(along < 0 ? -flip : flip, [side(distance(Math.abs(along), e.along))]);
 }
 
 export function revolveRow(c: FeatureContext, r: F3dRevolve, name: string): Json | LeftOut {
@@ -265,6 +312,8 @@ function edgePair(faces: FaceIndex, recipe: F3dEdgeRecipe): [SurfaceSpec, Surfac
 /** A set of edges to find, and how to write the set given what was found. */
 export interface RoundSet {
   pairs: [SurfaceSpec, SurfaceSpec][];
+  /** Edges of the set whose faces the stored bodies do not hold: they cannot be looked for. */
+  unknown: number;
   row(refs: Json[]): Json;
 }
 
@@ -292,13 +341,15 @@ function roundSets(
       continue;
     }
     const pairs: [SurfaceSpec, SurfaceSpec][] = [];
+    let unknown = 0;
     for (const recipe of set.edges) {
       const pair = edgePair(c.faces, recipe);
       if (pair) pairs.push(pair);
-      else lost++;
+      else unknown++;
     }
-    if (pairs.length === 0) empty++;
-    else out.push({ pairs, row: (refs) => write(refs, sized) });
+    lost += unknown;
+    if (set.edges.length === 0) empty++;
+    else out.push({ pairs, unknown, row: (refs) => write(refs, sized) });
   }
   return { sets: out, lost, empty };
 }

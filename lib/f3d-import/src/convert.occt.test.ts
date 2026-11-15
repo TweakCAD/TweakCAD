@@ -195,6 +195,34 @@ function measured(display: Display): { volume: number; min: number[]; max: numbe
   return { volume, min, max };
 }
 
+/**
+ * A design with features that are not translated: the document reads, every
+ * feature has its row in order, and the rows of `f3d.` types are what pauses.
+ */
+async function kept(
+  d: F3dDesign,
+): Promise<{ timeline: Json[]; paused: string[]; notes: ImportNote[]; volume: number }> {
+  const { document, steps, notes } = convertDesign(d, {
+    ids: seededIds(9),
+    writer: { app: 'test', version: '0' },
+    name: 'plate',
+    now: '2026-11-06T00:00:00Z',
+  });
+  notes.push(...(await complete(document, steps, client)));
+  expect(readDocument(document).diagnostics.filter((x) => x.severity === 'refuse')).toEqual([]);
+  const display = service.evaluate(document);
+  const timeline = ((document.parts as Json[])[0] as Json).timeline as Json[];
+  const name = (id: string) => timeline.find((f) => f.id === id)?.name as string;
+  return { timeline, paused: display.pauses.map((p) => name(p.feature)), notes, volume: measured(display).volume };
+}
+
+/** The row `name` of a timeline, with its type and what it keeps of the file. */
+function rowNamed(timeline: Json[], name: string): Json {
+  const row = timeline.find((f) => f.name === name);
+  if (!row) throw new Error(`no row ${name} in ${timeline.map((f) => f.name).join(', ')}`);
+  return row;
+}
+
 async function built(
   d: F3dDesign,
 ): Promise<{ document: Json; display: Display; notes: ImportNote[]; volume: number; min: number[]; max: number[] }> {
@@ -293,15 +321,47 @@ describe('extrudes', { timeout: 60_000 }, () => {
     expect(r.max[2]).toBeGreaterThan(0);
   });
 
-  it('leaves out a surface extrude and says so', async () => {
-    const r = await built(design(rectangle(), [extrude({ solid: false })]));
+  it('keeps a surface extrude in the timeline untranslated, and says so', async () => {
+    const r = await kept(design(rectangle(), [extrude({ solid: false })]));
     expect(r.volume).toBe(0);
-    expect(r.notes.map((n) => n.message)).toContain('1 surface extrude left out');
+    const row = rowNamed(r.timeline, 'Extrude 1');
+    expect(row.type).toBe('f3d.extrude');
+    expect((row.inputs as Json).reason).toBe('surface extrude');
+    expect(r.paused).toEqual(['Extrude 1']);
+    expect(r.notes).toContainEqual({
+      severity: 'warning',
+      object: 'Extrude 1',
+      message: 'not translated (surface extrude): kept in the timeline, where it and what depends on it pause',
+    });
   });
 
-  it('leaves out an extrude of no length', async () => {
-    const r = await built(design(rectangle(), [extrude({ along: parameter(101, 0) })]));
-    expect(r.notes.map((n) => n.message)).toContain('1 extrude of no length left out');
+  it('keeps an extrude of no length, with the parameters it owns', async () => {
+    const r = await kept(design(rectangle(), [extrude({ along: parameter(101, 0) })]));
+    const row = rowNamed(r.timeline, 'Extrude 1');
+    expect(row.type).toBe('f3d.extrude');
+    expect((row.inputs as Json).reason).toBe('extrude of no length');
+    expect(((row.inputs as Json).parameters as Json[]).map((p) => p.role)).toEqual(['AlongDistance']);
+  });
+
+  it('keeps a feature with no translation at its place, and what does not depend on it builds', async () => {
+    const thicken: F3dFeature = {
+      kind: 'unsupported',
+      id: 105,
+      what: 'thicken',
+      parameters: [{ ...parameter(106, 0.2), role: 'Thickness', name: 'd9', expression: '2 mm' }],
+    };
+    const r = await kept(design(rectangle(), [extrude(), thicken, extrude({ id: 110, operation: 'join' })]));
+    expect(r.timeline.map((f) => [f.name, f.type])).toEqual([
+      ['Outline', 'core.sketch'],
+      ['Extrude 1', 'core.extrude'],
+      ['Thicken 1', 'f3d.thicken'],
+      ['Extrude 2', 'core.extrude'],
+    ]);
+    expect((rowNamed(r.timeline, 'Thicken 1').inputs as Json).parameters).toEqual([
+      { name: 'd9', role: 'Thickness', expression: '2 mm' },
+    ]);
+    expect(r.paused).toEqual(['Thicken 1']);
+    expect(r.volume).toBeCloseTo(20 * 10 * 30, 3);
   });
 
   it('builds a second side the other way round when the first has no length', async () => {
@@ -324,6 +384,35 @@ describe('extrudes', { timeout: 60_000 }, () => {
       ),
     );
     expect(r.max[2]).toBeCloseTo(40);
+  });
+
+  it('starts from the face it names, found in the model as built, and follows it when that face moves', async () => {
+    // The first extrude's top at z 30 mm; the second starts there and runs 10 mm on.
+    const faces = new FaceIndex();
+    faces.add([{ tags: [{ token: '1', ops: [7] }], surface: { kind: 'plane', origin: [0, 0, 3], normal: [0, 0, 1] } }]);
+    const onTop = extrude({
+      id: 110,
+      operation: 'join',
+      start: 'face',
+      along: parameter(105, 1),
+      faces: [{ token: '1', ops: [7] }],
+    });
+    const r = await built(design(rectangle(), [extrude(), onTop], faces));
+    expect(r.max[2]).toBeCloseTo(40);
+    expect(r.volume).toBeCloseTo(20 * 10 * 40, 3);
+    const timeline = ((r.document.parts as Json[])[0] as Json).timeline as Json[];
+    const [first, second] = timeline.filter((f) => f.type === 'core.extrude') as [Json, Json];
+    const start = (second.inputs as Json).start as Json;
+    expect(Object.keys(start)).toEqual(['object']);
+
+    // The first extrude made 20 mm taller: the second still starts on its top.
+    const taller = structuredClone(r.document);
+    const tall = (((taller.parts as Json[])[0] as Json).timeline as Json[]).find((f) => f.id === first.id) as Json;
+    const d = ((((tall.inputs as Json).sides as Json[])[0] as Json).extent as Json).distance as Json;
+    ((d.d as Json).def as Json).expr = { text: '50 mm', grammar: 1, refs: {} };
+    const after = service.evaluate(taller);
+    expect(after.pauses).toEqual([]);
+    expect(measured(after).max[2]).toBeCloseTo(60);
   });
 
   it('stops on a face that is not parallel to the sketch, found in the model as built', async () => {
@@ -408,7 +497,7 @@ describe('fillets', { timeout: 60_000 }, () => {
     expect(r.notes).toEqual([]);
   });
 
-  it('leaves out a fillet whose edge is not in the model, with what it was', async () => {
+  it('keeps a fillet whose edge is not in the model, to pick it again', async () => {
     const faces = new FaceIndex();
     faces.add([plane('1', [9, 0, 0], [1, 0, 0]), plane('2', [0, 9, 0], [0, 1, 0])]);
     const fillet: F3dFeature = {
@@ -416,28 +505,141 @@ describe('fillets', { timeout: 60_000 }, () => {
       id: 200,
       sets: [{ size: parameter(201, 0.2), edges: [{ faces: [name('1'), name('2')] }] }],
     };
-    const r = await built(design(rectangle(), [extrude(), fillet], faces));
+    const r = await kept(design(rectangle(), [extrude(), fillet], faces));
     expect(r.volume).toBeCloseTo(20 * 10 * 30, 3);
+    const row = rowNamed(r.timeline, 'Fillet 1');
+    expect(row.type).toBe('core.fillet');
+    const targets = ((((row.inputs as Json).sets as Json[])[0] as Json).targets as Json).set as Json[];
+    expect(targets).toEqual([{ entity: { id: [], branch: [], side: [], nb: { set: [] }, n: 1, snapshot: {} } }]);
+    expect(r.paused).toEqual(['Fillet 1']);
     expect(r.notes).toEqual([
       {
         severity: 'warning',
         object: 'Fillet 1',
-        message: 'none of its edges were found in the imported model, so it was left out',
+        message:
+          'none of its edges were found in the imported model: it is kept and pauses until they are picked again',
       },
     ]);
   });
 
-  it('counts an edge whose faces the stored bodies do not hold', async () => {
+  it('keeps a chamfer on an edge whose faces the stored bodies do not hold, to pick it again', async () => {
     const fillet: F3dFeature = {
       kind: 'chamfer',
       id: 200,
       uneven: false,
       sets: [{ size: parameter(201, 0.2), edges: [{ faces: [name('8'), name('9')] }] }],
     };
-    const r = await built(design(rectangle(), [extrude(), fillet]));
+    const r = await kept(design(rectangle(), [extrude(), fillet]));
+    expect(rowNamed(r.timeline, 'Chamfer 1').type).toBe('core.chamfer');
+    expect(r.paused).toEqual(['Chamfer 1']);
     expect(r.notes.map((n) => n.message)).toContain(
-      "1 rounded edge was not found in the file's stored bodies and left out",
+      'none of its edges were found in the imported model: it is kept and pauses until they are picked again',
     );
+  });
+});
+
+describe('construction planes', { timeout: 60_000 }, () => {
+  // A plane 3 cm above XY: x, y and normal as the matrix's columns.
+  const lifted = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 3, 0, 0, 0, 1];
+  const plane = (o: Partial<F3dFeature & { kind: 'constructionPlane' }> = {}): F3dFeature => ({
+    kind: 'constructionPlane',
+    id: 50,
+    matrix: lifted,
+    base: 'xy',
+    offset: parameter(51, 3),
+    ...o,
+  });
+  /** The rectangle drawn again on the plane, as sketch 3, and extruded 1 cm from it. */
+  const onPlane = (p: F3dFeature): F3dDesign => {
+    const upper: F3dSketch = { ...rectangle({ placement: lifted }), id: 3, name: 'Upper' };
+    const base = design(rectangle(), []);
+    const features: F3dFeature[] = [
+      { kind: 'sketch', id: 2, sketchId: SKETCH },
+      extrude(),
+      p,
+      { kind: 'sketch', id: 4, sketchId: 3 },
+      extrude({ id: 110, operation: 'join', along: parameter(111, 1), profiles: [{ ...profile, sketchId: 3 }] }),
+    ];
+    return { ...base, sketches: [rectangle(), upper], features, order: features.map((f) => f.id) };
+  };
+
+  it('writes an offset plane attached to the plane it is offset from, and a sketch on it attached to it', async () => {
+    const r = await built(onPlane(plane()));
+    const timeline = ((r.document.parts as Json[])[0] as Json).timeline as Json[];
+    const row = rowNamed(timeline, 'Plane 1');
+    expect(row.type).toBe('core.constructionPlane');
+    const attach = (row.inputs as Json).frame as Json;
+    expect(((attach.attach as Json).support as Json[])[0]).toEqual({ standard: { name: 'xy' } });
+    const sketch = rowNamed(timeline, 'Upper');
+    const support = ((((sketch.inputs as Json).frame as Json).attach as Json).support as Json[])[0];
+    expect(support).toEqual({ object: { feature: { id: row.id } } });
+    expect(r.max[2]).toBeCloseTo(40);
+    expect(r.volume).toBeCloseTo(20 * 10 * 40, 3);
+  });
+
+  it('writes a plane of a kind it does not decode where the file stored it', async () => {
+    const r = await built(onPlane(plane({ base: null, offset: null })));
+    const timeline = ((r.document.parts as Json[])[0] as Json).timeline as Json[];
+    expect(Object.keys((rowNamed(timeline, 'Plane 1').inputs as Json).frame as Json)).toEqual(['fixed']);
+    expect(r.max[2]).toBeCloseTo(40);
+  });
+});
+
+describe('holes', { timeout: 60_000 }, () => {
+  const size = (id: number, role: string, value: number, unit = 'cm'): F3dParameter => ({
+    ...parameter(id, value, unit),
+    role,
+  });
+  // The 2 × 1 × 3 cm block's top, at its middle.
+  const hole = (sizes: F3dParameter[]): F3dFeature => ({
+    kind: 'hole',
+    id: 200,
+    centres: [[1, 0.5, 3]],
+    plane: { origin: [1, 0.5, 3], normal: [0, 0, 1], x: [1, 0, 0] },
+    sizes: Object.fromEntries(sizes.map((p) => [p.role, p])),
+  });
+
+  it('drills a hole from the face it starts on, through all when it has no depth', async () => {
+    const r = await built(
+      design(rectangle(), [extrude(), hole([size(201, 'HoleDiameter', 0.4), size(202, 'TipAngle', Math.PI, 'rad')])]),
+    );
+    const timeline = ((r.document.parts as Json[])[0] as Json).timeline as Json[];
+    const row = rowNamed(timeline, 'Hole 1');
+    expect(row.type).toBe('core.hole');
+    expect(Object.keys((row.inputs as Json).placement as Json)).toEqual(['face']);
+    expect((row.inputs as Json).depth).toEqual({ throughAll: {} });
+    expect(r.volume).toBeCloseTo(20 * 10 * 30 - Math.PI * 2 * 2 * 30, 2);
+  });
+
+  it('drills a blind countersunk hole to its depth', async () => {
+    const r = await built(
+      design(rectangle(), [
+        extrude(),
+        hole([
+          size(201, 'HoleDiameter', 0.4),
+          size(202, 'HoleDepth', 1),
+          size(203, 'TipAngle', Math.PI, 'rad'),
+          size(204, 'CSDiameter', 0.7),
+          size(205, 'CSAngle', Math.PI / 2, 'rad'),
+        ]),
+      ]),
+    );
+    const timeline = ((r.document.parts as Json[])[0] as Json).timeline as Json[];
+    expect(((rowNamed(timeline, 'Hole 1').inputs as Json).kind as Json).def).toEqual({
+      expr: { text: '"countersink"', grammar: 1, refs: {} },
+    });
+    // The bore 10 mm deep, and the countersink's cone from 3.5 down to 2 mm across 1.5 mm, less the bore it holds.
+    const cone = (Math.PI * 1.5 * (3.5 * 3.5 + 3.5 * 2 + 2 * 2)) / 3 - Math.PI * 2 * 2 * 1.5;
+    expect(r.volume).toBeCloseTo(20 * 10 * 30 - Math.PI * 2 * 2 * 10 - cone, 2);
+  });
+
+  it('keeps a hole placed by its distances to edges, which stores no centre, untranslated', async () => {
+    const byEdges: F3dFeature = { ...hole([size(201, 'HoleDiameter', 0.4)]), centres: [] };
+    const r = await kept(design(rectangle(), [extrude(), byEdges]));
+    const row = rowNamed(r.timeline, 'Hole 1');
+    expect(row.type).toBe('f3d.hole');
+    expect((row.inputs as Json).reason).toBe('a hole placed by its distances to edges');
+    expect(r.paused).toEqual(['Hole 1']);
   });
 });
 
@@ -615,8 +817,8 @@ describe('features on whole bodies', { timeout: 60_000 }, () => {
     expect(r.max[0]).toBeCloseTo(60);
   });
 
-  it('leaves out a mirror whose plane it cannot read, with a note', async () => {
-    const r = await built(
+  it('keeps a mirror whose plane it cannot read untranslated, with a note', async () => {
+    const r = await kept(
       design(rectangle(), [
         extrude(),
         {
@@ -629,7 +831,10 @@ describe('features on whole bodies', { timeout: 60_000 }, () => {
         },
       ]),
     );
-    expect(r.notes.map((n) => n.message)).toContain('1 mirror about a plane not read left out');
+    const row = rowNamed(r.timeline, 'Mirror 1');
+    expect(row.type).toBe('f3d.mirror');
+    expect((row.inputs as Json).reason).toBe('mirror about a plane not read');
+    expect(r.paused).toEqual(['Mirror 1']);
   });
 
   it('repeats a body along a line', async () => {
@@ -760,21 +965,26 @@ describe('primitives', { timeout: 60_000 }, () => {
     expect(r.volume).toBeCloseTo(20 * 10 * 30 - 10 * 10 * 10, 3);
   });
 
-  it('leaves out a primitive with a size missing, with a note', async () => {
-    const r = await built(design(rectangle(), [primitive('cylinder', { Height: 1 })]));
-    expect(r.notes.map((n) => n.message)).toContain('1 cylinder with its sizes not read left out');
+  it('keeps a primitive with a size missing untranslated, with a note', async () => {
+    const r = await kept(design(rectangle(), [primitive('cylinder', { Height: 1 })]));
+    const row = rowNamed(r.timeline, 'Primitive 1');
+    expect(row.type).toBe('f3d.primitive');
+    expect((row.inputs as Json).reason).toBe('cylinder with its sizes not read');
+    expect(r.paused).toEqual(['Primitive 1']);
   });
 });
 
 describe('a body removed after a copy that is left out', { timeout: 60_000 }, () => {
   it('stays, since the copy that carried it on was not made', async () => {
-    const d: F3dDesign = {
-      ...design(rectangle(), [extrude(), { kind: 'removeBody', id: 200, bodies: [{ ops: [301] }] }]),
-      leftOut: { 'pasted body': 1 },
-    };
-    const r = await built(d);
+    const pasted: F3dFeature = { kind: 'unsupported', id: 150, what: 'pasted body', parameters: [] };
+    const d = design(rectangle(), [extrude(), pasted, { kind: 'removeBody', id: 200, bodies: [{ ops: [301] }] }]);
+    const r = await kept(d);
     expect(r.volume).toBeGreaterThan(0);
-    expect(r.notes.map((n) => n.message)).toContain('1 remove body in a design whose copies are not imported left out');
+    expect(rowNamed(r.timeline, 'Pasted body 1').type).toBe('f3d.pastedBody');
+    const removal = rowNamed(r.timeline, 'Remove Body 1');
+    expect(removal.type).toBe('f3d.removeBody');
+    expect((removal.inputs as Json).reason).toBe('remove body in a design whose copies are not imported');
+    expect(r.paused).toEqual(['Pasted body 1', 'Remove Body 1']);
   });
 });
 

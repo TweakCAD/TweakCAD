@@ -21,11 +21,20 @@ export type Json = Record<string, unknown>;
 export type StandardPlane = 'xy' | 'xz' | 'yz';
 
 /** The standard planes' frames in a part (9.1). */
-const STANDARD_FRAMES: Record<StandardPlane, { placement: Placement; normal: Vec3 }> = {
+export const STANDARD_FRAMES: Record<StandardPlane, { placement: Placement; normal: Vec3 }> = {
   xy: { placement: placementOfFrame([0, 0, 0], [1, 0, 0], [0, 0, 1]), normal: [0, 0, 1] },
   xz: { placement: placementOfFrame([0, 0, 0], [1, 0, 0], [0, 1, 0]), normal: [0, 1, 0] },
   yz: { placement: placementOfFrame([0, 0, 0], [0, 0, -1], [1, 0, 0]), normal: [1, 0, 0] },
 };
+
+/** The default plane parallel to a normal, or `xy` when none is. */
+export function standardParallel(normal: Vec3): StandardPlane {
+  return (
+    (Object.keys(STANDARD_FRAMES) as StandardPlane[]).find(
+      (p) => Math.abs(Math.abs(dot(STANDARD_FRAMES[p].normal, normal)) - 1) < 1e-9,
+    ) ?? 'xy'
+  );
+}
 
 function base64(bytes: Uint8Array): string {
   let binary = '';
@@ -123,10 +132,7 @@ export class Writer {
 
   /** A sketch frame at `at`, attached to the standard plane it is parallel to, or to the xy plane with an offset. */
   frame(at: Placement, normal: Vec3): Json {
-    const name =
-      (Object.keys(STANDARD_FRAMES) as StandardPlane[]).find(
-        (p) => Math.abs(Math.abs(dot(STANDARD_FRAMES[p].normal, normal)) - 1) < 1e-9,
-      ) ?? 'xy';
+    const name = standardParallel(normal);
     const offset = compose(invert(STANDARD_FRAMES[name].placement), at);
     return {
       attach: {
