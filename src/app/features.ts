@@ -125,6 +125,14 @@ export function featureTypeLabel(type: string, iconKey?: string): string {
   if (type === 'core.primitive' && iconKey !== undefined && SHAPE_LABELS[iconKey]) return SHAPE_LABELS[iconKey];
   const known = TYPE_LABELS[type];
   if (known) return known;
+  // Another program's feature: its kind in words, as that program names it.
+  if (isUntranslated(type)) {
+    const kind = type
+      .slice(type.indexOf('.') + 1)
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .toLowerCase();
+    return `${kind.charAt(0).toUpperCase()}${kind.slice(1)} (not supported)`;
+  }
   const words = type
     .replace(/^core\.(asm\.)?/, '')
     .replace(/([a-z])([A-Z])/g, '$1 $2')
@@ -200,7 +208,16 @@ export function iconKeyOf(feature: Json): string {
       if (kind) return kind;
     }
   }
+  if (isUntranslated(type)) return 'untranslated';
   return ICON_KEYS[type] ?? type.replace(/^core\./, '');
+}
+
+/**
+ * Whether a feature type is another program's, kept by an importer that does
+ * not translate it (`f3d.thicken`): the app keeps the row and pauses it.
+ */
+export function isUntranslated(type: string): boolean {
+  return /^[a-z][a-z0-9]*\./.test(type) && !type.startsWith('core.');
 }
 
 /** True when a flag value is the literal `true`. */

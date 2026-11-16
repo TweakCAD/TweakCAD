@@ -14,7 +14,9 @@ import { rigidMatrixAt } from './components';
 import type {
   F3dBodyOps,
   F3dCombine,
+  F3dConstructionPlane,
   F3dCopySource,
+  F3dHole,
   F3dFaceName,
   F3dFeature,
   F3dLine3,
@@ -49,6 +51,11 @@ const TYPE_MIRROR = 'D1728651';
 const TYPE_RECTANGULAR = 'AE12AD3F';
 const TYPE_CIRCULAR = '11F1A5CE';
 const TYPE_SHELL = 'E8063467';
+const TYPE_CONSTRUCTION_PLANE = 'D869265F';
+const TYPE_HOLE = '1C037A07';
+const TYPE_HOLE_CENTRE = '69EE2FA7';
+const TYPE_POINT = '994C518A';
+const TYPE_PLANE_HOLDER = '7B6C3C2D';
 
 const COMBINE_OPERATIONS = ['join', 'cut', 'intersect'] as const;
 const PLANE_NAMES: Record<string, 'xy' | 'xz' | 'yz'> = { XY: 'xy', XZ: 'xz', YZ: 'yz' };
@@ -159,6 +166,75 @@ function lineUnder(index: DesignIndex, id: number, depth = 0): F3dLine3 | null {
     }
   }
   return null;
+}
+
+/**
+ * Holes: one stored point per centre, under a geometry operand of each centre
+ * record, and the plane of the face they start on: the placement's normal,
+ * through the centres.
+ */
+export function readHoles(index: DesignIndex, ownedBy: (id: number) => readonly F3dParameter[]): F3dHole[] {
+  return (index.idsOf.get(TYPE_HOLE) ?? []).map((id) => {
+    const refs = refsOf(index, id);
+    const centres: [number, number, number][] = [];
+    for (const centre of refs.filter((r) => typeKey(index, r) === TYPE_HOLE_CENTRE)) {
+      for (const operand of refsOf(index, centre).filter((r) => typeKey(index, r) === TYPE_DIRECT_OPERAND)) {
+        const point = refsOf(index, operand).find((r) => typeKey(index, r) === TYPE_POINT);
+        const range = point === undefined ? null : primaryRange(index, point);
+        if (!range) continue;
+        const r = new ByteReader(index.bulk, readPrologue(index, range).next, range.end);
+        centres.push([r.f64(), r.f64(), r.f64()]);
+      }
+    }
+    // The placement opens with a u32 8, then a point and the face plane's unit normal; the centres lie on that plane.
+    const placement = refs.find((r) => typeKey(index, r) === TYPE_DIRECTION_INPUT);
+    const range = placement === undefined ? null : primaryRange(index, placement);
+    let plane: F3dPlane | null = null;
+    if (range) {
+      const r = new ByteReader(index.bulk, readPrologue(index, range).next, range.end);
+      if (r.remaining >= 52 && r.u32() === 8) {
+        const point: [number, number, number] = [r.f64(), r.f64(), r.f64()];
+        const normal: [number, number, number] = [r.f64(), r.f64(), r.f64()];
+        if (Math.abs(Math.hypot(...normal) - 1) < 1e-6) {
+          const seed: [number, number, number] = Math.abs(normal[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+          plane = { origin: centres[0] ?? point, normal, x: seed };
+        }
+      }
+    }
+    const sizes: Record<string, F3dParameter> = {};
+    for (const p of ownedBy(id)) sizes[p.role] = p;
+    return { kind: 'hole', id, centres, plane, sizes };
+  });
+}
+
+/**
+ * Construction planes: the frame each stored, and for an offset plane (one
+ * that owns only an `AlongDistance`) the plane it is offset from.
+ */
+export function readConstructionPlanes(
+  index: DesignIndex,
+  ownedBy: (id: number) => readonly F3dParameter[],
+): F3dConstructionPlane[] {
+  const view = new DataView(index.bulk.buffer, index.bulk.byteOffset, index.bulk.byteLength);
+  const ids = index.idsOf.get(TYPE_CONSTRUCTION_PLANE) ?? [];
+  // A construction plane's own plane record, for a plane offset from it.
+  const ownerOf = new Map<number, number>();
+  for (const id of ids)
+    for (const r of refsOf(index, id)) if (typeKey(index, r) === TYPE_PLANE && !ownerOf.has(r)) ownerOf.set(r, id);
+  return ids.map((id) => {
+    const holder = refsOf(index, id).find((r) => typeKey(index, r) === TYPE_PLANE_HOLDER);
+    const range = holder === undefined ? undefined : primaryRange(index, holder);
+    let matrix: number[] | null = null;
+    if (range) for (let p = range.start; p + MATRIX_BYTES <= range.end && !matrix; p++) matrix = rigidMatrixAt(view, p);
+    const owned = ownedBy(id);
+    const offset = owned.length === 1 && owned[0]?.role === 'AlongDistance' ? owned[0] : null;
+    let base: F3dConstructionPlane['base'] = null;
+    if (offset && holder !== undefined) {
+      const target = directsIn(index, holder).find((t) => typeKey(index, t) === TYPE_PLANE);
+      if (target !== undefined) base = originPlane(index, target) ?? ownerOf.get(target) ?? null;
+    }
+    return { kind: 'constructionPlane', id, matrix, base, offset: base === null ? null : offset };
+  });
 }
 
 /** A plane's name, when it is one of the origin's: a two-letter wide string. */

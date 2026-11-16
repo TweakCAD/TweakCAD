@@ -68,7 +68,8 @@ export interface BodyPlan {
   surfaces: SurfaceSpec[];
   /** Found nothing to do is not worth a note: what it removes is already gone. */
   quiet?: boolean;
-  row(groups: Json[][], faces: { face: Json; body: Json }[], id: string): Json | null;
+  /** `faces` are those found on `surfaces`, each with the index of the surface it lies on. */
+  row(groups: Json[][], faces: { face: Json; body: Json; surface: number }[], id: string): Json | null;
 }
 
 /** A row that needs nothing from the build, a plan that does, or why it is left out. */

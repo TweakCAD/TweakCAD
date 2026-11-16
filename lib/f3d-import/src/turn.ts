@@ -70,6 +70,8 @@ function turnAny(f: F3dFeature): F3dFeature {
     case 'move':
       // A rigid motion seen in the turned axes.
       return { ...f, matrix: f.matrix && multiplyMatrix(multiplyMatrix(Z_UP_TURN, f.matrix), BACK) };
+    case 'hole':
+      return { ...f, centres: f.centres.map((c) => turned(c)), plane: f.plane && turnPlane(f.plane) };
     case 'mirror':
       return { ...f, plane: f.plane && PLANES[f.plane], frame: f.frame && turnPlane(f.frame) };
     case 'pattern':

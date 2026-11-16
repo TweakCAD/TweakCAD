@@ -277,6 +277,12 @@ describe('feature names and types as the interface shows them', () => {
     expect(featureTypeLabel('core.someNewThing')).toBe('Some new thing');
   });
 
+  it("shows another program's feature, kept by an importer, by its kind and as not supported", () => {
+    expect(featureTypeLabel('f3d.deleteFace')).toBe('Delete face (not supported)');
+    expect(iconKeyOf({ type: 'f3d.thicken', inputs: {} })).toBe('untranslated');
+    expect(iconKeyOf({ type: 'core.extrude', inputs: {} })).toBe('extrude');
+  });
+
   it('keys loft, sweep and thread to their own icons', () => {
     expect(iconKeyOf({ type: 'core.loft' })).toBe('loft');
     expect(iconKeyOf({ type: 'core.sweep' })).toBe('sweep');
