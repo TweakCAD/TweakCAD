@@ -871,6 +871,9 @@ class BodyConverter {
         const cls = threadClass.name ?? THREAD_CLASSES[threadClass.index] ?? '6H';
         const modelled = bool(o, 'ModelThread');
         const left = integer(o, 'ThreadDirection') === 1;
+        // FreeCAD's custom clearance is on the diameter, as `clearance` is; it applies to a modelled thread only.
+        const clearance = modelled && bool(o, 'UseCustomThreadClearance') ? float(o, 'CustomThreadClearance') : 0;
+        if (clearance < 0) this.note(o, 'warning', 'its negative thread clearance was not imported');
         thread = {
           thread: {
             standard: w.val('"ISO metric"'),
@@ -878,6 +881,7 @@ class BodyConverter {
             class: w.val(JSON.stringify(cls)),
             modelled: w.flag(modelled),
             ...(left ? { hand: w.val('"left"') } : {}),
+            ...(clearance > 0 ? { clearance: w.val(mm(clearance)) } : {}),
           },
         };
         if (modelled && integer(o, 'ThreadDepthType') !== 0)

@@ -896,6 +896,9 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
           enum: ['right', 'left'],
           description: 'With `thread`: right-handed (default) or left-handed.',
         },
+        clearance: expr(
+          'With `thread`: how much bigger across the thread and its drill are (mm), for printed parts. Default 0.',
+        ),
       },
       required: ['face', 'positions', 'diameter'],
       additionalProperties: false,
@@ -1049,7 +1052,9 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
       'Thread a cylindrical face, ISO metric: a cosmetic thread, data on the face with no change to the geometry, or with `modelled` ' +
       'the groove cut into the body, which is slower to rebuild and leaves many faces. ' +
       'Without `designation` and `threadClass` the size follows the face: a shaft takes the size of its diameter (class 6g), a bore ' +
-      'the size whose tap drill it is (6H). Classes in capitals are internal. Returns `{feature, status, designation, threadClass}`.',
+      'the size whose tap drill it is (6H). Classes in capitals are internal. `clearance` makes the thread that much smaller across ' +
+      "on a shaft or bigger in a bore, for printed parts; the face's diameter stays the crest, so a shaft for an M8 thread with " +
+      '0.4 mm clearance is at most 7.6 mm. Returns `{feature, status, designation, threadClass}`.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1058,6 +1063,7 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
         threadClass: { type: 'string', description: "e.g. '6H' (internal) or '6g' (external)." },
         modelled: { type: 'boolean', description: 'Cut the thread into the body. Default false: cosmetic.' },
         hand: { type: 'string', enum: ['right', 'left'], description: 'Right-handed (default) or left-handed.' },
+        clearance: expr('How much smaller across a shaft thread is, or bigger a bore thread (mm). Default 0.'),
       },
       required: ['face'],
       additionalProperties: false,

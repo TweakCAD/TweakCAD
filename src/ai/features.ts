@@ -64,7 +64,7 @@ import {
 import { sketchesOf } from '../app/modeling/profiles';
 import { buildRevolve, newRevolveForm, type AxisChoice, type RevolveExtent } from '../app/modeling/revolve';
 import { buildSweep, newSweepForm, type ChainPick, type SweepOrientation } from '../app/modeling/sweep';
-import { buildThread, isBore, newThreadForm, sizeForDiameter } from '../app/modeling/thread';
+import { buildThread, isBore, mmOf, newThreadForm, sizeForDiameter } from '../app/modeling/thread';
 import { table } from '../sketcher/rows';
 import {
   added,
@@ -430,6 +430,7 @@ export async function featureHole(ctx: AiContext, args: Args): Promise<Json> {
     form.threadClass = optStr(args, 'threadClass') ?? '6H';
     form.modelled = optBool(args, 'modelled') ?? false;
     form.hand = oneOf(args, 'hand', ['right', 'left'], 'right');
+    form.clearance = exprArg(args, 'clearance', 'mm', '0');
   }
   const target = newTarget(editor, faceEntry.part, 'Hole');
   const r = (v: readonly number[]) => v.map((n) => Math.round(n * 1e6) / 1e6);
@@ -619,6 +620,7 @@ export async function featureThread(ctx: AiContext, args: Args): Promise<Json> {
   const faceEntry = entryOf(ctx, args.face, ['face'], 'face');
   const form = newThreadForm();
   form.face = picked(ctx, args.face, ['face'], 'face');
+  form.clearance = exprArg(args, 'clearance', 'mm', '0');
   let designation = optStr(args, 'designation');
   let threadClass = optStr(args, 'threadClass');
   if (designation === undefined || threadClass === undefined) {
@@ -630,7 +632,7 @@ export async function featureThread(ctx: AiContext, args: Args): Promise<Json> {
     if (!('value' in radius) || !axis)
       throw invalid(`${faceEntry.handle} is not a cylinder; give \`designation\` and \`threadClass\``);
     const bore = isBore(display, key, radius.value, axis);
-    const size = sizeForDiameter(2 * radius.value, bore === true);
+    const size = sizeForDiameter(2 * radius.value, bore === true, mmOf(form.clearance));
     if (!size) throw invalid(`No ISO metric size fits a ${2 * radius.value} mm ${bore ? 'bore' : 'shaft'}`);
     designation ??= size.designation;
     threadClass ??= size.threadClass;

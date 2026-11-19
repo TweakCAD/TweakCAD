@@ -22,6 +22,7 @@ import {
   type ThreadForm,
 } from './thread';
 import { ThreadSizeRows } from './ThreadSizeRows';
+import { mmOf } from './thread';
 import { sameReference } from './feature';
 import { useClicks, useFeaturePanel, usePickOutlines, usePicking, useShownPicks, type PanelSpec } from './usePanel';
 
@@ -103,7 +104,8 @@ export function ThreadPanel(props: PanelProps) {
       const axis = (await services.client.properties(key))?.measures.axis;
       const bore =
         'value' in radius && axis ? isBore(services.display.getState().display, key, radius.value, axis) : null;
-      const size = 'value' in radius ? sizeForDiameter(2 * radius.value, bore ?? false) : null;
+      const size =
+        'value' in radius ? sizeForDiameter(2 * radius.value, bore ?? false, mmOf(panel.form.clearance)) : null;
       if (!size) setHint('No size in the thread table fits this face');
       const internal = bore ?? false;
       panel.update((f) => ({
@@ -183,6 +185,13 @@ export function ThreadPanel(props: PanelProps) {
         checked={form.modelled}
         bound={panel.values.boundText(['modelled'], form.modelled)}
         onChange={(modelled) => panel.update({ modelled })}
+      />
+      <ExprField
+        label="Clearance"
+        value={form.clearance}
+        unit="mm"
+        onChange={(clearance) => panel.update({ clearance })}
+        onEnter={panel.confirm}
       />
       <ErrorLine message={panel.error} />
       <Actions onCancel={close} onOk={panel.confirm} blocked={panel.blocked} />

@@ -3,7 +3,9 @@
  * thread on a cylindrical face, cosmetic or cut into the body, the whole
  * face or a length from one of its circular edges. The size follows the
  * face: a shaft takes the size whose major diameter it is (class 6g), a bore
- * the size whose tap drill it is (class 6H).
+ * the size whose tap drill it is (class 6H). A clearance makes a printed
+ * thread smaller across on a shaft, bigger in a bore; the face's diameter
+ * is the thread's crest, so a shaft for it is that much thinner too.
  */
 import type { Doc, Json } from '@tweakcad/editor';
 import type { Display, Key } from '@tweakcad/worker/src/v2/service/types';
@@ -42,6 +44,8 @@ export interface ThreadForm {
   /** A thread in a bore, rather than on a shaft. */
   internal: boolean;
   hand: ThreadHand;
+  /** How much smaller across a shaft's thread is, or bigger a bore's (mm). */
+  clearance: string;
 }
 
 export type ThreadHand = 'right' | 'left';
@@ -67,6 +71,43 @@ export function writeHand(
 ): void {
   if (hand === 'left' || had) thread.hand = values.choice(path, hand);
   else delete thread.hand;
+}
+
+const NO_CLEARANCE = /^\s*0*(\.0*)?\s*(mm)?\s*$/;
+
+/**
+ * Writes `clearance` into `thread`, the value at `path`: when the text is not
+ * plain zero, or the thread had one (`had`); none otherwise. A failed bound
+ * on error, null when written or left out.
+ */
+export function writeClearance(
+  doc: Doc,
+  target: FeatureTarget,
+  thread: Json,
+  values: ValueSlots,
+  path: (string | number)[],
+  text: string,
+  had: boolean,
+): Built | null {
+  if (!had && NO_CLEARANCE.test(text)) {
+    delete thread.clearance;
+    return null;
+  }
+  const c = boundLength(doc, target, values, path, text, 'clearance', 'Clearance', { allowZero: true });
+  if (!c.ok) return c;
+  thread.clearance = c.value;
+  return null;
+}
+
+/** A clearance field's plain number of mm, 0 for an expression or nothing. */
+export function mmOf(text: string): number {
+  const n = Number(text.trim().replace(/\s*mm$/, ''));
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** A thread input's clearance as field text, `0` for none. */
+export function clearanceText(thread: Json): string {
+  return thread.clearance === undefined ? '0' : fieldText(exprText(thread.clearance));
 }
 
 export const EXTERNAL_CLASSES = ['6g', '4g6g', '6e', '6f', '6h'];
@@ -101,6 +142,7 @@ export function newThreadForm(): ThreadForm {
     modelled: false,
     internal: false,
     hand: 'right',
+    clearance: '0',
   };
 }
 
@@ -127,9 +169,16 @@ export function designationOfSize(size: number): string {
  * The size and class a cylindrical face of `diameter` mm takes: a shaft
  * the size whose major diameter it is, in its first designation (6g); a
  * bore the designation between whose minor and major diameters it lies,
- * nearest its tap drill, the coarse one of two as near (6H).
+ * nearest its tap drill, the coarse one of two as near (6H). With a
+ * `clearance` (mm) the diameter is matched as it would be without one: a
+ * shaft's plus the clearance, a bore's less it.
  */
-export function sizeForDiameter(diameter: number, bore: boolean): { designation: string; threadClass: string } | null {
+export function sizeForDiameter(
+  diameter: number,
+  bore: boolean,
+  clearance = 0,
+): { designation: string; threadClass: string } | null {
+  diameter += bore ? -clearance : clearance;
   if (!bore) {
     let best: { designation: string; off: number } | null = null;
     for (const size of ISO_METRIC_SIZES) {
@@ -227,6 +276,16 @@ export function buildThread(doc: Doc, target: FeatureTarget, form: ThreadForm, v
     modelled: values.flag(['modelled'], form.modelled),
   };
   writeHand(inputs, values, ['hand'], form.hand, at(target.base, 'hand') !== undefined);
+  const failed = writeClearance(
+    doc,
+    target,
+    inputs,
+    values,
+    ['clearance'],
+    form.clearance,
+    at(target.base, 'clearance') !== undefined,
+  );
+  if (failed) return failed;
   if (form.length === 'distance') {
     if (!form.from) return needsPick('Pick the edge the thread starts from', 'from');
     const d = boundLength(doc, target, values, ['length', 'distance', 'd'], form.distance, 'distance', 'Length');
@@ -246,6 +305,7 @@ export function readThread(doc: Doc, _part: string, inputs: Json): ThreadForm {
   form.internal = isInternalClass(form.threadClass);
   form.modelled = read.flag(inputs.modelled);
   form.hand = handOf(read, inputs.hand);
+  form.clearance = clearanceText(inputs);
   const length = inputs.length as Json | undefined;
   if (length && 'distance' in length) {
     form.length = 'distance';

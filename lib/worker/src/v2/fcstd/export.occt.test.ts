@@ -290,6 +290,39 @@ describe('FreeCAD export of threads', { timeout: 120_000 }, () => {
     expect(text(got.designation)).toBe('"M6x0.75"');
     expect(text(got.hand)).toBe('"left"');
   });
+
+  it("writes a modelled tapped hole's clearance as FreeCAD's custom thread clearance, and reads it back", async () => {
+    const doc = JSON.parse(readFileSync(join(FIXTURES, 'hex-nut-iso4032.cadjson'), 'utf8')) as Json;
+    const part = (doc.parts as Json[])[0] as Json;
+    const hole = (part.timeline as Json[]).find((f) => f.type === 'core.hole') as Json;
+    const thread = ((hole.inputs as Json).thread as Json).thread as Json;
+    (thread.modelled as Json).def = { expr: { grammar: 1, refs: {}, text: 'true' } };
+    thread.clearance = {
+      def: { expr: { grammar: 1, refs: {}, text: '0.3 mm' } },
+      id: 'val_clearanceaaaaaaaaaaaaaaaaa',
+    };
+
+    const service = new EvaluationService(k, gcs);
+    expect(service.evaluate(doc).pauses).toEqual([]);
+    const out = service.exportFreeCad();
+    service.release();
+    expect(written(out.bytes, 'PartDesign::Hole')).toMatchObject({
+      UseCustomThreadClearance: 'true',
+      CustomThreadClearance: '0.3',
+    });
+    const back = importFcstd(out.bytes, {
+      ids: seededIds(5),
+      writer: { app: 'test', version: '0' },
+      name: 'back',
+      now: '2026-11-06T00:00:00Z',
+    });
+    if (!back.ok) throw new Error(back.error);
+    const read = (((back.value.document.parts as Json[])[0] as Json).timeline as Json[]).find(
+      (f) => f.type === 'core.hole',
+    ) as Json;
+    const got = ((read.inputs as Json).thread as Json).thread as Json;
+    expect((((got.clearance as Json).def as Json).expr as Json).text).toBe('0.3 mm');
+  });
 });
 
 /** The properties written for the first object of `type`, each by its value attribute; undefined when there is none. */

@@ -131,6 +131,17 @@ describe('threads in a Hole', { timeout: 120_000 }, () => {
     expect(display.pauses).toEqual([]);
   });
 
+  it("reads a modelled thread's custom clearance, which rebuilds", async () => {
+    const { document, display } = await imported(
+      rewritten('hole_model_thread.FCStd', 'Hole', {
+        UseCustomThreadClearance: property('UseCustomThreadClearance', 'Bool', '<Bool value="true"/>'),
+        CustomThreadClearance: float('CustomThreadClearance', 'QuantityConstraint', 0.3),
+      }),
+    );
+    expect(text(threadOf(document).clearance)).toBe('0.3 mm');
+    expect(display.pauses).toEqual([]);
+  });
+
   it('keeps a thread that is not modelled as one', async () => {
     const { document } = await imported(new Uint8Array(readFileSync(join(FIXTURES, 'hole_threaded.FCStd'))));
     expect(text(threadOf(document).modelled)).toBe('false');

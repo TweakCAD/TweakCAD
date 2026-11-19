@@ -173,6 +173,20 @@ describe('a tapped hole', () => {
     expect(readHole(editor.document, ids.part, back.inputs)?.hand).toBe('right');
     expect(((back.inputs.thread as Json).thread as Json).hand).toBeDefined();
   });
+
+  it('writes a clearance on the thread when it has one, and reads it back', () => {
+    const { doc, ids } = standardDocument();
+    const editor = new Editor(doc, { ids: seededIds(5) });
+    const target = { part: ids.part, feature: editor.newId('feat'), name: 'Hole 1' };
+    const form = { ...formOn(face('top')), threaded: true, designation: 'M8', threadClass: '6H' };
+    const slots = () => new ValueSlots(() => editor.newId('val'));
+    const none = buildHole(editor.document, target, form, slots());
+    if (!none.ok) throw new Error(none.message);
+    expect(((none.inputs.thread as Json).thread as Json).clearance).toBeUndefined();
+    const some = buildHole(editor.document, target, { ...form, clearance: '0.3' }, slots());
+    if (!some.ok) throw new Error(some.message);
+    expect(readHole(editor.document, ids.part, some.inputs)?.clearance).toBe('0.3');
+  });
 });
 
 describe('hole checks', () => {

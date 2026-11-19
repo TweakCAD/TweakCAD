@@ -844,6 +844,11 @@ class PartWriter {
       );
       out.enumeration('ThreadClass', Math.max(FREECAD_CLASSES.indexOf(thread.class), FREECAD_CLASSES.indexOf('6H')));
       out.enumeration('ThreadDirection', thread.leftHand ? 1 : 0);
+      if (thread.modelled && thread.clearance > 0) {
+        out.bool('UseCustomThreadClearance', true);
+        out.length('CustomThreadClearance', thread.clearance);
+      } else if (thread.clearance > 0)
+        this.note(label, 'FreeCAD keeps a thread clearance on a modelled thread only, so this cosmetic one has none');
       if (!fc.exact)
         this.note(
           label,

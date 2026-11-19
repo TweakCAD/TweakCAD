@@ -295,8 +295,9 @@ registerBuilder('core.hole', (ctx) => {
     'frame' in placement
       ? frameOf(ctx, placement.frame as Json)
       : faceFrameOf(ctx, placement.face as Json, 'the hole face');
-  // A tapped hole is drilled with the standard's tap drill; `diameter` is not used.
-  const shape = shapeOf(ctx, thread ? thread.size.tapDrill / 2 : undefined);
+  // A tapped hole is drilled with the standard's tap drill, bigger by the thread's clearance; `diameter` is not used.
+  const drill = thread ? (thread.size.tapDrill + thread.clearance) / 2 : undefined;
+  const shape = shapeOf(ctx, drill);
   const namer = startFeature(part.state, { feature: id, ordinal }, adapter, names);
   const face =
     'face' in placement && !('inContext' in (placement.face as Json))
@@ -330,7 +331,7 @@ registerBuilder('core.hole', (ctx) => {
   for (const b of bored) {
     const held = (b.bores[0] as NamedEntity).body;
     const body = cuts.get(held) ?? bodyOf(ctx, threading, b.bores[0] as NamedEntity);
-    cuts.set(held, cutThread(ctx, threading, body, thread, { ...b.thread, radius: thread.size.tapDrill / 2 }, b.id));
+    cuts.set(held, cutThread(ctx, threading, body, thread, { ...b.thread, radius: drill as number }, b.id));
   }
   finishThreads(ctx, threading, cuts);
 });

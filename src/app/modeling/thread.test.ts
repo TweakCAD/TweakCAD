@@ -140,6 +140,37 @@ describe('the hand of a thread', () => {
   });
 });
 
+describe('the clearance of a thread', () => {
+  it('is written only when not zero, read back, and kept once written', () => {
+    const { doc, part, target, stored } = threaded('threaded-rod');
+    const form = readThread(doc, part, stored);
+    expect(form.clearance).toBe('0');
+    const none = buildThread(doc, target, form, slots(stored, doc));
+    if (!none.ok) throw new Error(none.message);
+    expect(none.inputs.clearance).toBeUndefined();
+    const some = buildThread(doc, target, { ...form, clearance: '0.4' }, slots(stored, doc));
+    if (!some.ok) throw new Error(some.message);
+    expect(some.inputs.clearance).toMatchObject({ def: { expr: { text: '0.4 mm' } } });
+    const back = readThread(doc, part, some.inputs);
+    expect(back.clearance).toBe('0.4');
+    const zero = buildThread(
+      doc,
+      { ...target, base: some.inputs },
+      { ...back, clearance: '0' },
+      slots(some.inputs, doc),
+    );
+    if (!zero.ok) throw new Error(zero.message);
+    expect(zero.inputs.clearance).toBeDefined();
+    const negative = buildThread(doc, target, { ...form, clearance: '-0.2' }, slots(stored, doc));
+    expect(negative).toMatchObject({ ok: false, field: 'clearance' });
+  });
+
+  it('sizes a face as it would be without it', () => {
+    expect(sizeForDiameter(7.6, false, 0.4)).toEqual({ designation: 'M8', threadClass: '6g' });
+    expect(sizeForDiameter(7.2, true, 0.4)).toEqual({ designation: 'M8', threadClass: '6H' });
+  });
+});
+
 describe('the size and designation a thread offers', () => {
   it('list the sizes, then the designations of the size, coarse first, each with its pitch', () => {
     const html = renderToStaticMarkup(ThreadSizeRows({ designation: 'M8x1', bound: null, onChange: () => undefined }));
