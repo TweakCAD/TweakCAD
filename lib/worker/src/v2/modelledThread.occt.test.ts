@@ -68,13 +68,14 @@ const spec = (d: DocBuilder, designation: string, cls: string) => ({
 });
 
 /** What a thread of the size removes along `length` from a cylinder of `radius`. */
-function removes(designation: string, internal: boolean, radius: number, length: number): number {
+function removes(designation: string, internal: boolean, radius: number, length: number, clearance = 0): number {
   const threadSpec: ThreadSpec = {
     standard: ISO_METRIC,
     class: internal ? '6H' : '6g',
     internal,
     size: threadSize(ISO_METRIC, designation),
     modelled: true,
+    clearance,
   };
   return grooveVolume(grooveOf(threadSpec, radius, length));
 }
@@ -311,12 +312,13 @@ describe('a modelled thread on a shaft', () => {
 });
 
 describe('the groove', () => {
-  const threadSpec = (internal: boolean): ThreadSpec => ({
+  const threadSpec = (internal: boolean, clearance = 0): ThreadSpec => ({
     standard: ISO_METRIC,
     class: internal ? '6H' : '6g',
     internal,
     size: threadSize(ISO_METRIC, 'M6'),
     modelled: true,
+    clearance,
   });
 
   it('is the ISO 68-1 profile at the basic diameters', () => {
@@ -337,6 +339,82 @@ describe('the groove', () => {
   it('has nothing to cut where the cylinder is past the thread', () => {
     expect(() => grooveOf(threadSpec(true), 3, 10)).toThrow(/no groove/);
     expect(() => grooveOf(threadSpec(false), 2.4, 10)).toThrow(/no groove/);
+  });
+
+  it('moves by half the clearance, towards the axis on a shaft and away in a bore', () => {
+    const H = (Math.sqrt(3) / 2) * 1;
+    const minor = 3 - (5 * H) / 8;
+    expect(grooveOf(threadSpec(true, 0.4), minor + 0.2, 10)).toMatchObject({
+      rootRadius: 3.2,
+      rootHalfWidth: 1 / 16,
+      coverHalfWidth: expect.closeTo(3 / 8, 9),
+    });
+    expect(grooveOf(threadSpec(false, 0.4), 2.8, 10)).toMatchObject({
+      rootRadius: expect.closeTo(minor - 0.2, 9),
+      rootHalfWidth: 1 / 8,
+      coverHalfWidth: expect.closeTo(7 / 16, 9),
+    });
+  });
+});
+
+describe('a modelled thread with a clearance', () => {
+  const withClearance = (x: DocBuilder, designation: string, cls: string, clearance: string) => ({
+    ...spec(x, designation, cls),
+    clearance: x.val(clearance),
+  });
+
+  it('is smaller across on a shaft whose diameter is its crest', { timeout: 60_000 }, () => {
+    const { d, ev } = threadedShaft(
+      (x) => shaft(x, 3.8, 6),
+      (x, face) =>
+        void x.feature('core.thread', {
+          faces: makeSet([face]),
+          ...withClearance(x, 'M8', '6g', '0.4 mm'),
+          length: { full: {} },
+        }),
+    );
+    expect(ev.pauses).toEqual([]);
+    expect(volume(ev, d) / (Math.PI * 3.8 ** 2 * 6 - removes('M8', false, 3.8, 6, 0.4))).toBeCloseTo(1, 7);
+  });
+
+  it('pauses on a shaft thicker than its crest', { timeout: 60_000 }, () => {
+    const { ev } = threadedShaft(
+      (x) => shaft(x, 4, 6),
+      (x, face) =>
+        void x.feature('core.thread', {
+          faces: makeSet([face]),
+          ...withClearance(x, 'M8', '6g', '0.4 mm'),
+          length: { full: {} },
+        }),
+    );
+    expect(ev.pauses.map((p) => p.message)).toEqual([
+      expect.stringMatching(/M8 with 0\.4 mm clearance thread fits a face of diameter 6\.\d+ to 7\.6 mm, not 8 mm/),
+    ]);
+  });
+
+  it('drills a tapped hole bigger by its clearance, and the thread with it', { timeout: 60_000 }, () => {
+    const d = new DocBuilder();
+    plate(d, 8);
+    hole(d, 8, withClearance(d, 'M8', '6H', '0.4 mm'));
+    const ev = build(d);
+    const drilled = 60 * 40 * 8 - Math.PI * 3.6 ** 2 * 8;
+    expect(volume(ev, d) / (drilled - removes('M8', true, 3.6, 8, 0.4))).toBeCloseTo(1, 7);
+  });
+
+  it('records the diameters it is made at on a cosmetic thread', { timeout: 60_000 }, () => {
+    const { d, ev } = threadedShaft(
+      (x) => shaft(x, 3.8, 6),
+      (x, face) =>
+        void x.feature('core.thread', {
+          faces: makeSet([face]),
+          ...withClearance(x, 'M8', '6g', '0.4 mm'),
+          modelled: x.val('false'),
+          length: { full: {} },
+        }),
+    );
+    expect(ev.pauses).toEqual([]);
+    const [thread] = [...ev.parts.get(d.partId)!.threads.values()].flat();
+    expect(thread).toMatchObject({ designation: 'M8', major: expect.closeTo(7.6, 9) });
   });
 });
 

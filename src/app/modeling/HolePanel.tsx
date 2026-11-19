@@ -55,7 +55,7 @@ import {
 import { kindOf, pickFor, planarFrame } from './picks';
 import { SnapMarker } from './snapMarker';
 import { ThreadSizeRows } from './ThreadSizeRows';
-import { HANDS, INTERNAL_CLASSES } from './thread';
+import { HANDS, INTERNAL_CLASSES, mmOf } from './thread';
 import { keysOf, useClicks, useFeaturePanel, usePicking, useShownPicks, type PanelSpec } from './usePanel';
 
 const SPEC: PanelSpec<HoleForm> = {
@@ -322,7 +322,9 @@ export function HolePanel(props: PanelProps) {
   const activeId = form.positions.some((p) => p.id === active)
     ? active
     : (form.positions[form.positions.length - 1]?.id ?? null);
-  const drill = form.threaded ? tapDrill(form.designation) : null;
+  const tap = form.threaded ? tapDrill(form.designation) : null;
+  // The drill grows by a clearance written as a plain number of mm; an expression shows the tap drill alone.
+  const drill = tap === null ? null : Math.round((tap + mmOf(form.clearance)) * 1000) / 1000;
   const bound = (path: string[], shown: string | boolean) => panel.values.boundText(path, shown);
 
   return (
@@ -454,6 +456,13 @@ export function HolePanel(props: PanelProps) {
             checked={form.modelled}
             bound={bound(['thread', 'thread', 'modelled'], form.modelled)}
             onChange={(modelled) => set({ modelled })}
+          />
+          <ExprField
+            label="Clearance"
+            value={form.clearance}
+            unit="mm"
+            onChange={(clearance) => set({ clearance })}
+            onEnter={panel.confirm}
           />
           {drill !== null && (
             <Row label="Drill">

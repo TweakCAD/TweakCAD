@@ -49,17 +49,33 @@ export interface ThreadSpec {
   modelled: boolean;
   /** A left-handed thread; absent or false, right-handed. */
   leftHand?: boolean;
+  /** How much smaller across a shaft's thread is made, or bigger a bore's (mm); 0 is the basic size. */
+  clearance: number;
+}
+
+/** The diameters a thread is made at: the standard's, moved by its clearance, inwards on a shaft, outwards in a bore. */
+export function madeSize(spec: ThreadSpec): { major: number; pitchDiameter: number; minor: number } {
+  const d = spec.internal ? spec.clearance : -spec.clearance;
+  const { major, pitchDiameter, minor } = spec.size;
+  return { major: major + d, pitchDiameter: pitchDiameter + d, minor: minor + d };
+}
+
+/** An ISO size with its clearance, for messages: `M8`, or `M8 with 0.4 mm clearance`. */
+function sizeText(spec: ThreadSpec): string {
+  return spec.clearance > 0 ? `${spec.size.designation} with ${spec.clearance} mm clearance` : spec.size.designation;
 }
 
 const HAND = { type: 'choice', options: ['right', 'left'] } as const;
 
-/** The standard, designation, class, modelled flag and hand of a thread, checked against the standard's table. */
+/** The standard, designation, class, modelled flag, hand and clearance of a thread, checked against the standard's table. */
 export function threadSpec(ctx: BuildContext, t: Json): ThreadSpec {
   const { values } = ctx.ev;
   const standard = values.literal(t.standard, TEXT) as string;
   const cls = values.literal(t.class, TEXT) as string;
   const size = threadSize(standard, values.literal(t.designation, TEXT) as string);
   const leftHand = t.hand !== undefined && values.literal(t.hand, HAND) === 'left';
+  const clearance = t.clearance === undefined ? 0 : values.number(t.clearance, LENGTH);
+  if (!(clearance >= 0)) throw new FeaturePause('a thread clearance below zero is not allowed');
   return {
     standard,
     class: cls,
@@ -67,6 +83,7 @@ export function threadSpec(ctx: BuildContext, t: Json): ThreadSpec {
     size,
     modelled: values.literal(t.modelled, FLAG) === true,
     leftHand,
+    clearance,
   };
 }
 
@@ -147,14 +164,15 @@ const VOLUME_MATCH = 1e-4;
  * The groove of an ISO 68-1 thread in a cylinder of `radius`. The basic
  * profile's flanks run from the minor to the major radius, a flat of P/8
  * at the major one inside a nut and P/4 at the minor one on a bolt; a cylinder
- * between the two takes the part of the groove it reaches.
+ * between the two takes the part of the groove it reaches. A clearance moves
+ * the whole profile by half of it, towards the axis on a bolt, away in a nut.
  */
 export function grooveOf(spec: ThreadSpec, radius: number, length: number): ThreadGroove {
-  const { pitch, major } = spec.size;
-  const big = major / 2;
+  const { pitch } = spec.size;
+  const big = madeSize(spec).major / 2;
   const small = big - (5 * Math.sqrt(3) * pitch) / 16;
   if (spec.internal ? radius >= big - TOLERANCE : radius <= small + TOLERANCE)
-    throw new FeaturePause(`an ${spec.size.designation} thread has no groove in a face of diameter ${2 * radius} mm`);
+    throw new FeaturePause(`an ${sizeText(spec)} thread has no groove in a face of diameter ${2 * radius} mm`);
   const across = (radius - small) / (big - small);
   const common = { pitch, length, coverRadius: radius, phase: PHASE * pitch };
   return spec.internal
@@ -297,6 +315,8 @@ export function finishThreads(ctx: BuildContext, namer: FeatureNamer, cuts: Read
   part.state = namer.finish(outcomes);
 }
 
+const round = (mm: number): number => Math.round(mm * 1000) / 1000;
+
 const keyOf = (e: NamedEntity): EntityKey => ({ hash: finest(e.ladder), branch: e.branch });
 
 /**
@@ -310,11 +330,13 @@ export function cosmeticThread(
   faces: readonly NamedEntity[],
   partial?: { length: number; from: V3 },
 ): CosmeticThread {
-  const { size } = spec;
+  const made = madeSize(spec);
   const cylinder = cylinderOf(ctx, faces);
   const diameter = 2 * cylinder.radius;
-  if (diameter < size.minor - TOLERANCE || diameter > size.major + TOLERANCE) {
-    throw new FeaturePause(`an ${size.designation} thread does not fit a face of diameter ${diameter} mm`);
+  if (diameter < made.minor - TOLERANCE || diameter > made.major + TOLERANCE) {
+    throw new FeaturePause(
+      `an ${sizeText(spec)} thread fits a face of diameter ${round(made.minor)} to ${round(made.major)} mm, not ${diameter} mm`,
+    );
   }
   const hole = isHole(ctx, faces[0] as NamedEntity, cylinder.origin, cylinder.axis);
   if (hole !== spec.internal) {
@@ -367,6 +389,7 @@ function threadRecord(
   length: number,
 ): CosmeticThread {
   const { size } = spec;
+  const { major, pitchDiameter, minor } = madeSize(spec);
   return {
     faces: faces.map(keyOf),
     standard: spec.standard,
@@ -374,9 +397,9 @@ function threadRecord(
     class: spec.class,
     internal: spec.internal,
     pitch: size.pitch,
-    major: size.major,
-    pitchDiameter: size.pitchDiameter,
-    minor: size.minor,
+    major,
+    pitchDiameter,
+    minor,
     start,
     direction,
     length,

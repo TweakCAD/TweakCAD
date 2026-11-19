@@ -30,7 +30,7 @@ import {
   type PickedRef,
   type ValueSlots,
 } from './feature';
-import { handOf, writeHand, type ThreadHand } from './thread';
+import { clearanceText, handOf, writeClearance, writeHand, type ThreadHand } from './thread';
 
 export type HoleKind = 'simple' | 'counterbore' | 'countersink';
 
@@ -92,6 +92,8 @@ export interface HoleForm {
   /** The thread cut into the bore, rather than data on it. */
   modelled: boolean;
   hand: ThreadHand;
+  /** How much bigger across the bore's thread is, and its drill (mm). */
+  clearance: string;
 }
 
 export function newHoleForm(): HoleForm {
@@ -113,6 +115,7 @@ export function newHoleForm(): HoleForm {
     designation: 'M5',
     threadClass: '6H',
     hand: 'right',
+    clearance: '0',
   };
 }
 
@@ -306,6 +309,16 @@ export function buildHole(doc: Doc, target: FeatureTarget, form: HoleForm, value
       form.hand,
       at(target.base, 'thread', 'thread', 'hand') !== undefined,
     );
+    const failed = writeClearance(
+      doc,
+      target,
+      (inputs.thread as Json).thread as Json,
+      values,
+      path('clearance'),
+      form.clearance,
+      at(target.base, 'thread', 'thread', 'clearance') !== undefined,
+    );
+    if (failed) return failed;
   } else inputs.thread = { none: {} };
   return { ok: true, inputs, names: namesOf([form.face, ...edges]) };
 }
@@ -355,6 +368,7 @@ export function readHole(doc: Doc, _part: string, inputs: Json): HoleForm | null
     form.threadClass = read.choice(thread.class) || form.threadClass;
     form.modelled = read.flag(thread.modelled);
     form.hand = handOf(read, thread.hand);
+    form.clearance = clearanceText(thread);
   }
   return form;
 }

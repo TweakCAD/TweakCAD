@@ -294,7 +294,7 @@ describe('what pauses', () => {
       ],
       [
         (d, b, h) => thread(d, [boreRef(d, b, h)], spec(d, 'M12')),
-        'an M12 thread does not fit a face of diameter 6 mm',
+        'an M12 thread fits a face of diameter 10.106 to 12 mm, not 6 mm',
       ],
       [
         (d) => hole(d, { thread: spec(d, 'M6', '6g'), id: d.id('hp') }),

@@ -80,7 +80,7 @@ export function readHoleInputs(r: Reader, values: ValueIndex, inputs: Json, path
   else if (thread?.tag === 'thread') {
     const t = r.object(thread.payload, thread.path, {
       required: ['standard', 'designation', 'class', 'modelled'],
-      optional: ['hand'],
+      optional: ['hand', 'clearance'],
     });
     if (t) {
       value(c, t.standard, child(thread.path, 'standard'), TEXT);
@@ -88,6 +88,7 @@ export function readHoleInputs(r: Reader, values: ValueIndex, inputs: Json, path
       value(c, t.class, child(thread.path, 'class'), TEXT);
       value(c, t.modelled, child(thread.path, 'modelled'), FLAG);
       if (t.hand !== undefined) value(c, t.hand, child(thread.path, 'hand'), HAND);
+      if (t.clearance !== undefined) value(c, t.clearance, child(thread.path, 'clearance'), LENGTH);
     }
   }
 }

@@ -999,6 +999,7 @@ function expectGroove(
       internal,
       size: threadSize(ISO_METRIC, 'M6'),
       modelled: true,
+      clearance: 0,
     },
     radius,
     length,

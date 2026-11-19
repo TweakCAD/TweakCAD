@@ -13,12 +13,15 @@ export const HAND = choice('right', 'left');
  * whole face) or `{"distance": {"d", "from"}}`: `d` along the faces' axis from
  * `from`, a circular edge of a threaded face where the thread starts.
  * `hand`, optional, is `right` or `left`; a thread without it is right-handed.
+ * `clearance`, optional, a length not below zero: the thread made that much
+ * smaller across on a shaft, that much bigger in a bore, for printed parts;
+ * none is the standard's basic size.
  */
 export function readThreadInputs(r: Reader, values: ValueIndex, inputs: Json, path: string, scope: Scope): void {
   const c: InputContext = { r, values, scope };
   const o = r.object(inputs, path, {
     required: ['faces', 'standard', 'designation', 'class', 'modelled', 'length'],
-    optional: ['hand'],
+    optional: ['hand', 'clearance'],
   });
   if (!o) return;
   const facesPath = child(path, 'faces');
@@ -30,6 +33,7 @@ export function readThreadInputs(r: Reader, values: ValueIndex, inputs: Json, pa
   value(c, o.class, child(path, 'class'), TEXT);
   value(c, o.modelled, child(path, 'modelled'), FLAG);
   if (o.hand !== undefined) value(c, o.hand, child(path, 'hand'), HAND);
+  if (o.clearance !== undefined) value(c, o.clearance, child(path, 'clearance'), LENGTH);
   const length = r.union(o.length, child(path, 'length'), ['full', 'distance']);
   if (length?.tag === 'full') r.object(length.payload, length.path, { required: [] });
   else if (length?.tag === 'distance') {
