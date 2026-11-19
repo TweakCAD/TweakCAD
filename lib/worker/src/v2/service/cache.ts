@@ -330,7 +330,7 @@ const hashOfPart = (v: unknown): string => {
 };
 
 /** The document-wide dependencies. Assets are not among them: each feature records the rows it reads. */
-function documentKey(doc: Json): string {
+export function documentKey(doc: Json): string {
   return [doc.schemaVersion, doc.namingRules, doc.settings ?? {}, doc.library ?? []].map(hashOfPart).join('|');
 }
 
