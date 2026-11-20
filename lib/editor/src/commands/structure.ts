@@ -1,6 +1,16 @@
 import { contentHash, isPlainObject, makeSet } from '@tweakcad/format';
 import { CommandError } from '../errors';
-import { findOwner, findRow, mergeFields, objectAt, type Doc, type Json, type RowAt } from '../rows';
+import {
+  arrayAt,
+  findOwner,
+  findRow,
+  insertionIndex,
+  mergeFields,
+  objectAt,
+  type Doc,
+  type Json,
+  type RowAt,
+} from '../rows';
 import {
   insertRow,
   mergeNames,
@@ -49,6 +59,16 @@ function removeTopLevel(ctx: RunContext, at: RowAt, what: string): void {
   removeRow(ctx, at);
 }
 
+/** Moves a part or assembly row before another of its table, or to the end. Evaluation follows dependencies, not this order. */
+function moveTopLevel(ctx: RunContext, at: RowAt, before: string | undefined, what: string): void {
+  if (before === at.id) throw new CommandError('bad-argument', `a ${what} cannot go before itself`);
+  const rows = arrayAt(ctx.draft, at.table);
+  if (before !== undefined && !rows.some((r) => isPlainObject(r) && r.id === before))
+    throw new CommandError('not-found', `no ${what} ${before} to go before`);
+  const [row] = rows.splice(at.index, 1);
+  rows.splice(insertionIndex(rows, before, what), 0, row);
+}
+
 function decodeBase64(text: string): Uint8Array {
   const binary = atob(text);
   const bytes = new Uint8Array(binary.length);
@@ -85,9 +105,11 @@ export const structureHandlers: Handlers<
   | 'addPart'
   | 'removePart'
   | 'renamePart'
+  | 'movePart'
   | 'addAssembly'
   | 'removeAssembly'
   | 'renameAssembly'
+  | 'moveAssembly'
   | 'addAttribute'
   | 'editAttribute'
   | 'removeAttribute'
@@ -168,6 +190,13 @@ export const structureHandlers: Handlers<
     label: (c, doc) => `Rename ${rowName(doc, c.part, 'part')}`,
     run(c, ctx) {
       objectAt(ctx.draft, part(ctx.doc, c.part).path).name = c.name;
+    },
+  },
+
+  movePart: {
+    label: (c, doc) => `Move ${rowName(doc, c.part, 'part')}`,
+    run(c, ctx) {
+      moveTopLevel(ctx, part(ctx.doc, c.part), c.before, 'part');
     },
   },
 
@@ -299,6 +328,13 @@ export const structureHandlers: Handlers<
     label: (c, doc) => `Remove ${rowName(doc, c.row, 'row')}`,
     run(c, ctx) {
       removeRow(ctx, assemblyRow(ctx.doc, c.row));
+    },
+  },
+
+  moveAssembly: {
+    label: (c, doc) => `Move ${rowName(doc, c.assembly, 'assembly')}`,
+    run(c, ctx) {
+      moveTopLevel(ctx, assembly(ctx.doc, c.assembly), c.before, 'assembly');
     },
   },
 

@@ -191,6 +191,7 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
       "`{type:'renameFeature',feature:'feat_…',name:'Base'}`, `{type:'setSuppressed',feature:'feat_…',suppressed:true}`, " +
       "`{type:'removeFeature',feature:'feat_…'}`, `{type:'setRollback',part:'part_…',before:'feat_…'}` (omit `before` for the end). " +
       "Feature groups: `{type:'addGroup',part:'part_…',group:{id:'new:grp',name:'Holes',members:['feat_…']}}` (features next to each other in the timeline), `editGroup`, `removeGroup`. " +
+      "The browser's order of parts and assemblies: `{type:'movePart',part:'part_…',before:'part_…'}`, `moveAssembly` (omit `before` for the end). " +
       'A row a command adds needs an id: write `"new:<kind>"` (`new:grp`, `new:val`, `new:tbl`, …) and one is made; the same token ' +
       'twice in one command is one id, and the made ids are returned. ' +
       'A refused command changes nothing and says why. References to geometry are not written here: use `set_reference`.',

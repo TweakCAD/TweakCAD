@@ -69,6 +69,7 @@ import {
   moveTargets,
   type DropTarget,
   type FolderCommand,
+  type TreeCommand,
   type TreeFolder,
   type TreeThing,
 } from './folders';
@@ -266,7 +267,7 @@ export interface BrowserTreeProps {
   /** The library entries, listed where a folder holds them. */
   library?: readonly { id: string; name: string }[];
   /** Runs a folder command: a move by drag and drop or from a menu, a rename, a removal. */
-  onFolderCommand?: (command: FolderCommand) => void;
+  onFolderCommand?: (command: TreeCommand | readonly TreeCommand[]) => void;
   /** Adds a folder in `parent` (null: the top level) holding `members`; its id, or null when refused. */
   onNewFolder?: (parent: string | null, members: string[]) => string | null;
   /** Renames a part or an assembly. */
@@ -285,8 +286,8 @@ export interface BrowserTreeProps {
   onActivatePart?: (part: string | null) => void;
   /** The document's root is an assembly: whether it shows with no part active (its radio is on). */
   designActive?: boolean;
-  /** The header's New Part. */
-  onNewPart?: () => void;
+  /** The header's New Part, and a folder's New part here (the new part goes into that folder). */
+  onNewPart?: (folder?: string) => void;
   selectedFeatures: ReadonlySet<string>;
   selectedKeys: ReadonlySet<number>;
   selectedStandard: ReadonlySet<StandardPlane>;
@@ -604,6 +605,17 @@ export function BrowserTree(props: BrowserTreeProps) {
               closeMenus();
               if ('folder' in thing) newFolder(thing.folder, []);
               else newFolder(at, [thing.item]);
+            }}
+          />
+        )}
+        {'folder' in thing && props.onNewPart && (
+          <MenuButton
+            icon={<Plus size={14} />}
+            label="New part here"
+            onClick={() => {
+              closeMenus();
+              if (!open(thing.folder)) toggle(thing.folder);
+              props.onNewPart?.(thing.folder);
             }}
           />
         )}
@@ -1021,7 +1033,7 @@ export function BrowserTree(props: BrowserTreeProps) {
             <ChevronsDownUp size={12} color="#666" />
           </HeaderButton>
           {props.onNewPart && (
-            <HeaderButton label="New part" onClick={props.onNewPart}>
+            <HeaderButton label="New part" onClick={() => props.onNewPart?.()}>
               <Plus size={12} color="#666" />
             </HeaderButton>
           )}
@@ -1038,12 +1050,12 @@ export function BrowserTree(props: BrowserTreeProps) {
           ? {
               onDragOver: (e: React.DragEvent) => {
                 if (e.target !== e.currentTarget || !dragged) return;
-                if (dropCommand(tree, dragged, { top: true })) e.preventDefault();
+                if (dropCommand(tree, dragged, { end: true })) e.preventDefault();
               },
               onDrop: (e: React.DragEvent) => {
                 if (e.target !== e.currentTarget || !dragged) return;
                 e.preventDefault();
-                const command = dropCommand(tree, dragged, { top: true });
+                const command = dropCommand(tree, dragged, { end: true });
                 endDrag();
                 if (command) props.onFolderCommand?.(command);
               },

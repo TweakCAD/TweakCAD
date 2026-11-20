@@ -61,7 +61,7 @@ import { asmTimelineRows } from './assembly/asmFeatures';
 import { editJoint, isJointAction, jointMenu, jointTimelineRows, runJointAction } from './assembly/jointActions';
 import { activatePart, editInPlace, renameJoint } from './assembly/commands';
 import { assemblyOf, jointLocked, libraryOf } from './assembly/assembly';
-import { addFolder, foldersOf } from './folders';
+import { addFolder, foldersOf, runTreeCommands } from './folders';
 import { componentTimelines } from './assembly/componentTimelines';
 import { freezeFeature, unfreezeFeature } from './modeling/freeze';
 import { useDocument, useHistory, useSlice } from './hooks';
@@ -671,7 +671,9 @@ export function AppShell(props: AppShellProps) {
             {...(props.renderAssembly ? { renderAssembly: props.renderAssembly } : {})}
             folders={foldersOf(doc)}
             library={libraryOf(doc).map((e) => ({ id: String(e.id), name: String(e.name ?? '') }))}
-            onFolderCommand={(command) => report(editor.dispatch(command), 'Folders')}
+            onFolderCommand={(command) =>
+              report(runTreeCommands(editor, 'type' in command ? [command] : command), 'Folders')
+            }
             onRenameItem={(item, name) =>
               report(
                 editor.dispatch(
@@ -694,8 +696,8 @@ export function AppShell(props: AppShellProps) {
             {...(readOnly
               ? { readOnly: true }
               : {
-                  onNewPart: () =>
-                    void addPart(services).then((r) => {
+                  onNewPart: (folder?: string) =>
+                    void addPart(services, folder).then((r) => {
                       if (r) report(r, 'New Part');
                     }),
                 })}

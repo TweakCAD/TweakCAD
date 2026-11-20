@@ -3,7 +3,7 @@
  * tree, and the folder command a drop or a menu choice runs. Folders show
  * before the items of their level; an item in no folder shows at the top.
  */
-import type { CommandOf, Doc, Editor, Json } from '@tweakcad/editor';
+import type { CommandOf, CommandResult, Doc, Editor, Json } from '@tweakcad/editor';
 import { isPlainObject } from '@tweakcad/format';
 import { nextName } from './assembly/assembly';
 
@@ -17,6 +17,9 @@ export interface TreeFolder {
 }
 
 export type FolderCommand = CommandOf<'moveToFolder' | 'moveFolder' | 'renameFolder' | 'removeFolder'>;
+
+/** What the tree runs: folder commands, and the moves that order the part and assembly tables. */
+export type TreeCommand = FolderCommand | CommandOf<'movePart' | 'moveAssembly'>;
 
 /** The document's folders, in table order. */
 export function foldersOf(doc: Doc): TreeFolder[] {
@@ -94,26 +97,52 @@ export type TreeThing = { item: string } | { folder: string };
 
 /**
  * Where a drop lands: on a folder (into it, or before it among its siblings),
- * on an item (before it in its folder), or on the document (the top level).
+ * on an item (before it in its folder, or at the top level before it among
+ * its own kind), on the document's row (the top level, keeping its place) or
+ * on the space below the rows (the top level, last of its kind).
  */
-export type DropTarget = { folder: string; zone: 'into' | 'before' } | { item: string } | { top: true };
+export type DropTarget = { folder: string; zone: 'into' | 'before' } | { item: string } | { top: true } | { end: true };
 
-/** The command a drop runs; null when it changes nothing or cannot be done. */
-export function dropCommand(tree: FolderTree, dragged: TreeThing, target: DropTarget): FolderCommand | null {
+/** The table move of a part or assembly at the top level: before another of its kind, or last. */
+function tableMove(id: string, before?: string): TreeCommand | null {
+  const at = before !== undefined ? { before } : {};
+  if (id.startsWith('part_')) return { type: 'movePart', part: id, ...at };
+  if (id.startsWith('asm_')) return { type: 'moveAssembly', assembly: id, ...at };
+  return null;
+}
+
+const kindOf = (id: string) => id.slice(0, id.indexOf('_'));
+
+/**
+ * The commands a drop runs, as one undo step; null when it changes nothing
+ * or cannot be done. At the top level, folders come first, then the
+ * assemblies, then the parts, each kind in its table's order, so an item
+ * goes before another of its kind and a drop on one of the other kind only
+ * brings it to the top level.
+ */
+export function dropCommand(tree: FolderTree, dragged: TreeThing, target: DropTarget): TreeCommand[] | null {
   if ('item' in dragged) {
     const id = dragged.item;
     const from = tree.folderOf.get(id) ?? null;
+    const unfile: TreeCommand[] = from === null ? [] : [{ type: 'moveToFolder', items: [id] }];
     if ('folder' in target) {
       if (from === target.folder) return null;
-      return { type: 'moveToFolder', items: [id], folder: target.folder };
+      return [{ type: 'moveToFolder', items: [id], folder: target.folder }];
     }
     if ('item' in target) {
       if (target.item === id) return null;
       const to = tree.folderOf.get(target.item);
-      if (to === undefined) return from === null ? null : { type: 'moveToFolder', items: [id] };
-      return { type: 'moveToFolder', items: [id], folder: to, before: target.item };
+      if (to !== undefined) return [{ type: 'moveToFolder', items: [id], folder: to, before: target.item }];
+      const move = kindOf(target.item) === kindOf(id) ? tableMove(id, target.item) : null;
+      const commands = [...unfile, ...(move ? [move] : [])];
+      return commands.length > 0 ? commands : null;
     }
-    return from === null ? null : { type: 'moveToFolder', items: [id] };
+    if ('end' in target) {
+      const move = tableMove(id);
+      const commands = [...unfile, ...(move ? [move] : [])];
+      return commands.length > 0 ? commands : null;
+    }
+    return unfile.length > 0 ? unfile : null;
   }
   const id = dragged.folder;
   const self = tree.byId.get(id);
@@ -131,13 +160,60 @@ export function dropCommand(tree: FolderTree, dragged: TreeThing, target: DropTa
     parent = tree.folderOf.get(target.item) ?? null;
   } else parent = null;
   if (parent !== null && isWithin(tree, parent, id)) return null;
-  if (before === undefined && parent === self.parent) return null;
-  return {
-    type: 'moveFolder',
-    folder: id,
-    ...(parent !== null ? { parent } : {}),
-    ...(before !== undefined ? { before } : {}),
-  };
+  // Last among its siblings: a folder dropped on the space below the rows.
+  if (before === undefined && parent === self.parent && !('end' in target)) return null;
+  return [
+    {
+      type: 'moveFolder',
+      folder: id,
+      ...(parent !== null ? { parent } : {}),
+      ...(before !== undefined ? { before } : {}),
+    },
+  ];
+}
+
+/** The name a move of `commands` is undone as: the moved thing's. */
+function moveLabel(doc: Doc, commands: readonly TreeCommand[]): string {
+  const first = commands[0];
+  const id =
+    first === undefined
+      ? undefined
+      : 'items' in first
+        ? first.items[0]
+        : 'part' in first
+          ? first.part
+          : 'assembly' in first
+            ? first.assembly
+            : first.folder;
+  const rows = [
+    ...((doc.parts as Json[] | undefined) ?? []),
+    ...((doc.assemblies as Json[] | undefined) ?? []),
+    ...((doc.folders as Json[] | undefined) ?? []),
+  ];
+  const name = rows.find((r) => r.id === id)?.name;
+  return typeof name === 'string' && name !== '' ? `Move ${name}` : 'Move';
+}
+
+/** Runs a tree's commands as one undo step; a refusal takes back the ones before it. */
+export function runTreeCommands(editor: Editor, commands: readonly TreeCommand[]): CommandResult {
+  const only = commands[0];
+  if (commands.length === 1 && only) return editor.dispatch(only);
+  const label = moveLabel(editor.document, commands);
+  let refused: CommandResult | undefined;
+  try {
+    return editor.transaction(label, () => {
+      let changed = false;
+      for (const command of commands) {
+        const r = editor.dispatch(command);
+        if (!r.ok) throw (refused = r);
+        changed ||= r.changed;
+      }
+      return { ok: true, label, changed } as CommandResult;
+    });
+  } catch (e) {
+    if (refused && e === refused) return refused;
+    throw e;
+  }
 }
 
 /** The folders a thing can be moved into from its menu: not where it is, nor (for a folder) inside itself. */

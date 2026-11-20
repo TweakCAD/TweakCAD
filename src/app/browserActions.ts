@@ -18,16 +18,30 @@ import type { AppServices } from './services';
  * edited there (as ASSEMBLE ▸ New Part, which tells of a refusal itself:
  * null); otherwise an empty part added to the document and opened.
  */
-export async function addPart(services: AppServices): Promise<CommandResult | null> {
+export async function addPart(services: AppServices, folder?: string): Promise<CommandResult | null> {
   const { editor, app } = services;
+  const before = new Set(partIds(editor.document));
+  let result: CommandResult | null;
   if (shownAssembly(editor.document, app.getState().focus)) {
     await newPart(services);
-    return null;
+    result = null;
+  } else {
+    const id = editor.newId('part');
+    result = editor.dispatch({ type: 'addPart', part: emptyPart(id, nextPartName(editor.document)) });
+    if (result.ok) open(services, { part: id });
   }
-  const id = editor.newId('part');
-  const result = editor.dispatch({ type: 'addPart', part: emptyPart(id, nextPartName(editor.document)) });
-  if (result.ok) open(services, { part: id });
+  // A part made from a folder's menu goes into that folder, in the same undo step.
+  const made = partIds(editor.document).filter((p) => !before.has(p));
+  if (folder !== undefined && made.length > 0) {
+    const label = editor.store.undoLabel() ?? 'New Part';
+    const filed = editor.amend(label, () => editor.dispatch({ type: 'moveToFolder', items: made, folder }));
+    if (!filed.ok) return filed;
+  }
   return result;
+}
+
+function partIds(doc: Json): string[] {
+  return Array.isArray(doc.parts) ? (doc.parts as Json[]).map((p) => p.id as string) : [];
 }
 
 /** `inputs` with a fresh id for every value object and for the derive's own instance. */
