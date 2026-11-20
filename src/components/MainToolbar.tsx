@@ -24,11 +24,11 @@ import {
   FileDown,
   FilePlus,
   FileInput,
+  Package,
   Settings,
   ChevronDown,
   PanelLeftClose,
   PanelLeftOpen,
-  Package,
   Box,
   Wand2,
   ExternalLink,
@@ -109,6 +109,8 @@ interface AppBarProps {
   onExport?: ((format: 'stl' | 'step' | 'brep' | '3mf') => void) | undefined;
   /** Export the document as a FreeCAD file. */
   onExportFreeCad?: (() => void) | undefined;
+  /** Downloads the bill of materials. */
+  onExportBom?: (() => void) | undefined;
   /** Optional SaaS state — drives the account chip on the right. */
   saas?: SaasState | undefined;
   /** Open the inline sign-in modal. */
@@ -167,6 +169,7 @@ export function MainAppBar({
   onSaveAs,
   onExport,
   onExportFreeCad,
+  onExportBom,
   saas,
   onRequestSignIn,
   onSignOut,
@@ -223,6 +226,8 @@ export function MainAppBar({
 
       <IconBtn icon={<FilePlus size={16} />} label="New (Ctrl+Alt+N)" onClick={() => onNew?.()} />
       <IconBtn icon={<FolderOpen size={16} />} label="Open (Ctrl+O)" onClick={() => onOpen?.()} />
+      <IconBtn icon={<Save size={16} />} label="Save (Ctrl+S)" onClick={() => onSave?.()} />
+      <IconBtn icon={<FileDown size={16} />} label="Save as (Ctrl+Shift+S)" onClick={() => onSaveAs?.()} />
       {(onImport || onImportFcstd || onImportF3d || onImportComponent || onImportSketchDxf || onImportSketchSvg) && (
         <ImportButton
           onImport={onImport}
@@ -233,10 +238,8 @@ export function MainAppBar({
           onImportSketchSvg={onImportSketchSvg}
         />
       )}
-      <IconBtn icon={<Save size={16} />} label="Save (Ctrl+S)" onClick={() => onSave?.()} />
-      <IconBtn icon={<FileDown size={16} />} label="Save as (Ctrl+Shift+S)" onClick={() => onSaveAs?.()} />
+      <ExportButton onExport={onExport} onExportFreeCad={onExportFreeCad} onExportBom={onExportBom} />
       {onOpenHistory && <IconBtn icon={<History size={16} />} label="Version history" onClick={onOpenHistory} />}
-      <ExportButton onExport={onExport} onExportFreeCad={onExportFreeCad} />
 
       <div style={styles.separator} />
 
@@ -1501,9 +1504,12 @@ function ImportButton({
 function ExportButton({
   onExport,
   onExportFreeCad,
+  onExportBom,
 }: {
   onExport?: ((format: 'stl' | 'step' | 'brep' | '3mf') => void) | undefined;
   onExportFreeCad?: (() => void) | undefined;
+  /** Downloads the bill of materials. */
+  onExportBom?: (() => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<null | 'stl' | 'step' | 'brep' | '3mf'>(null);
@@ -1545,7 +1551,7 @@ function ExportButton({
         type="button"
         onClick={() => setOpen((v) => !v)}
         disabled={busy !== null}
-        title={busy ? `Exporting ${busy.toUpperCase()}...` : 'Export (STL / STEP / BREP / 3MF / FreeCAD)'}
+        title={busy ? `Exporting ${busy.toUpperCase()}...` : 'Export (STL / STEP / BREP / 3MF / BOM / FreeCAD)'}
         style={{
           ...styles.iconBtn,
           background: hover && busy === null ? '#ebebeb' : 'transparent',
@@ -1567,6 +1573,17 @@ function ExportButton({
           />
           <ExportMenuItem label="Export BREP..." sub=".brep · OpenCASCADE native B-Rep" onClick={() => pick('brep')} />
           <ExportMenuItem label="Export 3MF..." sub=".3mf · modern slicer format" onClick={() => pick('3mf')} />
+          <div style={exportMenuStyles.divider} />
+          {onExportBom && (
+            <ExportMenuItem
+              label="Export BOM..."
+              sub=".csv · bill of materials"
+              onClick={() => {
+                setOpen(false);
+                onExportBom();
+              }}
+            />
+          )}
           {onExportFreeCad && (
             <ExportMenuItem
               label="Export FreeCAD..."
@@ -1638,6 +1655,7 @@ const exportMenuStyles: Record<string, React.CSSProperties> = {
     color: '#888',
     marginTop: 1,
   },
+  divider: { height: 1, background: '#eee', margin: '4px 0' },
 };
 
 function IconBtn({ icon, label, onClick, disabled, active }: IconBtnProps) {

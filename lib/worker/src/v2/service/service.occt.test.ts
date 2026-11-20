@@ -1062,6 +1062,15 @@ describe('a change only to what is shown', { timeout: 60_000 }, () => {
       const back = own.evaluate(doc, { restyle: red.generation });
       expect(back.restyled).toBe(red.generation);
       expect(styleOf(back)).toEqual(styleOf(first));
+      // A part filed in a folder: the browser's folders are not built either.
+      const filed = {
+        ...doc,
+        folders: [{ id: d.id('fld'), name: 'Cubes', members: [(doc.parts as Json[])[0]!.id], parent: { top: {} } }],
+      };
+      readsClean(filed);
+      const folder = own.evaluate(filed, { restyle: back.generation });
+      expect(folder.restyled).toBe(back.generation);
+      expect(own.evaluation).toBe(kept);
     } finally {
       own.release();
     }

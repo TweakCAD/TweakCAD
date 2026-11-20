@@ -422,6 +422,7 @@ const ATTRIBUTE_PROPERTIES = [
   'visible',
   'filamentSlot',
   'locked',
+  'bom',
   'properties',
 ];
 

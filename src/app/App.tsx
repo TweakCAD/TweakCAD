@@ -12,6 +12,7 @@ import { ServiceClient, type ImportFormat } from '@tweakcad/worker/src/v2/servic
 import type { ExportFormat } from '@tweakcad/worker/src/v2/service/types';
 import { BootGate, type BootGateKind } from '../components/BootGate.tsx';
 import { useConfirm } from '../components/ConfirmDialog.tsx';
+import { useExportDialog } from '../components/ExportDialog.tsx';
 import { ErrorBoundary } from '../components/ErrorBoundary.tsx';
 import { SignInModal } from '../components/SignInModal.tsx';
 import { useSettingsDialog } from '../components/SettingsDialog.tsx';
@@ -40,12 +41,13 @@ import { cancelImports, ownWorkerImports } from './io/importJobs';
 /** Geometry imports, each on a worker of its own. */
 const importClient = ownWorkerImports(() => ServiceClient.spawn());
 import { activePart } from './modeling/commands';
-import { bootApp, type AppServices } from './services';
+import { bootApp, defaultIncludes, type AppServices, type ExportIncludes } from './services';
 import { AutoExportPanel } from './storage/AutoExportPanel';
 import { runAutoExport, shouldAutoExport, type AutoExportStatus } from './storage/autoExport';
 import { resolveBoot } from './storage/boot';
 import { CloudProjects, cloudLimitNotice } from './storage/cloud';
 import { download, openFileFromDisk, safeFileName } from './storage/disk';
+import { bomCsv } from './bom';
 import { HistoryPanel } from './storage/HistoryPanel';
 import { SaveAsPicker } from './storage/SaveAsPicker';
 import {
@@ -119,6 +121,9 @@ export function App() {
   const [previewing, setPreviewing] = useState<string | null>(null);
   const [autoExport, setAutoExport] = useState<AutoExportStatus[] | null>(null);
   const { confirm, element: confirmElement } = useConfirm();
+  const { ask: askExport, element: exportElement } = useExportDialog();
+  /** The last choice of the Export dialog for each format, for this session. */
+  const lastIncludes = useRef<Partial<Record<ExportFormat, ExportIncludes>>>({});
   const { open: openSettings, element: settingsElement } = useSettingsDialog();
   const viewportRef = useRef<Viewport | null>(null);
   const ids = useMemo(() => randomIds(), []);
@@ -474,9 +479,24 @@ export function App() {
   const onExport = useCallback(
     (format: ExportFormat) => {
       if (!services) return;
-      services
-        .exportShown(format)
+      // An assembly that places purchased or reference parts asks what goes in; anything else exports at once.
+      const chosen = async (): Promise<ExportIncludes | undefined | null> => {
+        const choices = await services.exportChoices();
+        if (choices?.kind !== 'assembly' || choices.purchased + choices.reference === 0) return undefined;
+        const include = await askExport({
+          title: `Export ${format === 'brep' ? 'BREP' : format.toUpperCase()}`,
+          name: choices.name,
+          instances: choices.instances,
+          counts: { purchased: choices.purchased, reference: choices.reference },
+          initial: lastIncludes.current[format] ?? defaultIncludes(format),
+        });
+        if (include) lastIncludes.current[format] = include;
+        return include;
+      };
+      chosen()
+        .then((include) => (include === null ? null : services.exportShown(format, include)))
         .then((bytes) => {
+          if (bytes === null) return;
           if (bytes.byteLength === 0) {
             enqueueToast({ tone: 'info', title: 'Nothing to export', message: 'The shown part has no bodies.' });
             return;
@@ -488,8 +508,21 @@ export function App() {
         })
         .catch(reportError('Export failed'));
     },
-    [services],
+    [services, askExport],
   );
+
+  const onExportBom = useCallback(() => {
+    if (!services) return;
+    services
+      .billOfMaterials()
+      .then((lines) => {
+        const name = String((services.editor.document.metadata as { name?: unknown }).name ?? '');
+        const file = safeFileName(`${name || 'model'} BOM`, 'csv');
+        download(file, new Blob([bomCsv(services.editor.document, lines)], { type: 'text/csv' }));
+        consoleLog('success', `Exported ${file}`, 'file');
+      })
+      .catch(reportError('BOM export failed'));
+  }, [services]);
 
   const onExportFreeCad = useCallback(() => {
     if (!services) return;
@@ -672,6 +705,7 @@ export function App() {
           onSaveAs={onSaveAs}
           onExport={onExport}
           onExportFreeCad={onExportFreeCad}
+          onExportBom={onExportBom}
           onImport={onImport}
           onImportFcstd={onImportFcstd}
           onImportF3d={onImportF3d}
@@ -722,6 +756,7 @@ export function App() {
       />
       {settingsElement}
       {confirmElement}
+      {exportElement}
     </>
   );
 }

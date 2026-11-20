@@ -165,6 +165,10 @@ const api = {
     return (await service()).exportFreeCad();
   },
 
+  async billOfMaterials(assembly?: string) {
+    return (await service()).billOfMaterials(assembly);
+  },
+
   async shapeMeasures(brep: string) {
     return (await service()).shapeMeasures(brep);
   },

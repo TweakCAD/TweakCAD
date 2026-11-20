@@ -375,6 +375,22 @@ export interface ExportOptions {
   angularDeflection?: number;
   /** STL as text rather than binary. */
   ascii?: boolean;
+  /**
+   * The kinds of part (16.1) whose instances an assembly export leaves out;
+   * none by default. A part exported on its own is written whatever it is.
+   */
+  leaveOut?: ('purchased' | 'reference')[];
+}
+
+/** One line of a bill of materials: a part's build and how many times the document uses it. */
+export interface BomLine {
+  /** The part's id, in the document or in the library document it comes from. */
+  part: string;
+  name: string;
+  kind: 'normal' | 'purchased' | 'reference';
+  quantity: number;
+  /** It comes from the library (a component), not from the document's own parts. */
+  library: boolean;
 }
 
 export interface EvaluateServiceOptions {
@@ -390,7 +406,7 @@ export interface EvaluateServiceOptions {
   /**
    * The generation of the display whose document this one differs from only
    * in what is shown: the attributes of parts and assemblies, a part's
-   * rollback, and name-table entries no feature holds. When the kept evaluation is that display's,
+   * rollback, the browser's folders, and name-table entries no feature holds. When the kept evaluation is that display's,
    * nothing is evaluated: the display is made again from it with the new
    * attributes, and a body the client holds the mesh of is not meshed again.
    * The service checks it: anything else of the document that differs from

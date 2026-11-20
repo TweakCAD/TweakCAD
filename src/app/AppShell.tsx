@@ -19,10 +19,21 @@ import { ConsolePanel } from '../components/ConsolePanel.tsx';
 import { SectionPanel } from './modeling/SectionPanel';
 import { TimelineBar, type TimelineFeature, type TimelineMenuEntry } from '../components/TimelineBar.tsx';
 import { enqueueToast } from '../components/toastStore.ts';
+import { useConfirm } from '../components/ConfirmDialog.tsx';
+import { deleteItem } from './deletion';
 import { isEditableTarget } from '../components/toolShortcuts.ts';
 import type { SaasState } from '../storage/saasState.ts';
 import type { Mode, PanelRequest } from './appState';
-import { originShown, setColor, setName, setOriginShown, setVisible, type OriginItem } from './attributes';
+import {
+  bomOf,
+  originShown,
+  setBom,
+  setColor,
+  setName,
+  setOriginShown,
+  setVisible,
+  type OriginItem,
+} from './attributes';
 import {
   BrowserTree,
   featureMenu,
@@ -30,6 +41,7 @@ import {
   type FeatureAction,
   type GroupAction,
   type MenuEntry,
+  type TreeRowHooks,
 } from './BrowserTree';
 import { addPart, duplicateDerive } from './browserActions';
 import { configurationsOf, setActiveConfiguration, shownParameters } from './parameters';
@@ -50,7 +62,8 @@ import { activePartOf, liveFocus, shownAssembly } from './assembly/focus';
 import { asmTimelineRows } from './assembly/asmFeatures';
 import { editJoint, isJointAction, jointMenu, jointTimelineRows, runJointAction } from './assembly/jointActions';
 import { activatePart, editInPlace, renameJoint } from './assembly/commands';
-import { assemblyOf, jointLocked } from './assembly/assembly';
+import { assemblyOf, jointLocked, libraryOf } from './assembly/assembly';
+import { addFolder, foldersOf, runTreeCommands } from './folders';
 import { componentTimelines } from './assembly/componentTimelines';
 import { freezeFeature, unfreezeFeature } from './modeling/freeze';
 import { useDocument, useHistory, useSlice } from './hooks';
@@ -93,14 +106,16 @@ export interface AppShellProps {
   renderSketch?: (props: SketchSlotProps) => React.ReactNode;
   /** Drawn over the viewport at all times (notices, side panels). */
   overlay?: React.ReactNode;
-  /** The browser's rows for the document's assemblies. */
-  assemblyTree?: React.ReactNode;
+  /** The browser's rows for one of the document's assemblies, its node at `depth`. */
+  renderAssembly?: (assembly: string, depth: number, row: TreeRowHooks) => React.ReactNode;
   onNew: () => void;
   onOpen: () => void;
   onSave: () => void;
   onSaveAs: () => void;
   onExport: (format: 'stl' | 'step' | 'brep' | '3mf') => void;
   onExportFreeCad?: () => void;
+  /** Downloads the bill of materials. */
+  onExportBom?: () => void;
   /** Imports a STEP, STL or BREP file into the shown part. */
   onImport?: (format?: 'step' | 'stl' | 'brep') => void;
   /** Opens a FreeCAD file as a new document. */
@@ -157,6 +172,7 @@ export function AppShell(props: AppShellProps) {
   const preview = usePreview(services.session);
   const readOnly = preview !== null;
   const [renaming, setRenaming] = useState<string | null>(null);
+  const { confirm, element: confirmElement } = useConfirm();
   const [viewport, setViewport] = useState<Viewport | null>(null);
   const { onViewport, onRestoreRevision } = props;
   const handleViewport = useCallback(
@@ -595,6 +611,7 @@ export function AppShell(props: AppShellProps) {
 
   return (
     <div style={styles.root}>
+      {confirmElement}
       <MainAppBar
         projectName={docName}
         canUndo={history.canUndo && historyOpen}
@@ -617,6 +634,7 @@ export function AppShell(props: AppShellProps) {
         onSaveAs={props.onSaveAs}
         onExport={props.onExport}
         onExportFreeCad={props.onExportFreeCad}
+        onExportBom={props.onExportBom}
         onImport={readOnly ? undefined : props.onImport}
         onImportFcstd={props.onImportFcstd}
         onImportF3d={props.onImportF3d}
@@ -654,13 +672,43 @@ export function AppShell(props: AppShellProps) {
             documentName={docName}
             parts={parts}
             assemblies={assemblies}
-            assemblyTree={props.assemblyTree}
+            {...(props.renderAssembly ? { renderAssembly: props.renderAssembly } : {})}
+            folders={foldersOf(doc)}
+            library={libraryOf(doc).map((e) => ({ id: String(e.id), name: String(e.name ?? '') }))}
+            onFolderCommand={(command) =>
+              report(runTreeCommands(editor, 'type' in command ? [command] : command), 'Folders')
+            }
+            onRenameItem={(item, name) =>
+              report(
+                editor.dispatch(
+                  item.startsWith('asm_')
+                    ? { type: 'renameAssembly', assembly: item, name }
+                    : { type: 'renamePart', part: item, name },
+                ),
+                'Rename',
+              )
+            }
+            onDeleteItem={(item) =>
+              void deleteItem(services, item, (title, message) =>
+                confirm({ title, message, confirmLabel: 'Delete', tone: 'danger' }),
+              ).then((r) => {
+                if (!r.ok) report({ ok: false, error: { code: 'not-allowed', message: r.message } }, 'Delete');
+              })
+            }
+            bomOf={(part) => bomOf(doc, part)}
+            onSetBom={(parts, kind) => report(setBom(editor, parts, kind), 'BOM')}
+            onNewFolder={(parent, members) => {
+              const added = addFolder(editor, parent, members);
+              if (added.ok) return added.id;
+              report({ ok: false, error: { code: 'bad-argument', message: added.message } }, 'New folder');
+              return null;
+            }}
             activePart={workingPart}
             {...(readOnly
               ? { readOnly: true }
               : {
-                  onNewPart: () =>
-                    void addPart(services).then((r) => {
+                  onNewPart: (folder?: string) =>
+                    void addPart(services, folder).then((r) => {
                       if (r) report(r, 'New Part');
                     }),
                 })}

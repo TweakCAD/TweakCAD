@@ -29,7 +29,7 @@ export const BODY_COLOR_SWATCHES: readonly { color: string; name: string }[] = [
   { color: '#fafafa', name: 'White' },
 ];
 
-export type AttributeTarget = { feature: string } | { reference: Json; names: Json };
+export type AttributeTarget = { feature: string } | { part: string } | { reference: Json; names: Json };
 
 function attributesOf(doc: Doc, part: string): Json[] {
   const row = partOf(doc, part);
@@ -45,6 +45,8 @@ function finestOf(reference: unknown): string | undefined {
 export function attributeFor(doc: Doc, part: string, target: AttributeTarget): Json | undefined {
   return attributesOf(doc, part).find((a) => {
     const t = a.target as Json | undefined;
+    if ('part' in target)
+      return isPlainObject(t?.object) && isPlainObject(t.object.part) && t.object.part.id === target.part;
     if ('feature' in target)
       return isPlainObject(t?.object) && isPlainObject(t.object.feature) && t.object.feature.id === target.feature;
     const standard =
@@ -76,7 +78,7 @@ export function setProperty(
 ): CommandResult {
   const doc = editor.document;
   const existing = attributeFor(doc, part, target);
-  const names = 'feature' in target ? undefined : target.names;
+  const names = 'reference' in target ? target.names : undefined;
   if (existing) {
     const props = (existing.properties as Json | undefined) ?? {};
     if (text === null) {
@@ -95,7 +97,12 @@ export function setProperty(
   if (text === null) return { ok: true, label, changed: false };
   const attribute = {
     id: editor.newId('attr'),
-    target: 'feature' in target ? { object: { feature: { id: target.feature } } } : target.reference,
+    target:
+      'feature' in target
+        ? { object: { feature: { id: target.feature } } }
+        : 'part' in target
+          ? { object: { part: { id: target.part } } }
+          : target.reference,
     properties: { [property]: literal(editor, text) },
   };
   return editor.dispatch({ type: 'addAttribute', owner: part, attribute, ...(names ? { names } : {}) });
@@ -130,6 +137,50 @@ export function featureHidden(doc: Doc, part: string, feature: string): boolean 
   const v = props?.visible as Json | undefined;
   const text = ((v?.def as Json | undefined)?.expr as Json | undefined)?.text;
   return typeof text === 'string' && text.trim() === 'false';
+}
+
+/** A part's place in a bill of materials (16.1): made, bought, or there only for fit. */
+export type BomKind = 'normal' | 'purchased' | 'reference';
+
+export const BOM_KINDS: readonly { kind: BomKind; label: string }[] = [
+  { kind: 'normal', label: 'Normal' },
+  { kind: 'purchased', label: 'Purchased' },
+  { kind: 'reference', label: 'Reference' },
+];
+
+/** A part's kind, from the `bom` property of an attribute on the part; normal without one. */
+export function bomOf(doc: Doc, part: string): BomKind {
+  const props = attributeFor(doc, part, { part })?.properties as Json | undefined;
+  const v = props?.bom as Json | undefined;
+  const text = ((v?.def as Json | undefined)?.expr as Json | undefined)?.text;
+  if (typeof text !== 'string') return 'normal';
+  try {
+    const kind: unknown = JSON.parse(text);
+    return kind === 'purchased' || kind === 'reference' ? kind : 'normal';
+  } catch {
+    return 'normal';
+  }
+}
+
+/** Sets the kind of each part as one undo step; normal is the default, so it clears the property. */
+export function setBom(editor: Editor, parts: readonly string[], kind: BomKind): CommandResult {
+  const label = `Mark ${BOM_KINDS.find((k) => k.kind === kind)?.label ?? kind}`;
+  let refused: CommandResult | undefined;
+  try {
+    return editor.transaction(label, () => {
+      let changed = false;
+      for (const part of parts) {
+        const r = setProperty(editor, part, { part }, 'bom', kind === 'normal' ? null : JSON.stringify(kind), label);
+        // A refusal takes back the parts set before it.
+        if (!r.ok) throw (refused = r);
+        changed ||= r.changed;
+      }
+      return { ok: true, label, changed } as CommandResult;
+    });
+  } catch (e) {
+    if (refused && e === refused) return refused;
+    throw e;
+  }
 }
 
 /** What a part's Origin holds: the standard planes, axes and the origin point. */

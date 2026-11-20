@@ -36,6 +36,7 @@ function clientOf(service: EvaluationService): AppServiceClient {
     pick: (target, options) => Promise.resolve(service.pick(target, options)),
     exportFile: (format, scope, options) => Promise.resolve(service.exportFile(format, scope, options)),
     exportFreeCad: () => Promise.resolve(service.exportFreeCad()),
+    billOfMaterials: (assembly) => Promise.resolve(service.billOfMaterials(assembly)),
     properties: (key) => Promise.resolve(service.properties(key)),
     measure: (kind, targets) => Promise.resolve(service.measure(kind, targets)),
     resolve: (record, scope) => Promise.resolve(service.resolve(record, scope)),

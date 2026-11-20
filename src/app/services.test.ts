@@ -2,8 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { readDocument } from '@tweakcad/format';
 import { Editor, seededIds } from '@tweakcad/editor';
 import { DocBuilder } from '@tweakcad/worker/src/v2/docBuilder';
-import type { Display, ExportFormat, Picked, PickTarget, ResolveScope } from '@tweakcad/worker/src/v2/service/types';
-import { bootApp, type AppServiceClient } from './services';
+import type {
+  Display,
+  ExportFormat,
+  ExportOptions,
+  Picked,
+  PickTarget,
+  ResolveScope,
+} from '@tweakcad/worker/src/v2/service/types';
+import { bootApp, defaultIncludes, type AppServiceClient } from './services';
 import { select } from './selection';
 import { consoleLog, consoleStore } from './console';
 import { resolveBoot } from './storage/boot';
@@ -27,7 +34,7 @@ class FakeService implements AppServiceClient {
   inits = 0;
   evaluated: unknown[] = [];
   picks: PickTarget[] = [];
-  exports: { format: ExportFormat; scope: ResolveScope }[] = [];
+  exports: { format: ExportFormat; scope: ResolveScope; leaveOut?: ExportOptions['leaveOut'] }[] = [];
   private generation = 0;
   init() {
     this.inits++;
@@ -45,8 +52,8 @@ class FakeService implements AppServiceClient {
     return Promise.resolve({ bytes: new Uint8Array(), notes: [], bodies: [] });
   }
 
-  exportFile(format: ExportFormat, scope: ResolveScope) {
-    this.exports.push({ format, scope });
+  exportFile(format: ExportFormat, scope: ResolveScope, options?: ExportOptions) {
+    this.exports.push({ format, scope, ...(options?.leaveOut ? { leaveOut: options.leaveOut } : {}) });
     return Promise.resolve(new Uint8Array([1, 2, 3]));
   }
   properties() {
@@ -185,7 +192,18 @@ describe('bootApp', () => {
     expect(await pending).toBeNull();
     const part = (services.editor.document.parts as { id: string }[])[0]!.id;
     expect(await services.exportShown('stl')).toEqual(new Uint8Array([1, 2, 3]));
-    expect(client.exports).toEqual([{ format: 'stl', scope: { part } }]);
+    // Files for printing leave purchased and reference parts out by default; files for CAD keep them.
+    await services.exportShown('step');
+    await services.exportShown('3mf', { purchased: true, reference: false });
+    expect(client.exports).toEqual([
+      { format: 'stl', scope: { part }, leaveOut: ['purchased', 'reference'] },
+      { format: 'step', scope: { part } },
+      { format: '3mf', scope: { part }, leaveOut: ['reference'] },
+    ]);
+    // A part shown on its own offers no choice.
+    expect(await services.exportChoices()).toEqual({ kind: 'part' });
+    expect(defaultIncludes('brep')).toEqual({ purchased: true, reference: true });
+    expect(defaultIncludes('3mf')).toEqual({ purchased: false, reference: false });
     services.dispose();
   });
 

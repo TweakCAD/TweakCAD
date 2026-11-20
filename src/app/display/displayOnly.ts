@@ -2,8 +2,9 @@
  * Whether one document differs from another only in what is shown, not in
  * what is built: the attributes of parts and assemblies (colour, opacity,
  * visibility, body names, 16.1), a part's rollback (7.1; evaluation always
- * runs the whole timeline) and the name table, whose entries come and go
- * with attributes' target records. Evaluation reads none of these, so the
+ * runs the whole timeline), the browser's folders (3) and the name table,
+ * whose entries come and go with attributes' target records. Evaluation
+ * reads none of these, so the
  * worker can show such a change without evaluating (see
  * `EvaluateServiceOptions.restyle`); it checks itself that no name its
  * features hold came or went.
@@ -47,7 +48,7 @@ export function displayOnly(before: Json, after: Json): boolean {
     if (a === b) continue;
     if (key === 'parts' || key === 'assemblies') {
       if (!sameRowsButShown(a, b, key)) return false;
-    } else if (key !== 'names' && !same(a, b)) return false;
+    } else if (key !== 'names' && key !== 'folders' && !same(a, b)) return false;
   }
   return true;
 }

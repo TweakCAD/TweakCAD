@@ -22,6 +22,7 @@ import type {
   EvaluateServiceOptions,
   ExportFormat,
   ExportOptions,
+  BomLine,
   FrameDisplay,
   Key,
   MeasureKind,
@@ -318,6 +319,11 @@ export class ServiceClient {
   /** The evaluated document as a FreeCAD file (see `EvaluationService.exportFreeCad`). */
   exportFreeCad(): Promise<FcstdExport> {
     return this.#api.exportFreeCad();
+  }
+
+  /** The evaluated document's bill of materials (see `EvaluationService.billOfMaterials`). */
+  billOfMaterials(assembly?: string): Promise<BomLine[]> {
+    return this.#api.billOfMaterials(assembly);
   }
 
   /** The volume and box of a shape in BREP text. */

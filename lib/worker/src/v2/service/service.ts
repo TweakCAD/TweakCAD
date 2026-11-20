@@ -99,6 +99,7 @@ import type {
   EvaluateServiceOptions,
   ExportFormat,
   ExportOptions,
+  BomLine,
   ExternalCandidates,
   FrameDisplay,
   InstanceDisplay,
@@ -175,12 +176,13 @@ function equal(a: unknown, b: unknown): boolean {
 /**
  * Whether two documents are equal but for what is shown: the attributes of
  * part and assembly rows, a part's rollback (evaluation runs the whole
- * timeline whatever it says), and the name table (whose entries a feature
- * holds are checked on their own).
+ * timeline whatever it says), the browser's folders, and the name table
+ * (whose entries a feature holds are checked on their own).
  */
 function sameButShown(a: Json, b: Json): boolean {
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
   keys.delete('names');
+  keys.delete('folders');
   for (const key of keys) {
     if (key !== 'parts' && key !== 'assemblies') {
       if (!equal(a[key], b[key])) return false;
@@ -2342,7 +2344,7 @@ export class EvaluationService {
     const view = this.assemblies.get(scope.assembly);
     if (!view) throw new Error(`assembly ${scope.assembly} is not in the evaluation`);
     return view.leaves.flatMap((leaf, i) => {
-      if (!leaf.visible) return [];
+      if (!leaf.visible || !exportsLeaf(leaf, options)) return [];
       const def = leaf.definition;
       const placedShape = new Map(leaf.pairs);
       return shownBodies(ev, def.result.state, def.result.shapes, def.steps).flatMap((b) => {
@@ -2378,7 +2380,7 @@ export class EvaluationService {
    * instance, named after the instance's part and number, as other CAD
    * programs read and write assemblies.
    */
-  private assemblyStep(assembly: string): Uint8Array {
+  private assemblyStep(assembly: string, options: ExportOptions): Uint8Array {
     const k = this.kernel;
     const ev = this.ev;
     const view = this.assemblies.get(assembly);
@@ -2407,7 +2409,9 @@ export class EvaluationService {
         prototypes.set(def, out);
         return out;
       };
-      const leaves = view.leaves.filter((l) => l.visible && prototype(l.definition).bodies.length > 0);
+      const leaves = view.leaves.filter(
+        (l) => l.visible && exportsLeaf(l, options) && prototype(l.definition).bodies.length > 0,
+      );
       if (leaves.length === 0) throw new Error('there is nothing to export');
       const placed = leaves.map((l) => {
         const h = k.located(prototype(l.definition).handle, matrixOf(l.placement));
@@ -2545,6 +2549,33 @@ export class EvaluationService {
     });
   }
 
+  /**
+   * The bill of materials of the document: with an assembly at the root (or
+   * `assembly` given), each part build its instances place (sub-assemblies'
+   * and the copies of assembly features' included), with how many; with a
+   * part at the root, each part of the document once. Lines follow the order
+   * parts are first met; a part's kind comes from its own attribute (16.1).
+   */
+  billOfMaterials(assembly?: string): BomLine[] {
+    const doc = this.doc;
+    if (!doc) throw new Error('nothing has been evaluated');
+    const line = (def: Definition, quantity: number): BomLine => ({
+      part: def.part,
+      name: typeof def.row.name === 'string' ? def.row.name : 'Part',
+      kind: def.styles.bom,
+      quantity,
+      library: def.ev !== this.ev,
+    });
+    const root = doc.root as Json;
+    if (assembly === undefined && !('assembly' in root)) {
+      return this.definitions.filter((d) => d.variant === '' && d.steps !== undefined).map((d) => line(d, 1));
+    }
+    const view = this.assemblies.get(assembly ?? ((root.assembly as Json).id as string));
+    const counts = new Map<Definition, number>();
+    for (const leaf of view?.leaves ?? []) counts.set(leaf.definition, (counts.get(leaf.definition) ?? 0) + 1);
+    return [...counts].map(([def, n]) => line(def, n));
+  }
+
   exportFile(format: ExportFormat, scope: ResolveScope, options: ExportOptions = {}): Uint8Array {
     const k = this.kernel;
     const bodies = this.exportBodies(scope, options);
@@ -2575,7 +2606,7 @@ export class EvaluationService {
         case 'brep':
           return new Uint8Array(k.toBREPBinary(whole()));
         case 'step': {
-          if ('assembly' in scope) return this.assemblyStep(scope.assembly);
+          if ('assembly' in scope) return this.assemblyStep(scope.assembly, options);
           const xcaf = k.createXCAFDocument();
           try {
             for (const b of bodies) {
@@ -2624,6 +2655,12 @@ export class EvaluationService {
       for (const h of made) k.release(h);
     }
   }
+}
+
+/** Whether an assembly export writes a leaf: one whose part's kind it does not leave out. */
+function exportsLeaf(leaf: Leaf, options: ExportOptions): boolean {
+  const kind = leaf.definition.styles.bom;
+  return kind === 'normal' || !(options.leaveOut ?? []).includes(kind);
 }
 
 /** A document's value evaluator that notes when a value does not evaluate. */

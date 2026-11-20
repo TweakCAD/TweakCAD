@@ -92,7 +92,7 @@ const PANELS: Record<string, (props: PanelProps) => React.ReactNode> = {
 
 export type WorkspaceProps = Omit<
   AppShellProps,
-  'tools' | 'sketchTools' | 'panels' | 'renderSketch' | 'overlay' | 'assemblyTree'
+  'tools' | 'sketchTools' | 'panels' | 'renderSketch' | 'overlay' | 'renderAssembly'
 >;
 
 export function Workspace(props: WorkspaceProps) {
@@ -115,7 +115,9 @@ export function Workspace(props: WorkspaceProps) {
       panels={PANELS}
       renderSketch={renderSketch}
       overlay={<AssemblyOverlay services={props.services} />}
-      assemblyTree={<AssemblyTree services={props.services} />}
+      renderAssembly={(assembly, depth, row) => (
+        <AssemblyTree services={props.services} assembly={assembly} depth={depth} row={row} />
+      )}
     />
   );
 }

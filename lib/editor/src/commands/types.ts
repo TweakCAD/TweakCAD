@@ -25,6 +25,15 @@ export type EditorCommand =
   | { type: 'addAssembly'; assembly: Json; before?: string }
   | { type: 'removeAssembly'; assembly: string }
   | { type: 'renameAssembly'; assembly: string; name: string }
+  // The order of the part and assembly tables, as the browser lists them: before another of the same table, or at its end
+  | { type: 'movePart'; part: string; before?: string }
+  | { type: 'moveAssembly'; assembly: string; before?: string }
+  // Folders of the browser (3): `folder` is the row `{id: fld_…, name, members?, parent?}`; members given move out of other folders. `before` names a sibling folder, or for `moveToFolder` an item of the folder; no `folder` there means the top level
+  | { type: 'addFolder'; folder: Json; before?: string }
+  | { type: 'renameFolder'; folder: string; name: string }
+  | { type: 'removeFolder'; folder: string }
+  | { type: 'moveFolder'; folder: string; parent?: string; before?: string }
+  | { type: 'moveToFolder'; items: string[]; folder?: string; before?: string }
   // Features; `names` carries the name-table entries of references the feature or inputs bring, `assets` the asset rows (13.1) a new feature uses
   | { type: 'addFeature'; container: string; feature: Json; names?: Json; assets?: Json; before?: string }
   | { type: 'removeFeature'; feature: string }

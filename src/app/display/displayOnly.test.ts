@@ -44,5 +44,8 @@ describe('displayOnly', () => {
     const more = structuredClone(doc);
     (more.parts as Json[]).push({ id: 'part_2' });
     expect(displayOnly(doc, more)).toBe(false);
+    const filed = structuredClone(doc);
+    filed.folders = [{ id: 'fld_1', name: 'Frame', members: [], parent: { top: {} } }];
+    expect(displayOnly(doc, filed)).toBe(true);
   });
 });

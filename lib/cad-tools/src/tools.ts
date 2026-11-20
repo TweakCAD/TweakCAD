@@ -163,7 +163,8 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
     description:
       'An outline of the document: each part with its features in timeline order (id, type, name, suppressed, and ' +
       "status 'ok', 'paused' with the reason, or 'blocked' by an earlier pause), its rollback marker, the parameters, " +
-      'and the assemblies. Waits for the newest rebuild.',
+      "the assemblies, and the browser's folders (id, name, parent, items); a part that is not made carries its `bom` kind. " +
+      'Waits for the newest rebuild.',
     inputSchema: {
       type: 'object',
       properties: { part: { type: 'string', description: 'Optional: only this part.' } },
@@ -190,6 +191,7 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
       "`{type:'renameFeature',feature:'feat_…',name:'Base'}`, `{type:'setSuppressed',feature:'feat_…',suppressed:true}`, " +
       "`{type:'removeFeature',feature:'feat_…'}`, `{type:'setRollback',part:'part_…',before:'feat_…'}` (omit `before` for the end). " +
       "Feature groups: `{type:'addGroup',part:'part_…',group:{id:'new:grp',name:'Holes',members:['feat_…']}}` (features next to each other in the timeline), `editGroup`, `removeGroup`. " +
+      "The browser's order of parts and assemblies: `{type:'movePart',part:'part_…',before:'part_…'}`, `moveAssembly` (omit `before` for the end). " +
       'A row a command adds needs an id: write `"new:<kind>"` (`new:grp`, `new:val`, `new:tbl`, …) and one is made; the same token ' +
       'twice in one command is one id, and the made ids are returned. ' +
       'A refused command changes nothing and says why. References to geometry are not written here: use `set_reference`.',
@@ -1530,6 +1532,124 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
       },
       additionalProperties: false,
     },
+  },
+  // ---- Folders of the browser ----
+  {
+    name: 'folder_create',
+    description:
+      "Add a folder to the browser's tree: folders nest and hold parts, assemblies and library entries in order, to organise a " +
+      'design with many of them; they change no geometry. `items` (part_…, asm_…, lib_… ids) move into it from any other folder ' +
+      '(an item stands in one folder at most). Returns `{folder, name}`; `list_features` lists the folders.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Optional: default "Folder n".' },
+        parent: {
+          type: 'string',
+          description: 'Optional: the folder it goes in (fld_…); absent or "top" for the top level.',
+        },
+        items: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional: parts, assemblies or library entries.',
+        },
+        before: { type: 'string', description: 'Optional: the sibling folder it goes before; absent, after the last.' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'folder_edit',
+    description:
+      'Rename a folder, or move it into another folder (`parent`, or "top" for the top level) or before a sibling folder ' +
+      '(`before`). A folder never goes inside itself.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        folder: { type: 'string', description: 'fld_…' },
+        name: { type: 'string' },
+        parent: { type: 'string', description: 'A folder id, or "top".' },
+        before: { type: 'string', description: 'A folder id among its new siblings.' },
+      },
+      required: ['folder'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'folder_delete',
+    description:
+      'Delete a folder. What it holds, items and folders, goes to the folder it stood in (or the top level); nothing else is deleted.',
+    inputSchema: {
+      type: 'object',
+      properties: { folder: { type: 'string', description: 'fld_…' } },
+      required: ['folder'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'folder_move_items',
+    description:
+      'Move parts, assemblies or library entries into a folder, out of any other, in order before one of its items or after the ' +
+      'last; with no `folder` (or "top") they go back to the top level. Also reorders items within a folder.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        items: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 1,
+          description: 'part_…, asm_… or lib_… ids, in order.',
+        },
+        folder: { type: 'string', description: 'Optional: fld_…, or "top".' },
+        before: { type: 'string', description: 'Optional: an item of that folder they go before.' },
+      },
+      required: ['items'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'part_delete',
+    description:
+      'Delete a part or an assembly (with everything in it: features, sketches, its folder entry). One undo step. ' +
+      'Refused while anything but instances uses it: the root (make another the root first), a derive in another part, ' +
+      'an assembly feature; the refusal says what. Instances that place it are deleted with it (and their joints) only ' +
+      'with `withInstances: true`; without it the refusal lists them. Returns `{deleted, removedInstances}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        part: { type: 'string', description: 'Optional: the part (part_…).' },
+        assembly: { type: 'string', description: 'Optional: the assembly (asm_…).' },
+        withInstances: { type: 'boolean', description: 'Delete the instances that place it too. Default false.' },
+      },
+      additionalProperties: false,
+    },
+  },
+  // ---- Bill of materials ----
+  {
+    name: 'part_set_bom',
+    description:
+      "Set what parts are in the bill of materials: 'normal' (made, the default), 'purchased' (bought: screws, bearings, " +
+      "motors) or 'reference' (there only for fit or context; left out of the bill of materials). An assembly's exports leave " +
+      'purchased and reference parts out unless the user asks for them. Give `parts`, or `folder` for every part in a ' +
+      'folder and its folders. One undo step. `list_features` shows each part not normal with its `bom`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['normal', 'purchased', 'reference'] },
+        parts: { type: 'array', items: { type: 'string' }, description: 'Optional: part ids.' },
+        folder: { type: 'string', description: 'Optional: a folder id (fld_…).' },
+      },
+      required: ['kind'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'get_bom',
+    description:
+      'The bill of materials of the built document: each part the root assembly places (through sub-assemblies and ' +
+      'assembly patterns too) with its quantity and kind, made parts first, then purchased; with a part at the root, each ' +
+      'part once. Reference parts are listed apart. Library components are marked. Waits for the newest rebuild.',
+    inputSchema: empty,
   },
   // ---- What the model is built into ----
   {

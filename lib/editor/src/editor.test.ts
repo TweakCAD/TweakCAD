@@ -141,6 +141,40 @@ describe('document, parts and assemblies', () => {
     expect(refused(editor, { type: 'removeAssembly', assembly: ids.assembly }).error.code).toBe('not-allowed');
   });
 
+  it('reorders parts and assemblies in their tables, and refuses a move before itself or a row of another table', () => {
+    const { doc, t } = standardDocument();
+    const second = t.part('Second');
+    const third = t.part('Third');
+    const editor = new Editor(doc, { ids: seededIds(7) });
+    const order = () => (editor.document.parts as Json[]).map((p) => p.name);
+    const first = (editor.document.parts as Json[])[0]?.id as string;
+    run(editor, { type: 'movePart', part: third.id as string, before: first });
+    expect(order()).toEqual(['Third', 'Bracket', 'Second']);
+    expect(editor.store.undoLabel()).toBe('Move Third');
+    run(editor, { type: 'movePart', part: third.id as string });
+    expect(order()).toEqual(['Bracket', 'Second', 'Third']);
+    expect(
+      refused(editor, { type: 'movePart', part: second.id as string, before: second.id as string }).error.code,
+    ).toBe('bad-argument');
+    const asm = (editor.document.assemblies as Json[])[0]?.id as string;
+    expect(refused(editor, { type: 'movePart', part: second.id as string, before: asm }).error.code).toBe('not-found');
+    run(editor, {
+      type: 'addAssembly',
+      assembly: {
+        ...(editor.document.assemblies as Json[])[0],
+        id: editor.newId('asm'),
+        name: 'Other',
+        instances: [],
+        jointOrigins: [],
+        joints: [],
+        positions: [],
+      },
+    });
+    const other = (editor.document.assemblies as Json[])[1]?.id as string;
+    run(editor, { type: 'moveAssembly', assembly: other, before: asm });
+    expect((editor.document.assemblies as Json[]).map((a) => a.name)).toEqual(['Other', 'Assembly']);
+  });
+
   it('takes a removed part out of its folder', () => {
     const { doc, t } = standardDocument();
     // The builder's part list is the document's.
@@ -969,9 +1003,14 @@ describe('the bus', () => {
 });
 
 afterAll(() => {
-  // Every command type has a test above, in sketch.test.ts or in commands/library.test.ts.
+  // Every command type has a test above, in sketch.test.ts, commands/library.test.ts or commands/folders.test.ts.
   const sketchOnly = new Set<CommandType>([
     'editSketch',
+    'addFolder',
+    'renameFolder',
+    'removeFolder',
+    'moveFolder',
+    'moveToFolder',
     'removeLibraryEntry',
     'addContext',
     'editContext',
