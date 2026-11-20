@@ -152,7 +152,7 @@ export function MoveBodiesPanel(props: PanelProps) {
   const panel = useFeaturePanel(props, SPEC);
   const [mode, setMode] = useState<'translate' | 'rotate'>('translate');
   const [hint, setHint] = useState<string | null>(null);
-  /** The bodies were taken as all the bodies of one feature (an import): the panel is Move All. */
+  /** The bodies were taken as all the bodies of one feature (an import): the panel is Move/Copy All. */
   // The selection as the panel opened, before the panel shows its own picks selected.
   const [opened] = useState(() => services.selection.getState().items);
   const [whole, setWhole] = useState(() => !request.feature && request.from !== undefined);
@@ -197,7 +197,7 @@ export function MoveBodiesPanel(props: PanelProps) {
       }));
     });
   };
-  /** Takes every body feature `feature` made (all of an import): Move All. */
+  /** Takes every body feature `feature` made (all of an import): Move/Copy All. */
   const madeBy = (feature: string) =>
     panel
       ? bodiesOf(services.display.getState().display, panel.target.part).filter(
@@ -357,7 +357,11 @@ export function MoveBodiesPanel(props: PanelProps) {
 
   if (!panel || !form) return null;
   return (
-    <PanelCard title={whole ? 'Move All' : 'Move'} icon={<MoveIcon size={14} color="#0ea5e9" />} onClose={close}>
+    <PanelCard
+      title={whole ? 'Move/Copy All' : 'Move/Copy'}
+      icon={<MoveIcon size={14} color="#0ea5e9" />}
+      onClose={close}
+    >
       <PickList
         label={form.of === 'faces' ? 'Faces' : 'Bodies'}
         items={form.bodies}
