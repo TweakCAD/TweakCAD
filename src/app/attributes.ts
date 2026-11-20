@@ -87,6 +87,9 @@ export function setProperty(
         return editor.dispatch({ type: 'removeAttribute', attribute: String(existing.id) });
       return editor.dispatch({ type: 'editAttribute', attribute: String(existing.id), unset: [property] });
     }
+    // The same text again on an object target writes nothing; a reference target may still take fresher names.
+    const current = (((props[property] as Json | undefined)?.def as Json | undefined)?.expr as Json | undefined)?.text;
+    if (!names && current === text) return { ok: true, label, changed: false };
     return editor.dispatch({
       type: 'editAttribute',
       attribute: String(existing.id),
@@ -108,9 +111,21 @@ export function setProperty(
   return editor.dispatch({ type: 'addAttribute', owner: part, attribute, ...(names ? { names } : {}) });
 }
 
-/** Hides or shows a body or what a feature shows; shown is the default, so showing clears the property. */
+/**
+ * Hides or shows a part, a body or what a feature shows; shown is the
+ * default, so showing clears the property. Showing something inside a
+ * hidden part shows the part too, in the same undo step, so it is drawn.
+ */
 export function setVisible(editor: Editor, part: string, target: AttributeTarget, visible: boolean): CommandResult {
-  return setProperty(editor, part, target, 'visible', visible ? null : 'false', visible ? 'Show' : 'Hide');
+  const label = visible ? 'Show' : 'Hide';
+  const set = () => setProperty(editor, part, target, 'visible', visible ? null : 'false', label);
+  if (!visible || 'part' in target || !partHidden(editor.document, part)) return set();
+  return editor.transaction(label, () => {
+    const own = set();
+    if (!own.ok) return own;
+    const whole = setProperty(editor, part, { part }, 'visible', null, label);
+    return whole.ok ? { ok: true, label, changed: true } : whole;
+  });
 }
 
 /** Colours a body, or with null gives it the default colour again. */
@@ -139,6 +154,46 @@ export function featureHidden(doc: Doc, part: string, feature: string): boolean 
   return typeof text === 'string' && text.trim() === 'false';
 }
 
+/** Whether an attribute on the part hides it, every body and everything its features show. */
+export function partHidden(doc: Doc, part: string): boolean {
+  const props = attributeFor(doc, part, { part })?.properties as Json | undefined;
+  const v = props?.visible as Json | undefined;
+  const text = ((v?.def as Json | undefined)?.expr as Json | undefined)?.text;
+  return typeof text === 'string' && text.trim() === 'false';
+}
+
+/**
+ * Runs `set` on each part as one undo step; a refusal takes back the parts
+ * set before it and is returned.
+ */
+function eachPart(
+  editor: Editor,
+  parts: readonly string[],
+  label: string,
+  set: (part: string) => CommandResult,
+): CommandResult {
+  let refused: CommandResult | undefined;
+  try {
+    return editor.transaction(label, () => {
+      let changed = false;
+      for (const part of parts) {
+        const r = set(part);
+        if (!r.ok) throw (refused = r);
+        changed ||= r.changed;
+      }
+      return { ok: true, label, changed } as CommandResult;
+    });
+  } catch (e) {
+    if (refused && e === refused) return refused;
+    throw e;
+  }
+}
+
+/** Hides or shows whole parts as one undo step. */
+export function setPartsVisible(editor: Editor, parts: readonly string[], visible: boolean): CommandResult {
+  return eachPart(editor, parts, visible ? 'Show' : 'Hide', (part) => setVisible(editor, part, { part }, visible));
+}
+
 /** A part's place in a bill of materials (16.1): made, bought, or there only for fit. */
 export type BomKind = 'normal' | 'purchased' | 'reference';
 
@@ -165,22 +220,9 @@ export function bomOf(doc: Doc, part: string): BomKind {
 /** Sets the kind of each part as one undo step; normal is the default, so it clears the property. */
 export function setBom(editor: Editor, parts: readonly string[], kind: BomKind): CommandResult {
   const label = `Mark ${BOM_KINDS.find((k) => k.kind === kind)?.label ?? kind}`;
-  let refused: CommandResult | undefined;
-  try {
-    return editor.transaction(label, () => {
-      let changed = false;
-      for (const part of parts) {
-        const r = setProperty(editor, part, { part }, 'bom', kind === 'normal' ? null : JSON.stringify(kind), label);
-        // A refusal takes back the parts set before it.
-        if (!r.ok) throw (refused = r);
-        changed ||= r.changed;
-      }
-      return { ok: true, label, changed } as CommandResult;
-    });
-  } catch (e) {
-    if (refused && e === refused) return refused;
-    throw e;
-  }
+  return eachPart(editor, parts, label, (part) =>
+    setProperty(editor, part, { part }, 'bom', kind === 'normal' ? null : JSON.stringify(kind), label),
+  );
 }
 
 /** What a part's Origin holds: the standard planes, axes and the origin point. */

@@ -278,6 +278,10 @@ export interface BrowserTreeProps {
   bomOf?: (part: string) => BomKind;
   /** Sets the kind of parts: a part's menu sets its own, a folder's every part inside it. */
   onSetBom?: (parts: string[], kind: BomKind) => void;
+  /** Whether a whole part is hidden. */
+  partHidden?: (part: string) => boolean;
+  /** Hides or shows whole parts: a part's eye sets its own, a folder's every part inside it. */
+  onSetPartsVisible?: (parts: string[], visible: boolean) => void;
   /** The part new features go into; another part offers Open. */
   activePart?: string | null;
   onOpenPart?: (part: string) => void;
@@ -512,6 +516,19 @@ export function BrowserTree(props: BrowserTreeProps) {
     return [...own, ...(tree.children.get(folder) ?? []).flatMap((f) => partsWithin(f, seen))];
   };
 
+  /** The eye of a part's or folder's row over `parts`: hidden when all are, and a click shows all or hides all. */
+  const eyeOver = (parts: string[], name: string) => {
+    if (readOnly || !props.onSetPartsVisible || parts.length === 0) return {};
+    const hidden = parts.every((p) => props.partHidden?.(p) ?? false);
+    return {
+      eye: {
+        hidden,
+        onClick: () => props.onSetPartsVisible?.(parts, hidden),
+        ariaLabel: hidden ? `Show ${name}` : `Hide ${name}`,
+      },
+    };
+  };
+
   /** Adds a folder and starts editing its name, with the folder it stands in open. */
   const newFolder = (parent: string | null, members: string[]) => {
     const id = props.onNewFolder?.(parent, members);
@@ -558,6 +575,7 @@ export function BrowserTree(props: BrowserTreeProps) {
         depth={depth}
         count={folders.length + members.length}
         row={hooksFor({ folder: id })}
+        {...eyeOver(partsWithin(id), folder.name)}
       >
         {folders.map((f) => renderFolder(f, depth + 1, inside))}
         {members.map((m) => renderItem(m, depth + 1))}
@@ -708,6 +726,7 @@ export function BrowserTree(props: BrowserTreeProps) {
         depth={depth}
         row={hooksFor({ item: part.id })}
         {...(mark ? { mark } : {})}
+        {...eyeOver([part.id], part.name)}
         {...(props.onOpenPart && props.activePart !== part.id
           ? {
               trailingAction: {
@@ -1396,6 +1415,7 @@ export function TreeNode({
   onContextMenu,
   row,
   mark,
+  eye,
 }: {
   label: string;
   icon: React.ReactNode;
@@ -1413,8 +1433,12 @@ export function TreeNode({
   row?: TreeRowHooks;
   /** A small mark after the label, with what it means as its tooltip. */
   mark?: { icon: React.ReactNode; label: string };
+  /** An eye at the row's right end, right of the other controls; hidden dims the row's icon and name. */
+  eye?: { hidden: boolean; onClick: () => void; ariaLabel: string };
 }) {
-  const controls = (trailingAction ? 1 : 0) + (radio ? 1 : 0);
+  const controls = (eye ? 1 : 0) + (trailingAction ? 1 : 0) + (radio ? 1 : 0);
+  const trailingRight = eye ? 26 : 4;
+  const dim = eye?.hidden ? { opacity: 0.45 } : {};
   return (
     <>
       <div style={{ position: 'relative', ...dropHintStyle(row?.dropHint) }} {...row?.rowProps}>
@@ -1445,8 +1469,8 @@ export function TreeNode({
             }}
           >
             <span style={styles.expandIcon}>{expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}</span>
-            <span style={{ display: 'inline-flex' }}>{icon}</span>
-            <span style={styles.treeNodeLabel}>{label}</span>
+            <span style={{ display: 'inline-flex', ...dim }}>{icon}</span>
+            <span style={{ ...styles.treeNodeLabel, ...dim }}>{label}</span>
             {mark && (
               <span style={styles.mark} title={mark.label} aria-label={mark.label}>
                 {mark.icon}
@@ -1455,10 +1479,24 @@ export function TreeNode({
             {count !== undefined && <span style={styles.badge}>{count}</span>}
           </button>
         )}
-        {trailingAction && (
+        {eye && (
           <button
             type="button"
             style={styles.trailingActionBtn}
+            onClick={(e) => {
+              e.stopPropagation();
+              eye.onClick();
+            }}
+            aria-label={eye.ariaLabel}
+            title={eye.ariaLabel}
+          >
+            {eye.hidden ? <EyeOff size={11} strokeWidth={1.5} /> : <Eye size={11} strokeWidth={1.5} />}
+          </button>
+        )}
+        {trailingAction && (
+          <button
+            type="button"
+            style={{ ...styles.trailingActionBtn, right: trailingRight }}
             onClick={(e) => {
               e.stopPropagation();
               trailingAction.onClick();
@@ -1474,7 +1512,7 @@ export function TreeNode({
             type="button"
             role="radio"
             aria-checked={radio.on}
-            style={{ ...styles.trailingActionBtn, right: trailingAction ? 26 : 4 }}
+            style={{ ...styles.trailingActionBtn, right: trailingAction ? trailingRight + 22 : trailingRight }}
             onClick={(e) => {
               e.stopPropagation();
               if (!radio.on) radio.onClick();
