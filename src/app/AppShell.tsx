@@ -27,10 +27,12 @@ import type { Mode, PanelRequest } from './appState';
 import {
   bomOf,
   originShown,
+  partHidden,
   setBom,
   setColor,
   setName,
   setOriginShown,
+  setPartsVisible,
   setVisible,
   type OriginItem,
 } from './attributes';
@@ -697,6 +699,10 @@ export function AppShell(props: AppShellProps) {
             }
             bomOf={(part) => bomOf(doc, part)}
             onSetBom={(parts, kind) => report(setBom(editor, parts, kind), 'BOM')}
+            partHidden={(part) => partHidden(doc, part)}
+            onSetPartsVisible={(parts, visible) =>
+              report(setPartsVisible(editor, parts, visible), visible ? 'Show' : 'Hide')
+            }
             onNewFolder={(parent, members) => {
               const added = addFolder(editor, parent, members);
               if (added.ok) return added.id;
