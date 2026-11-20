@@ -322,8 +322,8 @@ export class ServiceClient {
   }
 
   /** The evaluated document's bill of materials (see `EvaluationService.billOfMaterials`). */
-  billOfMaterials(): Promise<BomLine[]> {
-    return this.#api.billOfMaterials();
+  billOfMaterials(assembly?: string): Promise<BomLine[]> {
+    return this.#api.billOfMaterials(assembly);
   }
 
   /** The volume and box of a shape in BREP text. */

@@ -376,11 +376,10 @@ export interface ExportOptions {
   /** STL as text rather than binary. */
   ascii?: boolean;
   /**
-   * With an assembly, also the instances of purchased and reference parts
-   * (16.1); without, an assembly export leaves them out. A part exported on
-   * its own is written whatever it is.
+   * The kinds of part (16.1) whose instances an assembly export leaves out;
+   * none by default. A part exported on its own is written whatever it is.
    */
-  hardware?: boolean;
+  leaveOut?: ('purchased' | 'reference')[];
 }
 
 /** One line of a bill of materials: a part's build and how many times the document uses it. */

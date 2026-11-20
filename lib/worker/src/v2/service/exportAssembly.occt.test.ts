@@ -88,17 +88,22 @@ describe('purchased and reference parts', { timeout: 60_000 }, () => {
       k.release(shape);
       return v;
     };
-    expect(volume(service.exportFile('step', { assembly: a.id }))).toBeCloseTo(40 * 40 * 10, 6);
-    expect(volume(service.exportFile('step', { assembly: a.id }, { hardware: true }))).toBeCloseTo(
+    const both = { leaveOut: ['purchased', 'reference'] as ('purchased' | 'reference')[] };
+    expect(volume(service.exportFile('step', { assembly: a.id }, both))).toBeCloseTo(40 * 40 * 10, 6);
+    expect(volume(service.exportFile('step', { assembly: a.id }))).toBeCloseTo(
       40 * 40 * 10 + 2 * 4 * 4 * 20 + 20 * 20 * 2,
       6,
     );
     // A binary STL holds 50 bytes a triangle after its 84-byte header: a box has 12.
-    expect(service.exportFile('stl', { assembly: a.id }).byteLength).toBe(84 + 12 * 50);
-    expect(service.exportFile('stl', { assembly: a.id }, { hardware: true }).byteLength).toBe(84 + 4 * 12 * 50);
+    expect(service.exportFile('stl', { assembly: a.id }, both).byteLength).toBe(84 + 12 * 50);
+    expect(service.exportFile('stl', { assembly: a.id }, { leaveOut: ['reference'] }).byteLength).toBe(
+      84 + 3 * 12 * 50,
+    );
+    expect(service.exportFile('stl', { assembly: a.id }).byteLength).toBe(84 + 4 * 12 * 50);
     // A purchased part exported on its own is written.
     expect(service.exportFile('stl', { part: pin.id }).byteLength).toBe(84 + 12 * 50);
 
+    expect(service.billOfMaterials(a.id)).toEqual(service.billOfMaterials());
     expect(service.billOfMaterials().map((l) => [l.name, l.kind, l.quantity, l.library])).toEqual([
       ['Base', 'normal', 1, false],
       ['Pin', 'purchased', 2, false],

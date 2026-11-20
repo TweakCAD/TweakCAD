@@ -55,7 +55,7 @@ export interface AppServiceClient extends Evaluator, PickClient {
   restart?(): void;
   exportFile(format: ExportFormat, scope: ResolveScope, options?: ExportOptions): Promise<Uint8Array>;
   exportFreeCad(): Promise<FcstdExport>;
-  billOfMaterials(): Promise<BomLine[]>;
+  billOfMaterials(assembly?: string): Promise<BomLine[]>;
   /** A model entity kind and measures (9.7), or null for anything else. */
   properties(key: Key): Promise<{ kind: string; measures: Measures } | null>;
   /** A shown body's volume, surface area, centre of mass and bounding box; absent where the client cannot read them. */
@@ -113,9 +113,12 @@ export interface AppServices {
   whenShown(): Promise<void>;
   /**
    * The shown part or assembly as a file; empty when it shows nothing. An
-   * assembly's purchased and reference parts are left out unless `hardware`.
+   * assembly's purchased and reference parts go in as `include` says, by
+   * default as `defaultIncludes` gives for the format.
    */
-  exportShown(format: ExportFormat, options?: { hardware?: boolean }): Promise<Uint8Array>;
+  exportShown(format: ExportFormat, include?: ExportIncludes): Promise<Uint8Array>;
+  /** What an export of the shown part or assembly could leave out, once evaluation has settled. */
+  exportChoices(): Promise<ExportChoices | null>;
   /** The document's bill of materials, once evaluation has settled. */
   billOfMaterials(): Promise<BomLine[]>;
   /** The document as a FreeCAD file, once evaluation has settled. */
@@ -123,6 +126,26 @@ export interface AppServices {
   /** Resolves once the kernel and solver are loaded in the worker, or rejects with why not. */
   ready: Promise<{ loadTimeMs: number }>;
   dispose(): void;
+}
+
+/** Which kinds of part an assembly export puts in. */
+export interface ExportIncludes {
+  purchased: boolean;
+  reference: boolean;
+}
+
+/** What the shown part or assembly is, and for an assembly how many instances of each kind it places. */
+export type ExportChoices =
+  { kind: 'part' } | { kind: 'assembly'; name: string; instances: number; purchased: number; reference: number };
+
+/**
+ * What an assembly export puts in unless asked otherwise: files for
+ * printing (STL, 3MF) leave purchased and reference parts out; files for
+ * other CAD programs (STEP, BREP) keep the whole assembly.
+ */
+export function defaultIncludes(format: ExportFormat): ExportIncludes {
+  const cad = format === 'step' || format === 'brep';
+  return { purchased: cad, reference: cad };
 }
 
 export interface BootAppOptions {
@@ -232,16 +255,36 @@ export async function bootApp(o: BootAppOptions): Promise<BootedApp> {
       // While a part is edited in an assembly's context, a pick on another instance goes through the part's context.
       return inContextPick(services, item, options);
     },
-    async exportShown(format, options = {}) {
+    async exportShown(format, include = defaultIncludes(format)) {
       await settled();
       const root = shownOf(editor.document, app.getState().focus);
       if (!root || !display.getState().display) return new Uint8Array();
       const scope: ResolveScope = 'part' in root ? { part: root.part } : { assembly: root.assembly };
       const docName = (editor.document.metadata as { name?: unknown }).name;
+      const leaveOut = (['purchased', 'reference'] as const).filter((kind) => !include[kind]);
       return o.client.exportFile(format, scope, {
         name: typeof docName === 'string' ? docName : 'model',
-        ...(options.hardware ? { hardware: true } : {}),
+        ...(leaveOut.length > 0 ? { leaveOut } : {}),
       });
+    },
+    async exportChoices() {
+      await settled();
+      const root = shownOf(editor.document, app.getState().focus);
+      if (!root || !display.getState().display) return null;
+      if ('part' in root) return { kind: 'part' };
+      const lines = await o.client.billOfMaterials(root.assembly);
+      const count = (kind?: BomLine['kind']) =>
+        lines.filter((l) => kind === undefined || l.kind === kind).reduce((n, l) => n + l.quantity, 0);
+      const row = (editor.document.assemblies as { id: string; name?: unknown }[] | undefined)?.find(
+        (a) => a.id === root.assembly,
+      );
+      return {
+        kind: 'assembly',
+        name: typeof row?.name === 'string' ? row.name : 'Assembly',
+        instances: count(),
+        purchased: count('purchased'),
+        reference: count('reference'),
+      };
     },
     async billOfMaterials() {
       await settled();

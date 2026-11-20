@@ -112,7 +112,7 @@ export interface AppShellProps {
   onOpen: () => void;
   onSave: () => void;
   onSaveAs: () => void;
-  onExport: (format: 'stl' | 'step' | 'brep' | '3mf', options?: { hardware?: boolean }) => void;
+  onExport: (format: 'stl' | 'step' | 'brep' | '3mf') => void;
   onExportFreeCad?: () => void;
   /** Downloads the bill of materials. */
   onExportBom?: () => void;

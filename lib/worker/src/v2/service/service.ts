@@ -2550,13 +2550,13 @@ export class EvaluationService {
   }
 
   /**
-   * The bill of materials of the document: with an assembly at the root,
-   * each part build its instances place (sub-assemblies' and the copies of
-   * assembly features' included), with how many; with a part at the root,
-   * each part of the document once. Lines follow the order parts are first
-   * met; a part's kind comes from its own attribute (16.1).
+   * The bill of materials of the document: with an assembly at the root (or
+   * `assembly` given), each part build its instances place (sub-assemblies'
+   * and the copies of assembly features' included), with how many; with a
+   * part at the root, each part of the document once. Lines follow the order
+   * parts are first met; a part's kind comes from its own attribute (16.1).
    */
-  billOfMaterials(): BomLine[] {
+  billOfMaterials(assembly?: string): BomLine[] {
     const doc = this.doc;
     if (!doc) throw new Error('nothing has been evaluated');
     const line = (def: Definition, quantity: number): BomLine => ({
@@ -2567,10 +2567,10 @@ export class EvaluationService {
       library: def.ev !== this.ev,
     });
     const root = doc.root as Json;
-    if (!('assembly' in root)) {
+    if (assembly === undefined && !('assembly' in root)) {
       return this.definitions.filter((d) => d.variant === '' && d.steps !== undefined).map((d) => line(d, 1));
     }
-    const view = this.assemblies.get((root.assembly as Json).id as string);
+    const view = this.assemblies.get(assembly ?? ((root.assembly as Json).id as string));
     const counts = new Map<Definition, number>();
     for (const leaf of view?.leaves ?? []) counts.set(leaf.definition, (counts.get(leaf.definition) ?? 0) + 1);
     return [...counts].map(([def, n]) => line(def, n));
@@ -2657,9 +2657,10 @@ export class EvaluationService {
   }
 }
 
-/** Whether an assembly export writes a leaf: a part made, or any part when hardware is asked for too. */
+/** Whether an assembly export writes a leaf: one whose part's kind it does not leave out. */
 function exportsLeaf(leaf: Leaf, options: ExportOptions): boolean {
-  return options.hardware === true || leaf.definition.styles.bom === 'normal';
+  const kind = leaf.definition.styles.bom;
+  return kind === 'normal' || !(options.leaveOut ?? []).includes(kind);
 }
 
 /** A document's value evaluator that notes when a value does not evaluate. */
