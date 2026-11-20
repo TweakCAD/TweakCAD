@@ -529,7 +529,7 @@ export function BrowserTree(props: BrowserTreeProps) {
     return (
       <div
         key={id}
-        style={{ ...styles.originItem, paddingLeft: 8 + depth * 14, ...dropHintStyle(row.dropHint) }}
+        style={{ ...styles.originItem, paddingLeft: rowIndent(depth), ...dropHintStyle(row.dropHint) }}
         onContextMenu={row.onContextMenu}
         {...row.rowProps}
       >
@@ -700,7 +700,7 @@ export function BrowserTree(props: BrowserTreeProps) {
           : {})}
       >
         {part.configuration && (
-          <div style={{ ...styles.paramRow, paddingLeft: 8 + (depth + 1) * 14 }}>
+          <div style={{ ...styles.paramRow, paddingLeft: rowIndent(depth + 1) }}>
             <span style={styles.paramName}>Configuration</span>
             <select
               aria-label={`${part.name} configuration`}
@@ -777,7 +777,7 @@ export function BrowserTree(props: BrowserTreeProps) {
           count={sketches.length}
         >
           {sketches.length === 0 && (
-            <span style={{ ...styles.emptyText, paddingLeft: 56 + (depth - 1) * 14 }}>No sketches</span>
+            <span style={{ ...styles.emptyText, paddingLeft: rowIndent(depth + 2) + 6 }}>No sketches</span>
           )}
           {sketches.map((row) => (
             <FeatureRowView
@@ -858,7 +858,7 @@ export function BrowserTree(props: BrowserTreeProps) {
           count={components.length}
         >
           {components.length === 0 && (
-            <span style={{ ...styles.emptyText, paddingLeft: 56 + (depth - 1) * 14 }}>No components</span>
+            <span style={{ ...styles.emptyText, paddingLeft: rowIndent(depth + 2) + 6 }}>No components</span>
           )}
           {components.map((row) => {
             const keys = part.bodies.filter((b) => b.feature === row.id).flatMap(keysOf);
@@ -922,7 +922,7 @@ export function BrowserTree(props: BrowserTreeProps) {
               })}
         >
           {part.bodies.length === 0 && (
-            <span style={{ ...styles.emptyText, paddingLeft: 56 + (depth - 1) * 14 }}>No bodies</span>
+            <span style={{ ...styles.emptyText, paddingLeft: rowIndent(depth + 2) + 6 }}>No bodies</span>
           )}
           {bodyGroups(part.features, part.bodies).map((g) => {
             const bodyRow = (b: BrowserBody, rowDepth: number) => (
@@ -1086,12 +1086,12 @@ export function BrowserTree(props: BrowserTreeProps) {
                 })}
           >
             {props.parameters.length === 0 && (
-              <span style={{ ...styles.emptyText, paddingLeft: 36 }}>No parameters</span>
+              <span style={{ ...styles.emptyText, paddingLeft: rowIndent(2) }}>No parameters</span>
             )}
             {props.parameters.map((p) => (
               <div
                 key={p.id}
-                style={{ ...styles.paramRow, paddingLeft: 42 }}
+                style={{ ...styles.paramRow, paddingLeft: rowIndent(2) + 6 }}
                 onDoubleClick={readOnly ? undefined : props.onEditParameters}
                 title={
                   p.configured !== null
@@ -1315,6 +1315,14 @@ const BOM_MARKS: Partial<Record<BomKind, { icon: React.ReactNode; label: string 
   reference: { icon: <CircleDashed size={11} color="#94a3b8" />, label: 'Reference' },
 };
 
+/**
+ * The left padding of a row at `depth`: the document's row at 8 px, the rows
+ * under it from 10 px, 14 px a level.
+ */
+export function rowIndent(depth: number): number {
+  return depth === 0 ? 8 : 10 + (depth - 1) * 14;
+}
+
 /** Indents a nested folder's name in a menu. */
 const EM_SPACE = String.fromCharCode(0x2003);
 
@@ -1383,7 +1391,7 @@ export function TreeNode({
     <>
       <div style={{ position: 'relative', ...dropHintStyle(row?.dropHint) }} {...row?.rowProps}>
         {row?.rename ? (
-          <div style={{ ...styles.treeNodeBtn, paddingLeft: 8 + depth * 14, cursor: 'default' }}>
+          <div style={{ ...styles.treeNodeBtn, paddingLeft: rowIndent(depth), cursor: 'default' }}>
             <span style={styles.expandIcon}>{expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}</span>
             <span style={{ display: 'inline-flex' }}>{icon}</span>
             <RenameField name={label} onDone={row.rename} />
@@ -1393,7 +1401,7 @@ export function TreeNode({
             type="button"
             style={{
               ...styles.treeNodeBtn,
-              paddingLeft: 8 + depth * 14,
+              paddingLeft: rowIndent(depth),
               paddingRight: 8 + controls * 22,
               fontWeight: bold ? 600 : 500,
               fontSize: bold ? 12 : 11,
@@ -1507,7 +1515,7 @@ function FeatureRowView({
       data-feature-row
       style={{
         ...styles.featureNode,
-        paddingLeft: 8 + depth * 14,
+        paddingLeft: rowIndent(depth),
         background,
         borderLeft: border,
         opacity: row.suppressed || pastRollback ? 0.45 : 1,
@@ -1615,7 +1623,7 @@ function BodyRowView({
         type="button"
         style={{
           ...styles.featureNode,
-          paddingLeft: 8 + depth * 14,
+          paddingLeft: rowIndent(depth),
           paddingRight: 28,
           background,
           borderLeft: selected ? '2px solid #1a6fd1' : '2px solid transparent',
@@ -1681,7 +1689,7 @@ function OriginRow({
     <div style={{ position: 'relative' }}>
       <button
         type="button"
-        style={{ ...styles.originItem, paddingLeft: 8 + depth * 14, ...(selected ? styles.selectedRow : {}) }}
+        style={{ ...styles.originItem, paddingLeft: rowIndent(depth), ...(selected ? styles.selectedRow : {}) }}
         onClick={(e) => onClick(e.shiftKey || e.ctrlKey || e.metaKey)}
         onMouseEnter={(e) => {
           if (!selected) e.currentTarget.style.background = '#f4f4f4';

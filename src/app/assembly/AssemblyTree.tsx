@@ -36,7 +36,14 @@ import { isPlainObject } from '@tweakcad/format';
 import type { AppServices } from '../services';
 import { useDocument, useSlice } from '../hooks';
 import { useKeptInWindow } from '../menuPlacement';
-import { MenuButton, RenameField, TreeNode, browserStyles as styles, type TreeRowHooks } from '../BrowserTree';
+import {
+  MenuButton,
+  RenameField,
+  TreeNode,
+  browserStyles as styles,
+  rowIndent,
+  type TreeRowHooks,
+} from '../BrowserTree';
 import { FeatureSuppressedIcon, FeatureWarningIcon, getFeatureIcon } from '../../icons/cadIcons.tsx';
 import { editFeature } from '../modeling/commands';
 import { asmTimelineRows, copiesOf } from './asmFeatures';
@@ -147,7 +154,7 @@ export function AssemblyTree({
         key={key}
         style={{
           ...styles.featureNode,
-          paddingLeft: 8 + (rowDepth + base) * 14,
+          paddingLeft: rowIndent(rowDepth + base),
           paddingRight: 28,
           borderLeft: '2px solid transparent',
         }}
@@ -161,7 +168,7 @@ export function AssemblyTree({
           type="button"
           style={{
             ...styles.featureNode,
-            paddingLeft: 8 + (rowDepth + base) * 14,
+            paddingLeft: rowIndent(rowDepth + base),
             paddingRight: 28,
             borderLeft: '2px solid transparent',
             opacity: o.dim ? 0.5 : 1,
@@ -217,7 +224,7 @@ export function AssemblyTree({
           count={a.instances.length}
         >
           {a.instances.length === 0 && (
-            <span style={{ ...styles.emptyText, paddingLeft: 56 + base * 14 }}>No instances</span>
+            <span style={{ ...styles.emptyText, paddingLeft: rowIndent(3 + base) + 6 }}>No instances</span>
           )}
           {a.instances.map((i) =>
             row(i.id, 3, <Box size={12} color="#ff9800" />, i.label, {
@@ -244,7 +251,9 @@ export function AssemblyTree({
           depth={2 + base}
           count={a.joints.length}
         >
-          {a.joints.length === 0 && <span style={{ ...styles.emptyText, paddingLeft: 56 + base * 14 }}>No joints</span>}
+          {a.joints.length === 0 && (
+            <span style={{ ...styles.emptyText, paddingLeft: rowIndent(3 + base) + 6 }}>No joints</span>
+          )}
           {a.joints.map((j) =>
             renaming === j.id
               ? row(j.id, 3, <Link2 size={12} color="#6366f1" />, j.label, {
