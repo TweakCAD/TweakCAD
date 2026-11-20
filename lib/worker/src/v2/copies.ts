@@ -14,7 +14,7 @@ import {
   type SubShapeHistory,
 } from '@tweakcad/format';
 import { HASH_BOUND } from '@tweakcad/kernel/src/namingAdapter.ts';
-import { FLAG, FeaturePause, TEXT, kv, norm, type BuildContext, type Json, type V3 } from './context';
+import { FLAG, FeaturePause, TEXT, add, kv, norm, rotate, sub, type BuildContext, type Json, type V3 } from './context';
 import {
   CONTACT,
   FaceTracker,
@@ -25,6 +25,7 @@ import {
   targetsOf,
   type Live,
 } from './operation';
+import { IDENTITY, compose, matrixOf, qaxis, type Rigid } from './rigid';
 
 /** Coplanar faces within this angle, in radians, merge when a join refines its result. */
 
@@ -41,7 +42,36 @@ export function sourcesOf(ctx: BuildContext, namer: FeatureNamer, of: Json, what
   return liveBodies(ctx, namer, (of.bodies as Json).set as Json[], 'a source body');
 }
 
-/** Runs a motion on `source`: one kernel history per part of it, none for no motion. */
+/** A motion as one rigid placement. */
+export function rigidOf(motion: Motion): Rigid {
+  const { turn, shift } = motion;
+  let placement = IDENTITY;
+  if (turn && turn.radians !== 0) {
+    const rotation = qaxis(turn.direction, turn.radians);
+    placement = { rotation, position: sub(turn.point, rotate(rotation, turn.point)) };
+  }
+  return shift && norm(shift) !== 0 ? { ...placement, position: add(placement.position, shift) } : placement;
+}
+
+/**
+ * Records that `moved` is `source` placed by `placement`, so the display
+ * can mesh it from the source's triangulation (`Evaluation.rigid`).
+ */
+function noteRigid(ctx: BuildContext, source: Live, moved: Live, placement: Rigid): void {
+  const rigid = (ctx.ev.rigid ??= new Map());
+  const before = rigid.get(source.handle);
+  rigid.set(
+    moved.handle,
+    before
+      ? { source: before.source, placement: compose(placement, before.placement) }
+      : { source: source.handle, placement },
+  );
+}
+
+/**
+ * Runs a motion on `source`: one kernel history, none for no motion. A turn
+ * and a shift together are one kernel transform.
+ */
 export function runMotion(
   ctx: BuildContext,
   source: Live,
@@ -56,13 +86,15 @@ export function runMotion(
     at = { shape: history.result, handle: evolution.result };
   };
   const { turn, shift } = motion;
-  if (turn && turn.radians !== 0) {
+  const turns = turn !== undefined && turn.radians !== 0;
+  const shifts = shift !== undefined && norm(shift) !== 0;
+  const hashes = adapter.faceHashes([at.shape]);
+  if (turns && shifts) record(k.transformWithHistory(at.handle, matrixOf(rigidOf(motion)), hashes, HASH_BOUND));
+  else if (turns) {
     const axis = { point: kv(turn.point), direction: kv(turn.direction) };
-    record(k.rotateWithHistory(at.handle, axis, turn.radians, adapter.faceHashes([at.shape]), HASH_BOUND));
-  }
-  if (shift && norm(shift) !== 0) {
-    record(k.translateWithHistory(at.handle, shift[0], shift[1], shift[2], adapter.faceHashes([at.shape]), HASH_BOUND));
-  }
+    record(k.rotateWithHistory(at.handle, axis, turn.radians, hashes, HASH_BOUND));
+  } else if (shifts) record(k.translateWithHistory(at.handle, shift[0], shift[1], shift[2], hashes, HASH_BOUND));
+  if (histories.length > 0) noteRigid(ctx, source, at, rigidOf(motion));
   return { histories, moved: at };
 }
 

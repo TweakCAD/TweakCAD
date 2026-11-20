@@ -1226,76 +1226,122 @@ export class EvaluationService {
       .topology(ref)
       .vertices.filter((v) => !body.shared || v.faces.some((f) => own.has(f)))
       .map((v) => v.vertex);
-    const m = k.meshShape(handle, options);
-    const faces: number[] = [];
-    const styled: { entity: NamedEntity; key: Key }[] = [];
-    const groups = m.faceGroups ?? new Int32Array(0);
-    for (let i = 0; i + 2 < groups.length; i += 3) {
-      const [start, count] = [(groups[i] as number) / 3, (groups[i + 1] as number) / 3];
-      const face = byHash.face.get(groups[i + 2] as number);
-      if (face !== undefined && count > 0) plan.faces.push(start, count, face);
-      const entity = face === undefined ? undefined : state.get(face);
-      if (!entity || count === 0) continue;
-      const key = this.modelKey(scope, entity, state, true);
-      faces.push(start, count, key);
-      styled.push({ entity, key });
-    }
-    sortRanges(faces);
-
-    const imports = importFeatures(def.row);
-    /** An edge an import made between two of its planar faces that meet smoothly: a facet seam of a mesh. */
-    const facetSeam = (edge: ShapeKey, faces: readonly { face: ShapeKey }[]) => {
-      const by = state.get(edge)?.createdBy;
-      if (by === undefined || !imports.has(by) || faces.length !== 2) return false;
-      const [a, b] = faces.map((f) => adapter.planeNormal(f.face));
-      if (!a || !b) return false;
-      return Math.abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) >= FACET_SEAM_COS;
-    };
-    const drawn = new Map(
-      adapter.topology(ref).edges.map((e) => [e.edge, e.form === 'normal' && !facetSeam(e.edge, e.faces)]),
-    );
-    const wire = k.wireframe(handle, { deflection: options.linearDeflection, source: 'triangulation' });
-    const segments: number[] = [];
-    const edges: number[] = [];
-    const eg = wire.edgeGroups;
-    for (let i = 0; i + 2 < eg.length; i += 3) {
-      const [start, count] = [eg[i] as number, eg[i + 1] as number];
-      const edge = byHash.edge.get(eg[i + 2] as number);
-      const entity = edge === undefined ? undefined : state.get(edge);
-      if (edge !== undefined && !entity && drawn.get(edge) === true && count >= 6) plan.unnamedEdges.push(edge);
-      if (!entity || drawn.get(entity.key) !== true || count < 6) continue;
-      const first = segments.length / 6;
-      for (let p = start; p + 5 < start + count; p += 3) {
-        for (let c = 0; c < 6; c++) segments.push(wire.points[p + c] as number);
+    // A body that only moved is meshed as its source located there, which keeps the source's triangulation.
+    const located = this.locatedSource(handle, byHash);
+    const meshed = located?.shape ?? handle;
+    const hashes = located?.byHash ?? byHash;
+    try {
+      const m = k.meshShape(meshed, options);
+      const faces: number[] = [];
+      const styled: { entity: NamedEntity; key: Key }[] = [];
+      const groups = m.faceGroups ?? new Int32Array(0);
+      for (let i = 0; i + 2 < groups.length; i += 3) {
+        const [start, count] = [(groups[i] as number) / 3, (groups[i + 1] as number) / 3];
+        const face = hashes.face.get(groups[i + 2] as number);
+        if (face !== undefined && count > 0) plan.faces.push(start, count, face);
+        const entity = face === undefined ? undefined : state.get(face);
+        if (!entity || count === 0) continue;
+        const key = this.modelKey(scope, entity, state, true);
+        faces.push(start, count, key);
+        styled.push({ entity, key });
       }
-      edges.push(first, segments.length / 6 - first, this.modelKey(scope, entity, state, true));
-      plan.edges.push(first, segments.length / 6 - first, entity.key);
+      sortRanges(faces);
+
+      const imports = importFeatures(def.row);
+      /** An edge an import made between two of its planar faces that meet smoothly: a facet seam of a mesh. */
+      const facetSeam = (edge: ShapeKey, faces: readonly { face: ShapeKey }[]) => {
+        const by = state.get(edge)?.createdBy;
+        if (by === undefined || !imports.has(by) || faces.length !== 2) return false;
+        const [a, b] = faces.map((f) => adapter.planeNormal(f.face));
+        if (!a || !b) return false;
+        return Math.abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) >= FACET_SEAM_COS;
+      };
+      const drawn = new Map(
+        adapter.topology(ref).edges.map((e) => [e.edge, e.form === 'normal' && !facetSeam(e.edge, e.faces)]),
+      );
+      const wire = k.wireframe(meshed, { deflection: options.linearDeflection, source: 'triangulation' });
+      const segments: number[] = [];
+      const edges: number[] = [];
+      const eg = wire.edgeGroups;
+      for (let i = 0; i + 2 < eg.length; i += 3) {
+        const [start, count] = [eg[i] as number, eg[i + 1] as number];
+        const edge = hashes.edge.get(eg[i + 2] as number);
+        const entity = edge === undefined ? undefined : state.get(edge);
+        if (edge !== undefined && !entity && drawn.get(edge) === true && count >= 6) plan.unnamedEdges.push(edge);
+        if (!entity || drawn.get(entity.key) !== true || count < 6) continue;
+        const first = segments.length / 6;
+        for (let p = start; p + 5 < start + count; p += 3) {
+          for (let c = 0; c < 6; c++) segments.push(wire.points[p + c] as number);
+        }
+        edges.push(first, segments.length / 6 - first, this.modelKey(scope, entity, state, true));
+        plan.edges.push(first, segments.length / 6 - first, entity.key);
+      }
+      const points: number[] = [];
+      const vertexKeys: number[] = [];
+      for (const v of vertices) {
+        const entity = state.get(v);
+        if (!entity) plan.unnamedVertices.push(v);
+        const at = entity ? adapter.measures(v).point : undefined;
+        if (!entity || !at) continue;
+        points.push(...at);
+        vertexKeys.push(this.modelKey(scope, entity, state, true));
+        plan.vertices.push(v);
+      }
+      return {
+        mesh: {
+          positions: new Float32Array(m.positions),
+          normals: new Float32Array(m.normals),
+          indices: new Uint32Array(m.indices),
+          faces: new Uint32Array(faces),
+          segments: new Float32Array(segments),
+          edges: new Uint32Array(edges),
+          points: new Float32Array(points),
+          vertices: new Uint32Array(vertexKeys),
+        },
+        faces: styled,
+        plan,
+      };
+    } finally {
+      if (located) k.release(located.shape);
     }
-    const points: number[] = [];
-    const vertexKeys: number[] = [];
-    for (const v of vertices) {
-      const entity = state.get(v);
-      if (!entity) plan.unnamedVertices.push(v);
-      const at = entity ? adapter.measures(v).point : undefined;
-      if (!entity || !at) continue;
-      points.push(...at);
-      vertexKeys.push(this.modelKey(scope, entity, state, true));
-      plan.vertices.push(v);
+  }
+
+  /**
+   * `handle`, a rigid motion of a shape the evaluation recorded, as that
+   * source located where `handle` lies, with its face and edge hashes mapped
+   * to `handle`'s keys by their order (a moved copy keeps its source's
+   * order); undefined when there is none, or the two do not line up.
+   */
+  private locatedSource(
+    handle: ShapeHandle,
+    byHash: { face: Map<number, ShapeKey>; edge: Map<number, ShapeKey> },
+  ): { shape: ShapeHandle; byHash: { face: Map<number, ShapeKey>; edge: Map<number, ShapeKey> } } | undefined {
+    const link = this.ev.rigid?.get(handle);
+    if (!link) return undefined;
+    const k = this.ev.kernel;
+    let shape: ShapeHandle | undefined;
+    try {
+      shape = k.located(link.source, matrixOf(link.placement));
+      const remap = (kind: 'face' | 'edge') => {
+        const own = k.subShapeHashes(handle, kind, HASH_BOUND);
+        const theirs = k.subShapeHashes(shape as ShapeHandle, kind, HASH_BOUND);
+        if (own.length !== theirs.length || own.length !== byHash[kind].size) return undefined;
+        const out = new Map<number, ShapeKey>();
+        for (let i = 0; i < own.length; i++) {
+          const key = byHash[kind].get(own[i] as number);
+          if (key === undefined) return undefined;
+          out.set(theirs[i] as number, key);
+        }
+        return out;
+      };
+      const face = remap('face');
+      const edge = remap('edge');
+      if (face && edge) return { shape, byHash: { face, edge } };
+    } catch {
+      // A source the kernel no longer holds is meshed afresh.
     }
-    return {
-      mesh: {
-        positions: new Float32Array(m.positions),
-        normals: new Float32Array(m.normals),
-        indices: new Uint32Array(m.indices),
-        faces: new Uint32Array(faces),
-        segments: new Float32Array(segments),
-        edges: new Uint32Array(edges),
-        points: new Float32Array(points),
-        vertices: new Uint32Array(vertexKeys),
-      },
-      faces: styled,
-      plan,
-    };
+    if (shape !== undefined) k.release(shape);
+    return undefined;
   }
 
   private sketchDisplay(def: Definition, feature: string, sketch: SketchResult): SketchDisplay {

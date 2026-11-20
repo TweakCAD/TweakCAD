@@ -23,6 +23,7 @@ import type {
 import type { NamingAdapter } from '@tweakcad/kernel/src/namingAdapter.ts';
 import type { GcsWrapper } from '@salusoft89/planegcs';
 import type { AssemblyResult } from './assembly';
+import type { Rigid } from './rigid';
 
 export type Json = Record<string, unknown>;
 export type V3 = [number, number, number];
@@ -140,6 +141,13 @@ export interface Evaluation {
   outOfDate: { part: string; context: string; reason: string }[];
   /** Placed copies an earlier evaluation on the same shapes made, to take over (see `placeInto`). */
   placements?: PlacementCache;
+  /**
+   * Shapes this evaluation made as rigid motions of others: each result's
+   * handle, the shape it is a copy of (followed back through motions of
+   * motions) and the placement from it. The display meshes such a shape as
+   * its source located there, reusing the source's triangulation.
+   */
+  rigid?: Map<ShapeHandle, { source: ShapeHandle; placement: Rigid }>;
 }
 
 /** What placing one build by one motion made, apart from the place it was put in. */
