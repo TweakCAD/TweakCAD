@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readDocument } from '@tweakcad/format';
 import { Editor, seededIds, type Json } from '@tweakcad/editor';
 import { newDocument } from './document';
-import { ORIGIN_ITEMS, originShown, setOriginShown } from './attributes';
+import { ORIGIN_ITEMS, bomOf, originShown, setBom, setOriginShown } from './attributes';
 
 function setup() {
   const ids = seededIds(81);
@@ -34,5 +34,29 @@ describe('origin visibility', () => {
     expect(editor.store.undoLabel()).toBe('Show origin');
     editor.undo();
     expect([...originShown(editor.document, part)]).toEqual([]);
+  });
+});
+
+describe('bill-of-materials kind', () => {
+  it('marks parts purchased or reference as one undo step, kept through a save, and normal clears it', () => {
+    const { editor, part } = setup();
+    expect(bomOf(editor.document, part)).toBe('normal');
+    expect(setBom(editor, [part], 'purchased').ok).toBe(true);
+    expect(editor.store.undoLabel()).toBe('Mark Purchased');
+    expect(bomOf(JSON.parse(editor.save()) as Json, part)).toBe('purchased');
+    expect(readDocument(JSON.parse(editor.save())).refused).toBe(false);
+    expect(setBom(editor, [part], 'reference').ok).toBe(true);
+    expect(bomOf(editor.document, part)).toBe('reference');
+    expect(setBom(editor, [part], 'normal').ok).toBe(true);
+    expect((((editor.document.parts as Json[])[0] as Json).attributes as Json[] | undefined) ?? []).toEqual([]);
+    editor.undo();
+    expect(bomOf(editor.document, part)).toBe('reference');
+  });
+
+  it('takes back every part when one is refused', () => {
+    const { editor, part } = setup();
+    const before = editor.save();
+    expect(setBom(editor, [part, 'part_none'], 'purchased').ok).toBe(false);
+    expect(editor.save()).toBe(before);
   });
 });

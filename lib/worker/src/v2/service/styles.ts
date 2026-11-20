@@ -27,7 +27,13 @@ export interface Properties {
   visible?: boolean;
   filamentSlot?: number;
   name?: string;
+  /** What the part is in a bill of materials: one made, one bought, or one there only for fit. */
+  bom?: BomKind;
 }
+
+/** A part's place in a bill of materials (16.1); absent, `normal`. */
+export type BomKind = 'normal' | 'purchased' | 'reference';
+const BOM_KINDS: readonly string[] = ['normal', 'purchased', 'reference'];
 
 const TARGETS: Record<keyof Properties, { type: string; quantity?: string }> = {
   color: TEXT,
@@ -35,6 +41,7 @@ const TARGETS: Record<keyof Properties, { type: string; quantity?: string }> = {
   visible: FLAG,
   filamentSlot: INTEGER,
   name: TEXT,
+  bom: TEXT,
 };
 
 /** An attribute's properties that evaluate; one that does not is left unset. */
@@ -50,6 +57,7 @@ export function readProperties(ev: Evaluation, row: Json): Properties {
       else if (name === 'visible' && typeof v === 'boolean') out.visible = v;
       else if (name === 'filamentSlot' && typeof v === 'number') out.filamentSlot = v;
       else if (name === 'name' && typeof v === 'string') out.name = v;
+      else if (name === 'bom' && typeof v === 'string' && BOM_KINDS.includes(v)) out.bom = v as BomKind;
     } catch (e) {
       if (!(e instanceof ValuePause)) throw e;
     }
@@ -151,6 +159,11 @@ export class PartStyles {
     const own = this.own(face.key);
     const props = under(own, body);
     return { ...props, visible: body.visible !== false && own.visible !== false };
+  }
+
+  /** The part's place in a bill of materials, from an attribute on the part. */
+  get bom(): BomKind {
+    return this.part.bom ?? 'normal';
   }
 
   /** Whether something a feature made (a sketch, a construction output) is shown. */

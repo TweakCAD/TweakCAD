@@ -106,9 +106,11 @@ interface AppBarProps {
   /** Save a copy to disk under a new name. */
   onSaveAs?: (() => void) | undefined;
   /** Export the current document to a downloadable geometry format. */
-  onExport?: ((format: 'stl' | 'step' | 'brep' | '3mf') => void) | undefined;
+  onExport?: ((format: 'stl' | 'step' | 'brep' | '3mf', options?: { hardware?: boolean }) => void) | undefined;
   /** Export the document as a FreeCAD file. */
   onExportFreeCad?: (() => void) | undefined;
+  /** Downloads the bill of materials. */
+  onExportBom?: (() => void) | undefined;
   /** Optional SaaS state — drives the account chip on the right. */
   saas?: SaasState | undefined;
   /** Open the inline sign-in modal. */
@@ -167,6 +169,7 @@ export function MainAppBar({
   onSaveAs,
   onExport,
   onExportFreeCad,
+  onExportBom,
   saas,
   onRequestSignIn,
   onSignOut,
@@ -236,7 +239,7 @@ export function MainAppBar({
       <IconBtn icon={<Save size={16} />} label="Save (Ctrl+S)" onClick={() => onSave?.()} />
       <IconBtn icon={<FileDown size={16} />} label="Save as (Ctrl+Shift+S)" onClick={() => onSaveAs?.()} />
       {onOpenHistory && <IconBtn icon={<History size={16} />} label="Version history" onClick={onOpenHistory} />}
-      <ExportButton onExport={onExport} onExportFreeCad={onExportFreeCad} />
+      <ExportButton onExport={onExport} onExportFreeCad={onExportFreeCad} onExportBom={onExportBom} />
 
       <div style={styles.separator} />
 
@@ -1501,12 +1504,17 @@ function ImportButton({
 function ExportButton({
   onExport,
   onExportFreeCad,
+  onExportBom,
 }: {
-  onExport?: ((format: 'stl' | 'step' | 'brep' | '3mf') => void) | undefined;
+  onExport?: ((format: 'stl' | 'step' | 'brep' | '3mf', options?: { hardware?: boolean }) => void) | undefined;
   onExportFreeCad?: (() => void) | undefined;
+  /** Downloads the bill of materials. */
+  onExportBom?: (() => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<null | 'stl' | 'step' | 'brep' | '3mf'>(null);
+  /** An assembly's purchased and reference parts go into the file too. */
+  const [hardware, setHardware] = useState(false);
   const [hover, setHover] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
@@ -1533,7 +1541,7 @@ function ExportButton({
     setBusy(format);
     setOpen(false);
     try {
-      await onExport(format);
+      await onExport(format, { hardware });
     } finally {
       setBusy(null);
     }
@@ -1567,6 +1575,20 @@ function ExportButton({
           />
           <ExportMenuItem label="Export BREP..." sub=".brep · OpenCASCADE native B-Rep" onClick={() => pick('brep')} />
           <ExportMenuItem label="Export 3MF..." sub=".3mf · modern slicer format" onClick={() => pick('3mf')} />
+          <label style={exportMenuStyles.check}>
+            <input type="checkbox" checked={hardware} onChange={(e) => setHardware(e.currentTarget.checked)} />
+            Include purchased and reference parts
+          </label>
+          {onExportBom && (
+            <ExportMenuItem
+              label="Export BOM..."
+              sub=".csv · bill of materials"
+              onClick={() => {
+                setOpen(false);
+                onExportBom();
+              }}
+            />
+          )}
           {onExportFreeCad && (
             <ExportMenuItem
               label="Export FreeCAD..."
@@ -1637,6 +1659,17 @@ const exportMenuStyles: Record<string, React.CSSProperties> = {
     fontSize: 10,
     color: '#888',
     marginTop: 1,
+  },
+  check: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '6px 12px',
+    fontSize: 11,
+    color: '#444',
+    borderTop: '1px solid #eee',
+    borderBottom: '1px solid #eee',
+    cursor: 'pointer',
   },
 };
 

@@ -22,7 +22,16 @@ import { enqueueToast } from '../components/toastStore.ts';
 import { isEditableTarget } from '../components/toolShortcuts.ts';
 import type { SaasState } from '../storage/saasState.ts';
 import type { Mode, PanelRequest } from './appState';
-import { originShown, setColor, setName, setOriginShown, setVisible, type OriginItem } from './attributes';
+import {
+  bomOf,
+  originShown,
+  setBom,
+  setColor,
+  setName,
+  setOriginShown,
+  setVisible,
+  type OriginItem,
+} from './attributes';
 import {
   BrowserTree,
   featureMenu,
@@ -101,8 +110,10 @@ export interface AppShellProps {
   onOpen: () => void;
   onSave: () => void;
   onSaveAs: () => void;
-  onExport: (format: 'stl' | 'step' | 'brep' | '3mf') => void;
+  onExport: (format: 'stl' | 'step' | 'brep' | '3mf', options?: { hardware?: boolean }) => void;
   onExportFreeCad?: () => void;
+  /** Downloads the bill of materials. */
+  onExportBom?: () => void;
   /** Imports a STEP, STL or BREP file into the shown part. */
   onImport?: (format?: 'step' | 'stl' | 'brep') => void;
   /** Opens a FreeCAD file as a new document. */
@@ -619,6 +630,7 @@ export function AppShell(props: AppShellProps) {
         onSaveAs={props.onSaveAs}
         onExport={props.onExport}
         onExportFreeCad={props.onExportFreeCad}
+        onExportBom={props.onExportBom}
         onImport={readOnly ? undefined : props.onImport}
         onImportFcstd={props.onImportFcstd}
         onImportF3d={props.onImportF3d}
@@ -660,6 +672,8 @@ export function AppShell(props: AppShellProps) {
             folders={foldersOf(doc)}
             library={libraryOf(doc).map((e) => ({ id: String(e.id), name: String(e.name ?? '') }))}
             onFolderCommand={(command) => report(editor.dispatch(command), 'Folders')}
+            bomOf={(part) => bomOf(doc, part)}
+            onSetBom={(parts, kind) => report(setBom(editor, parts, kind), 'BOM')}
             onNewFolder={(parent, members) => {
               const added = addFolder(editor, parent, members);
               if (added.ok) return added.id;

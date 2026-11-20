@@ -148,6 +148,10 @@ change no geometry. \`folder_create {name: "Frame", items: [part_…, …]}\`,
 \`folder_move_items\` files or reorders items (no folder: back to the top
 level), \`folder_edit\` renames or moves a folder, and \`folder_delete\` gives
 what it held to its parent. \`list_features\` lists the folders.
+\`part_set_bom {kind: "purchased", folder: <Hardware>}\` marks bought parts
+(screws, bearings, motors); \`reference\` marks parts there only for fit. An
+assembly's STL, 3MF and STEP exports leave both out unless the user asks for
+them, and \`get_bom\` lists the bill of materials with quantities.
 
 ### Keeping a result as it is
 \`feature_freeze {feature: F}\` stores what F built, so edits before it no

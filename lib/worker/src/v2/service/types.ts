@@ -375,6 +375,23 @@ export interface ExportOptions {
   angularDeflection?: number;
   /** STL as text rather than binary. */
   ascii?: boolean;
+  /**
+   * With an assembly, also the instances of purchased and reference parts
+   * (16.1); without, an assembly export leaves them out. A part exported on
+   * its own is written whatever it is.
+   */
+  hardware?: boolean;
+}
+
+/** One line of a bill of materials: a part's build and how many times the document uses it. */
+export interface BomLine {
+  /** The part's id, in the document or in the library document it comes from. */
+  part: string;
+  name: string;
+  kind: 'normal' | 'purchased' | 'reference';
+  quantity: number;
+  /** It comes from the library (a component), not from the document's own parts. */
+  library: boolean;
 }
 
 export interface EvaluateServiceOptions {

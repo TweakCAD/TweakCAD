@@ -46,6 +46,7 @@ import { runAutoExport, shouldAutoExport, type AutoExportStatus } from './storag
 import { resolveBoot } from './storage/boot';
 import { CloudProjects, cloudLimitNotice } from './storage/cloud';
 import { download, openFileFromDisk, safeFileName } from './storage/disk';
+import { bomCsv } from './bom';
 import { HistoryPanel } from './storage/HistoryPanel';
 import { SaveAsPicker } from './storage/SaveAsPicker';
 import {
@@ -472,10 +473,10 @@ export function App() {
   }, [services, mayDiscard, ids]);
 
   const onExport = useCallback(
-    (format: ExportFormat) => {
+    (format: ExportFormat, options?: { hardware?: boolean }) => {
       if (!services) return;
       services
-        .exportShown(format)
+        .exportShown(format, options)
         .then((bytes) => {
           if (bytes.byteLength === 0) {
             enqueueToast({ tone: 'info', title: 'Nothing to export', message: 'The shown part has no bodies.' });
@@ -490,6 +491,19 @@ export function App() {
     },
     [services],
   );
+
+  const onExportBom = useCallback(() => {
+    if (!services) return;
+    services
+      .billOfMaterials()
+      .then((lines) => {
+        const name = String((services.editor.document.metadata as { name?: unknown }).name ?? '');
+        const file = safeFileName(`${name || 'model'} BOM`, 'csv');
+        download(file, new Blob([bomCsv(services.editor.document, lines)], { type: 'text/csv' }));
+        consoleLog('success', `Exported ${file}`, 'file');
+      })
+      .catch(reportError('BOM export failed'));
+  }, [services]);
 
   const onExportFreeCad = useCallback(() => {
     if (!services) return;
@@ -672,6 +686,7 @@ export function App() {
           onSaveAs={onSaveAs}
           onExport={onExport}
           onExportFreeCad={onExportFreeCad}
+          onExportBom={onExportBom}
           onImport={onImport}
           onImportFcstd={onImportFcstd}
           onImportF3d={onImportF3d}

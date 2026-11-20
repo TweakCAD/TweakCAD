@@ -203,6 +203,28 @@ describe('the browser rows and menus', () => {
     expect(preview).not.toContain('aria-label="New folder"');
   });
 
+  it('marks purchased and reference parts, and leaves normal ones unmarked', () => {
+    const parts = ['part_1', 'part_2', 'part_3'].map((id, i) => ({
+      id,
+      name: `Part ${i + 1}`,
+      features: [],
+      rollbackIndex: 0,
+      groups: [],
+      bodies: [],
+    }));
+    const kinds: Record<string, 'normal' | 'purchased' | 'reference'> = {
+      part_1: 'normal',
+      part_2: 'purchased',
+      part_3: 'reference',
+    };
+    const html = renderToStaticMarkup(
+      <BrowserTree {...props([], { parts, bomOf: (part) => kinds[part] ?? 'normal', onSetBom: none })} />,
+    );
+    expect(html.match(/aria-label="Purchased"/g)).toHaveLength(1);
+    expect(html.match(/aria-label="Reference"/g)).toHaveLength(1);
+    expect(html.indexOf('aria-label="Purchased"')).toBeGreaterThan(html.indexOf('>Part 2<'));
+  });
+
   it('marks the active part with its radio, and the whole design with the document radio', () => {
     const activating = { onActivatePart: none, activePart: 'part_1' };
     const html = renderToStaticMarkup(<BrowserTree {...props([], { ...activating, designActive: false })} />);

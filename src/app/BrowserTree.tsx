@@ -45,8 +45,11 @@ import {
   FolderPlus,
   FolderInput,
   FolderOutput,
+  ShoppingCart,
+  CircleDashed,
+  Check,
 } from 'lucide-react';
-import { BODY_COLOR_SWATCHES } from './attributes';
+import { BODY_COLOR_SWATCHES, BOM_KINDS, type BomKind } from './attributes';
 import { useKeptInWindow } from './menuPlacement';
 import { ORIGIN_ITEMS, type OriginItem } from './attributes';
 import { DOCUMENT_NODE, setAllOpen, toggleNode, useTreeOpen } from './treeOpen';
@@ -264,6 +267,10 @@ export interface BrowserTreeProps {
   onFolderCommand?: (command: FolderCommand) => void;
   /** Adds a folder in `parent` (null: the top level) holding `members`; its id, or null when refused. */
   onNewFolder?: (parent: string | null, members: string[]) => string | null;
+  /** A part's place in a bill of materials; parts not normal are marked. */
+  bomOf?: (part: string) => BomKind;
+  /** Sets the kind of parts: a part's menu sets its own, a folder's every part inside it. */
+  onSetBom?: (parts: string[], kind: BomKind) => void;
   /** The part new features go into; another part offers Open. */
   activePart?: string | null;
   onOpenPart?: (part: string) => void;
@@ -476,6 +483,14 @@ export function BrowserTree(props: BrowserTreeProps) {
     };
   };
 
+  /** Every part a folder holds, in it or in its folders. */
+  const partsWithin = (folder: string, seen = new Set<string>()): string[] => {
+    if (seen.has(folder)) return [];
+    seen.add(folder);
+    const own = (tree.byId.get(folder)?.members ?? []).filter((m) => partsById.has(m));
+    return [...own, ...(tree.children.get(folder) ?? []).flatMap((f) => partsWithin(f, seen))];
+  };
+
   /** Adds a folder and starts editing its name, with the folder it stands in open. */
   const newFolder = (parent: string | null, members: string[]) => {
     const id = props.onNewFolder?.(parent, members);
@@ -568,6 +583,9 @@ export function BrowserTree(props: BrowserTreeProps) {
       props.onFolderCommand?.(command);
     };
     const targets = moveTargets(tree, thing);
+    // The parts the BOM entries set: the part itself, or every part inside the folder.
+    const bomParts = 'item' in thing ? (partsById.has(thing.item) ? [thing.item] : []) : partsWithin(thing.folder);
+    const bomNow = 'item' in thing && bomParts.length === 1 ? (props.bomOf?.(thing.item) ?? 'normal') : null;
     return (
       <div ref={menuRef} style={{ ...styles.contextMenu, left: m.x, top: m.y }}>
         {'folder' in thing && (
@@ -614,6 +632,23 @@ export function BrowserTree(props: BrowserTreeProps) {
             </div>
           </>
         )}
+        {props.onSetBom && bomParts.length > 0 && (
+          <>
+            <div style={styles.contextDivider} />
+            <div style={styles.colorLabel}>{'folder' in thing ? 'Mark contents as' : 'BOM'}</div>
+            {BOM_KINDS.map(({ kind, label }) => (
+              <MenuButton
+                key={kind}
+                icon={'item' in thing && bomNow === kind ? <Check size={14} /> : (BOM_MARKS[kind]?.icon ?? <span />)}
+                label={label}
+                onClick={() => {
+                  closeMenus();
+                  props.onSetBom?.(bomParts, kind);
+                }}
+              />
+            ))}
+          </>
+        )}
         {'folder' in thing && (
           <>
             <div style={styles.contextDivider} />
@@ -636,6 +671,7 @@ export function BrowserTree(props: BrowserTreeProps) {
     const originShown = props.originShown(part.id);
     const shownBodies = part.bodies.filter((b) => b.key >= 0);
     const allBodiesHidden = shownBodies.length > 0 && shownBodies.every((b) => !b.visible);
+    const mark = BOM_MARKS[props.bomOf?.(part.id) ?? 'normal'];
     return (
       <TreeNode
         key={part.id}
@@ -646,6 +682,7 @@ export function BrowserTree(props: BrowserTreeProps) {
         depth={depth}
         bold
         row={hooksFor({ item: part.id })}
+        {...(mark ? { mark } : {})}
         {...(props.onOpenPart && props.activePart !== part.id
           ? {
               trailingAction: {
@@ -1275,6 +1312,12 @@ export function BrowserTree(props: BrowserTreeProps) {
   );
 }
 
+/** The marks of parts not made: bought ones, and ones there only for fit. */
+const BOM_MARKS: Partial<Record<BomKind, { icon: React.ReactNode; label: string }>> = {
+  purchased: { icon: <ShoppingCart size={11} color="#0d9488" />, label: 'Purchased' },
+  reference: { icon: <CircleDashed size={11} color="#94a3b8" />, label: 'Reference' },
+};
+
 /** Indents a nested folder's name in a menu. */
 const EM_SPACE = String.fromCharCode(0x2003);
 
@@ -1319,6 +1362,7 @@ export function TreeNode({
   radio,
   onContextMenu,
   row,
+  mark,
 }: {
   label: string;
   icon: React.ReactNode;
@@ -1334,6 +1378,8 @@ export function TreeNode({
   onContextMenu?: (e: React.MouseEvent) => void;
   /** Dragging, dropping and the menu of a part's, assembly's or folder's row. */
   row?: TreeRowHooks;
+  /** A small mark after the label, with what it means as its tooltip. */
+  mark?: { icon: React.ReactNode; label: string };
 }) {
   const controls = (trailingAction ? 1 : 0) + (radio ? 1 : 0);
   return (
@@ -1361,6 +1407,11 @@ export function TreeNode({
           <span style={styles.expandIcon}>{expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}</span>
           <span style={{ display: 'inline-flex' }}>{icon}</span>
           <span style={styles.treeNodeLabel}>{label}</span>
+          {mark && (
+            <span style={styles.mark} title={mark.label} aria-label={mark.label}>
+              {mark.icon}
+            </span>
+          )}
           {count !== undefined && <span style={styles.badge}>{count}</span>}
         </button>
         {trailingAction && (
@@ -1938,6 +1989,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   contextDivider: { height: 1, background: '#e8e8e8', margin: '3px 8px' },
   menuScroll: { maxHeight: 240, overflowY: 'auto' },
+  mark: { display: 'inline-flex', alignItems: 'center', flexShrink: 0 },
   paramRow: { display: 'flex', alignItems: 'center', gap: 6, height: 22, fontSize: 11, color: '#666', paddingRight: 8 },
   paramName: { color: '#555', fontWeight: 500, flexShrink: 0 },
   paramConfigured: {

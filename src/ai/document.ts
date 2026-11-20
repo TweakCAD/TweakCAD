@@ -16,6 +16,7 @@ import { findFeature, partOf, partOfFeature, partView, partsOf, type FeatureRow 
 import { isPickedRegion, writePicked, type PickResult } from '../app/picking';
 import { check, entryOf, exprArg, objectArg, optStr, str, type Args } from './common';
 import { ToolError, checkCanEdit, invalid, partArg, settledDisplay, type AiContext } from './context';
+import { bomOf } from '../app/attributes';
 import { folderOutline } from './folders';
 import { setSketchDimension } from './sketch';
 
@@ -89,6 +90,7 @@ export async function listFeatures(ctx: AiContext, args: Args): Promise<Json> {
       {
         id,
         name: view.name,
+        ...(bomOf(doc, id) !== 'normal' ? { bom: bomOf(doc, id) } : {}),
         ...rollback,
         features: view.features.map(outlineOf),
         parameters: parametersOf(doc, p.parameters),

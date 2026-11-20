@@ -613,6 +613,13 @@ describe('attributes, sets and names', () => {
     expect(codes(result, 'refuse')).toEqual(['bad-value /parts/0/attributes/1/properties/color']);
   });
 
+  it("reads a part's bill-of-materials kind as an attribute property", () => {
+    const result = read(doc({}, { attributes: [attr(1, { bom: val('"purchased"') })] }));
+    expect(result.refused).toBe(false);
+    expect(result.diagnostics.filter((d) => d.severity !== 'ignore')).toEqual([]);
+    expect(result.diagnostics.map((d) => d.code)).not.toContain('unknown-key');
+  });
+
   it('refuses selection-set members out of canonical order', () => {
     const a = { standard: { name: 'xy' } };
     const b = { standard: { name: 'xz' } };

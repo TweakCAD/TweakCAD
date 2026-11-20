@@ -163,7 +163,8 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
     description:
       'An outline of the document: each part with its features in timeline order (id, type, name, suppressed, and ' +
       "status 'ok', 'paused' with the reason, or 'blocked' by an earlier pause), its rollback marker, the parameters, " +
-      "the assemblies, and the browser's folders (id, name, parent, items). Waits for the newest rebuild.",
+      "the assemblies, and the browser's folders (id, name, parent, items); a part that is not made carries its `bom` kind. " +
+      'Waits for the newest rebuild.',
     inputSchema: {
       type: 'object',
       properties: { part: { type: 'string', description: 'Optional: only this part.' } },
@@ -1604,6 +1605,33 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
       required: ['items'],
       additionalProperties: false,
     },
+  },
+  // ---- Bill of materials ----
+  {
+    name: 'part_set_bom',
+    description:
+      "Set what parts are in the bill of materials: 'normal' (made, the default), 'purchased' (bought: screws, bearings, " +
+      "motors) or 'reference' (there only for fit or context; left out of the bill of materials). An assembly's exports leave " +
+      'purchased and reference parts out unless the user asks for them. Give `parts`, or `folder` for every part in a ' +
+      'folder and its folders. One undo step. `list_features` shows each part not normal with its `bom`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['normal', 'purchased', 'reference'] },
+        parts: { type: 'array', items: { type: 'string' }, description: 'Optional: part ids.' },
+        folder: { type: 'string', description: 'Optional: a folder id (fld_…).' },
+      },
+      required: ['kind'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'get_bom',
+    description:
+      'The bill of materials of the built document: each part the root assembly places (through sub-assemblies and ' +
+      'assembly patterns too) with its quantity and kind, made parts first, then purchased; with a part at the root, each ' +
+      'part once. Reference parts are listed apart. Library components are marked. Waits for the newest rebuild.',
+    inputSchema: empty,
   },
   // ---- What the model is built into ----
   {

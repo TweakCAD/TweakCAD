@@ -23,6 +23,7 @@ import type {
   PickOutline,
   PickTarget,
   ResolveScope,
+  BomLine,
   Resolved,
 } from '@tweakcad/worker/src/v2/service/types';
 import { nameDocumentInUrl, newLocalId, rememberLocalIdInUrl } from '../storage/context.ts';
@@ -54,6 +55,7 @@ export interface AppServiceClient extends Evaluator, PickClient {
   restart?(): void;
   exportFile(format: ExportFormat, scope: ResolveScope, options?: ExportOptions): Promise<Uint8Array>;
   exportFreeCad(): Promise<FcstdExport>;
+  billOfMaterials(): Promise<BomLine[]>;
   /** A model entity kind and measures (9.7), or null for anything else. */
   properties(key: Key): Promise<{ kind: string; measures: Measures } | null>;
   /** A shown body's volume, surface area, centre of mass and bounding box; absent where the client cannot read them. */
@@ -109,8 +111,13 @@ export interface AppServices {
   pick(item: SelectionItem, options?: { before?: string }): Promise<PickResult | null>;
   /** Resolves once the newest document is shown: a change made while waiting is waited for too. */
   whenShown(): Promise<void>;
-  /** The shown part or assembly as a file; empty when it shows nothing. */
-  exportShown(format: ExportFormat): Promise<Uint8Array>;
+  /**
+   * The shown part or assembly as a file; empty when it shows nothing. An
+   * assembly's purchased and reference parts are left out unless `hardware`.
+   */
+  exportShown(format: ExportFormat, options?: { hardware?: boolean }): Promise<Uint8Array>;
+  /** The document's bill of materials, once evaluation has settled. */
+  billOfMaterials(): Promise<BomLine[]>;
   /** The document as a FreeCAD file, once evaluation has settled. */
   exportFreeCad(): Promise<FcstdExport>;
   /** Resolves once the kernel and solver are loaded in the worker, or rejects with why not. */
@@ -225,13 +232,20 @@ export async function bootApp(o: BootAppOptions): Promise<BootedApp> {
       // While a part is edited in an assembly's context, a pick on another instance goes through the part's context.
       return inContextPick(services, item, options);
     },
-    async exportShown(format) {
+    async exportShown(format, options = {}) {
       await settled();
       const root = shownOf(editor.document, app.getState().focus);
       if (!root || !display.getState().display) return new Uint8Array();
       const scope: ResolveScope = 'part' in root ? { part: root.part } : { assembly: root.assembly };
       const docName = (editor.document.metadata as { name?: unknown }).name;
-      return o.client.exportFile(format, scope, { name: typeof docName === 'string' ? docName : 'model' });
+      return o.client.exportFile(format, scope, {
+        name: typeof docName === 'string' ? docName : 'model',
+        ...(options.hardware ? { hardware: true } : {}),
+      });
+    },
+    async billOfMaterials() {
+      await settled();
+      return o.client.billOfMaterials();
     },
     async exportFreeCad() {
       await settled();
