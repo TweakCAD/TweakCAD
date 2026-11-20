@@ -19,6 +19,8 @@ import { ConsolePanel } from '../components/ConsolePanel.tsx';
 import { SectionPanel } from './modeling/SectionPanel';
 import { TimelineBar, type TimelineFeature, type TimelineMenuEntry } from '../components/TimelineBar.tsx';
 import { enqueueToast } from '../components/toastStore.ts';
+import { useConfirm } from '../components/ConfirmDialog.tsx';
+import { deleteItem } from './deletion';
 import { isEditableTarget } from '../components/toolShortcuts.ts';
 import type { SaasState } from '../storage/saasState.ts';
 import type { Mode, PanelRequest } from './appState';
@@ -170,6 +172,7 @@ export function AppShell(props: AppShellProps) {
   const preview = usePreview(services.session);
   const readOnly = preview !== null;
   const [renaming, setRenaming] = useState<string | null>(null);
+  const { confirm, element: confirmElement } = useConfirm();
   const [viewport, setViewport] = useState<Viewport | null>(null);
   const { onViewport, onRestoreRevision } = props;
   const handleViewport = useCallback(
@@ -608,6 +611,7 @@ export function AppShell(props: AppShellProps) {
 
   return (
     <div style={styles.root}>
+      {confirmElement}
       <MainAppBar
         projectName={docName}
         canUndo={history.canUndo && historyOpen}
@@ -683,6 +687,13 @@ export function AppShell(props: AppShellProps) {
                 ),
                 'Rename',
               )
+            }
+            onDeleteItem={(item) =>
+              void deleteItem(services, item, (title, message) =>
+                confirm({ title, message, confirmLabel: 'Delete', tone: 'danger' }),
+              ).then((r) => {
+                if (!r.ok) report({ ok: false, error: { code: 'not-allowed', message: r.message } }, 'Delete');
+              })
             }
             bomOf={(part) => bomOf(doc, part)}
             onSetBom={(parts, kind) => report(setBom(editor, parts, kind), 'BOM')}

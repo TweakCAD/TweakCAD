@@ -1607,6 +1607,23 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
       additionalProperties: false,
     },
   },
+  {
+    name: 'part_delete',
+    description:
+      'Delete a part or an assembly (with everything in it: features, sketches, its folder entry). One undo step. ' +
+      'Refused while anything but instances uses it: the root (make another the root first), a derive in another part, ' +
+      'an assembly feature; the refusal says what. Instances that place it are deleted with it (and their joints) only ' +
+      'with `withInstances: true`; without it the refusal lists them. Returns `{deleted, removedInstances}`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        part: { type: 'string', description: 'Optional: the part (part_…).' },
+        assembly: { type: 'string', description: 'Optional: the assembly (asm_…).' },
+        withInstances: { type: 'boolean', description: 'Delete the instances that place it too. Default false.' },
+      },
+      additionalProperties: false,
+    },
+  },
   // ---- Bill of materials ----
   {
     name: 'part_set_bom',

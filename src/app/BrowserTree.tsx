@@ -272,6 +272,8 @@ export interface BrowserTreeProps {
   onNewFolder?: (parent: string | null, members: string[]) => string | null;
   /** Renames a part or an assembly. */
   onRenameItem?: (item: string, name: string) => void;
+  /** Deletes a part or an assembly (what uses it decides whether it asks first, or refuses). */
+  onDeleteItem?: (item: string) => void;
   /** A part's place in a bill of materials; parts not normal are marked. */
   bomOf?: (part: string) => BomKind;
   /** Sets the kind of parts: a part's menu sets its own, a folder's every part inside it. */
@@ -657,6 +659,20 @@ export function BrowserTree(props: BrowserTreeProps) {
                 }}
               />
             ))}
+          </>
+        )}
+        {'item' in thing && props.onDeleteItem && nameOfItem(thing.item) !== undefined && (
+          <>
+            <div style={styles.contextDivider} />
+            <MenuButton
+              icon={<Trash2 size={14} />}
+              label={thing.item.startsWith('asm_') ? 'Delete assembly' : 'Delete part'}
+              danger
+              onClick={() => {
+                closeMenus();
+                props.onDeleteItem?.(thing.item);
+              }}
+            />
           </>
         )}
         {'folder' in thing && (

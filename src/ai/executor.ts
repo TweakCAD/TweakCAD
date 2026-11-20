@@ -60,6 +60,7 @@ import {
   getAssembly,
 } from './assembly';
 import { getBom, partSetBom } from './bom';
+import { partDelete } from './deletion';
 import { folderCreate, folderDelete, folderEdit, folderMoveItems } from './folders';
 import { CAD_WORKFLOW_GUIDE } from './guide';
 import { listBodies, listConstruction, listEdges, listFaces, listVertices, measure } from './inspect';
@@ -191,6 +192,7 @@ const RUNNERS: Record<string, Runner> = {
   folder_move_items: withCtx(folderMoveItems),
   part_set_bom: withCtx(partSetBom),
   get_bom: withCtx(getBom),
+  part_delete: withCtx(partDelete),
   list_bodies: withCtx(listBodies),
   list_faces: withCtx(listFaces),
   list_edges: withCtx(listEdges),
