@@ -3,7 +3,9 @@
  * clicks: what the tool asks for next, and its fields (polygon sides, the
  * fillet radius). Offset has a dialog: its direction (one side, two sides,
  * symmetric), its distances, Flip, and OK and Cancel; the curve clicked is
- * previewed with its copies until OK. The text tool has its own panel with a
+ * previewed with its copies until OK. Mirror has a panel with two rows,
+ * Curves and Line: the armed one takes the next click, and either row arms
+ * it (Line once curves are picked). The text tool has its own panel with a
  * header and close button, its string (focused as it opens), font and height;
  * Escape there closes it back to Select and Enter leaves the field. Editing
  * existing text, the font list shows its own font (by name when the tool does
@@ -12,7 +14,7 @@
  * here, so typing never reaches the sketch's shortcuts.
  */
 import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
-import { ArrowLeftRight, Type } from 'lucide-react';
+import { ArrowLeftRight, FlipHorizontal2, Type } from 'lucide-react';
 import { PanelHeader } from '../components/PanelHeader.tsx';
 import { enqueueToast } from '../components/toastStore.ts';
 import type { SketchSession, SketchSessionState, ToolSettings } from './session';
@@ -52,6 +54,7 @@ export function ToolOptions({ session }: ToolOptionsProps) {
   if (!state.open || (!state.prompt && !field && !text && state.tool !== 'offset')) return null;
   if (text) return <TextPanel session={session} state={state} />;
   if (state.tool === 'offset') return <OffsetPanel session={session} state={state} />;
+  if (state.mirror) return <MirrorPanel session={session} state={state} mirror={state.mirror} />;
   return (
     <div
       style={styles.wrap}
@@ -173,6 +176,75 @@ function OffsetPanel({ session, state }: { session: SketchSession; state: Sketch
             </button>
             <button type="button" style={styles.button} onClick={close}>
               Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MirrorPanel({
+  session,
+  state,
+  mirror,
+}: {
+  session: SketchSession;
+  state: SketchSessionState;
+  mirror: NonNullable<SketchSessionState['mirror']>;
+}) {
+  const close = () => session.setTool('select');
+  const field = (armed: boolean, enabled: boolean): CSSProperties => ({
+    ...styles.input,
+    ...styles.wide,
+    textAlign: 'left',
+    cursor: enabled ? 'pointer' : 'default',
+    color: armed ? '#0164D4' : '#555',
+    borderColor: armed ? '#3b82f6' : '#d0d0d0',
+    background: armed ? '#eff6ff' : '#fff',
+    ...(enabled ? {} : styles.off),
+  });
+  const curves = mirror.curves === 0 ? 'Click curves' : `${mirror.curves} selected`;
+  return (
+    <div
+      style={styles.wrap}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Escape') close();
+      }}
+    >
+      <div style={styles.panel} data-testid="sketch-mirror-panel">
+        <PanelHeader title="Mirror" icon={<FlipHorizontal2 size={13} color="#0164D4" />} onClose={close} />
+        <div style={styles.body}>
+          {state.prompt && <div style={styles.prompt}>{state.prompt}</div>}
+          {state.message && (
+            <div style={styles.message} role="alert">
+              {state.message}
+            </div>
+          )}
+          <div style={styles.row}>
+            <span style={styles.label}>Curves</span>
+            <button
+              type="button"
+              aria-pressed={mirror.armed === 'curves'}
+              style={field(mirror.armed === 'curves', true)}
+              onClick={() => session.armMirror('curves')}
+            >
+              {curves}
+            </button>
+          </div>
+          <div style={styles.row}>
+            <span style={styles.label}>Line</span>
+            <button
+              type="button"
+              aria-pressed={mirror.armed === 'line'}
+              disabled={mirror.curves === 0}
+              style={field(mirror.armed === 'line', mirror.curves > 0)}
+              onClick={() => session.armMirror('line')}
+            >
+              Click a line or axis
             </button>
           </div>
         </div>

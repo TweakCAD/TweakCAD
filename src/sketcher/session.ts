@@ -110,6 +110,9 @@ export { circumcircle, passesCounterClockwise };
 /** The modify tools: each picks curves and edits them. */
 export type ModifyTool = 'trim' | 'extend' | 'fillet' | 'offset' | 'mirror';
 
+/** What a click with Mirror on picks: a curve to copy, or the line to copy across. */
+export type MirrorStep = 'curves' | 'line';
+
 /** Tools that pick model geometry: the shell turns the pick into external curves. */
 export type ExternalTool = 'project' | 'intersect';
 
@@ -319,6 +322,8 @@ export interface SketchSessionState {
   prompt: string | null;
   /** The curve the Offset dialog offsets, until OK or Cancel. */
   offsetCurve: string | null;
+  /** With Mirror on: what a click picks next, and how many curves it copies. */
+  mirror: { armed: MirrorStep; curves: number } | null;
   /** What the text tool writes, and the text row it is editing, if any. */
   text: TextOptions & {
     editing: string | null;
@@ -352,6 +357,8 @@ type ToolState =
   | { kind: 'fillet'; first: string }
   /** The Offset dialog open on a curve, its copies previewed on `side` until OK. */
   | { kind: 'offset'; curve: string; side: 1 | -1 }
+  /** Mirror taking clicks for the curves it copies, or for the line it copies them across. */
+  | { kind: 'mirror'; armed: MirrorStep }
   | { kind: 'press'; target: string | null; at: P2; pixel: number; shift: boolean }
   | { kind: 'drag'; drag: Drag; at: P2; moved: boolean }
   | { kind: 'box'; from: P2; to: P2; shift: boolean };
@@ -998,6 +1005,10 @@ export class SketchSession {
         if (this.toolState.kind === 'shape' && this.toolState.tool === 'spline') return this.finishShape();
         if (this.toolState.kind === 'offset') {
           this.confirmOffset();
+          return true;
+        }
+        if (this.currentTool === 'mirror' && this.mirrorStep() === 'curves') {
+          this.armMirror('line');
           return true;
         }
         return false;
@@ -1914,10 +1925,38 @@ export class SketchSession {
     return this.commit(plan.change);
   }
 
+  /** The selected curves Mirror copies. */
+  private mirrorCurves(): string[] {
+    return this.selection.filter((id) => this.geometry.curves.has(id));
+  }
+
+  /**
+   * What a click with Mirror on picks: curves once Mirror started picking
+   * them, until Enter or the Line row; otherwise the line when curves were
+   * selected before, the curves when none were.
+   */
+  private mirrorStep(): MirrorStep {
+    const s = this.toolState;
+    if (s.kind === 'mirror') return s.armed;
+    return this.mirrorCurves().length > 0 ? 'line' : 'curves';
+  }
+
+  /** Sets what the next click with Mirror on picks; the line only once curves are selected. */
+  armMirror(armed: MirrorStep): void {
+    if (this.currentTool !== 'mirror') return;
+    if (armed === 'line' && this.mirrorCurves().length === 0) {
+      this.refuse('Click the curves to mirror first');
+      return;
+    }
+    this.toolState = { kind: 'mirror', armed };
+    this.message = null;
+    this.changed();
+  }
+
   /**
    * Trim, extend and offset act on the curve clicked; fillet on a corner
-   * point or two lines in turn; mirror on the selection, across the line
-   * clicked (a sketch axis too).
+   * point or two lines in turn; mirror on the curves clicked (or selected
+   * before), across the line clicked after (a sketch axis too).
    */
   private modifyPointer(e: SketchPointer, uv: P2): boolean {
     const tool = this.currentTool as string;
@@ -1981,8 +2020,25 @@ export class SketchSession {
         break;
       }
       case 'mirror': {
+        // A sketch axis is never copied, so clicked while picking curves it is the line.
+        if (this.mirrorStep() === 'curves' && !(standardName(picked) && this.mirrorCurves().length > 0)) {
+          if (standardName(picked)) {
+            this.refuse('Click the curves to mirror first');
+            break;
+          }
+          this.selection = this.selection.includes(picked)
+            ? this.selection.filter((id) => id !== picked)
+            : [...this.selection, picked];
+          this.toolState = { kind: 'mirror', armed: 'curves' };
+          this.message = null;
+          this.changed();
+          break;
+        }
         const result = this.applyPlan(planMirror(ctx, this.selection, picked));
-        if (result.ok) this.selection = [];
+        if (result.ok) {
+          this.selection = [];
+          this.toolState = { kind: 'mirror', armed: 'curves' };
+        }
         this.changed();
         break;
       }
@@ -2193,6 +2249,10 @@ export class SketchSession {
 
   private escape(): boolean {
     const s = this.toolState;
+    if (s.kind === 'mirror') {
+      this.setTool('select');
+      return true;
+    }
     if (s.kind !== 'idle') {
       this.toolState = { kind: 'idle' };
       this.restoreWorking();
@@ -2399,6 +2459,7 @@ export class SketchSession {
       settings: this.settings,
       prompt: this.prompt(),
       offsetCurve: this.toolState.kind === 'offset' ? this.toolState.curve : null,
+      mirror: this.currentTool === 'mirror' ? { armed: this.mirrorStep(), curves: this.mirrorCurves().length } : null,
       text: { ...this.textOptions, editing: this.textEditing, heldFont: this.textHeldFont },
     };
   }
@@ -2438,9 +2499,10 @@ export class SketchSession {
       case 'fillet':
         return s.kind === 'fillet' ? 'Click the second line' : 'Click a corner, or the first line';
       case 'mirror':
-        return this.selection.some((id) => this.geometry.curves.has(id))
-          ? 'Click the line to mirror across'
-          : 'Select the curves to mirror first';
+        if (this.mirrorStep() === 'line') return 'Click the line to mirror across';
+        return this.mirrorCurves().length > 0
+          ? 'Click more curves, or press Enter and click the line'
+          : 'Click the curves to mirror';
       case 'project':
         return 'Click model edges or faces to project';
       case 'intersect':
