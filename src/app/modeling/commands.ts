@@ -183,7 +183,7 @@ export function startPanel(
   services: AppServices,
   kind: string,
   label: string,
-  o: { needsBody?: boolean; from?: string } = {},
+  o: { needsBody?: boolean; from?: string; copy?: boolean } = {},
 ): Outcome {
   const { app } = services;
   const part = activePart(services);
@@ -193,7 +193,7 @@ export function startPanel(
     return warn(label, `${label} needs an existing body. Create one first.`, kind);
   }
   if (app.getState().mode.kind === 'sketch') app.setState({ mode: { kind: 'model' } });
-  app.setState({ panel: { kind, ...(o.from ? { from: o.from } : {}) } });
+  app.setState({ panel: { kind, ...(o.from ? { from: o.from } : {}), ...(o.copy ? { copy: true } : {}) } });
   return { ok: true };
 }
 

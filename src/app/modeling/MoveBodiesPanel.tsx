@@ -3,8 +3,9 @@
  * the browser, moved by the gizmo's arrows (Move) or rings (Rotate) about
  * their centre, or by the fields: a translation, and a turn about the part
  * origin as X, Y and Z angles (an angle about an axis direction when the
- * stored turn is not plain numbers). Copy keeps the originals. The drag
- * writes the fields once it ends; the preview follows the fields.
+ * stored turn is not plain numbers). Copy keeps the originals: a drag draws
+ * the copy from them as it goes. The drag writes the fields once it ends;
+ * the preview follows the fields.
  */
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
@@ -26,7 +27,8 @@ import { keysOf, usePicking, useFeaturePanel, useShownPicks, useTreeClicks, type
 const SPEC: PanelSpec<MoveForm> = {
   type: 'core.move',
   baseName: 'Move',
-  create: newMoveForm,
+  // Duplicate opens it with Copy on.
+  create: (_services, _part, request) => ({ ...newMoveForm(), copy: request.copy === true }),
   read: readMove,
   build: buildMove,
 };
@@ -276,6 +278,7 @@ export function MoveBodiesPanel(props: PanelProps) {
     return () => {
       viewport.setPointerHandler(null);
       viewport.model.moveBodies([], null);
+      viewport.model.ghostBodies([], null);
       g.dispose();
       scene.remove(object);
       gizmo.current = null;
@@ -314,6 +317,9 @@ export function MoveBodiesPanel(props: PanelProps) {
           const moved = from ? transformOf({ ...form, ...fieldsFor(from, o.position, o.quaternion) }) : null;
           if (base && moved && !form.copy)
             viewport.model.moveBodies(shownKeys.current, matrixOf(moved).multiply(base.clone().invert()));
+          // A copy is drawn from its source, which stays put, in place of the copy a preview drew.
+          if (moved && form.copy && panel)
+            viewport.model.ghostBodies(shownKeys.current, matrixOf(moved), panel.target.feature);
           viewport.requestRender();
         },
         onCommit: (o) => {

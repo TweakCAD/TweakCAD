@@ -230,20 +230,19 @@ export function AppShell(props: AppShellProps) {
       });
       return;
     }
-    if (action.kind === 'move' || action.kind === 'remove') {
+    if (action.kind === 'move' || action.kind === 'duplicate' || action.kind === 'remove') {
+      const title = action.kind === 'move' ? 'Move' : action.kind === 'duplicate' ? 'Duplicate' : 'Remove Body';
       // Their panels work in the part the window works on.
       if (part !== activePart?.id) {
-        const message = 'Open the part to move or remove its bodies';
+        const message = `Open the part to ${action.kind === 'remove' ? 'remove' : action.kind} its bodies`;
         consoleLog('warn', message, 'move');
-        enqueueToast({ tone: 'warning', title: action.kind === 'move' ? 'Move' : 'Remove Body', message });
+        enqueueToast({ tone: 'warning', title, message });
         return;
       }
       selection.setState({ items: keys.map((k) => ({ key: k })) });
-      startPanel(
-        services,
-        action.kind === 'move' ? 'move' : 'removeBody',
-        action.kind === 'move' ? 'Move' : 'Remove Body',
-      );
+      startPanel(services, action.kind === 'remove' ? 'removeBody' : 'move', title, {
+        copy: action.kind === 'duplicate',
+      });
       return;
     }
     // Every body at once, as one undo step (an import node's eye).

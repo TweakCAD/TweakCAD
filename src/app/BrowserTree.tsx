@@ -33,6 +33,7 @@ import {
   StepForward,
   Type,
   Move,
+  Copy,
   Ungroup,
   Group,
   Lock,
@@ -92,6 +93,8 @@ export type BodyAction =
   /** A body's own name; empty gives it its numbered name again. */
   | { kind: 'rename'; name: string }
   | { kind: 'move' }
+  /** Move with Copy on. */
+  | { kind: 'duplicate' }
   /** An import placed in one step, all its bodies together: centred on the origin, or resting on the XY plane. */
   | { kind: 'place'; to: 'origin' | 'xy' }
   | { kind: 'remove' };
@@ -906,6 +909,14 @@ export function BrowserTree(props: BrowserTreeProps) {
             onClick={() => {
               setBodyMenu(null);
               props.onBodyAction(bodyMenu.part, keysOf(bodyMenu.body), { kind: 'move' });
+            }}
+          />
+          <MenuButton
+            icon={<Copy size={14} />}
+            label="Duplicate"
+            onClick={() => {
+              setBodyMenu(null);
+              props.onBodyAction(bodyMenu.part, keysOf(bodyMenu.body), { kind: 'duplicate' });
             }}
           />
           {bodyMenu.source?.type === 'core.import' && (

@@ -4,12 +4,14 @@ import { standardDocument } from '../../../lib/editor/src/testDocs';
 import {
   BOOLEAN_OPS,
   buildBoolean,
+  buildMove,
   buildPattern,
   CIRCULAR_DISTRIBUTIONS,
   clickBooleanBody,
   COPY_OPS,
   DIRECTION_TYPES,
   newBooleanForm,
+  newMoveForm,
   newPatternForm,
   parseSuppress,
   PATTERN_SPACING,
@@ -68,6 +70,30 @@ describe('the Combine panel', () => {
       tools: { set: [body(5).reference, body(6).reference] },
     });
     expect([read.target?.label, ...read.tools.map((t) => t.label)]).toEqual(['Target body', 'Tool body', 'Tool body']);
+  });
+});
+
+describe('the Move panel with Copy (Duplicate)', () => {
+  const { doc, ids } = standardDocument();
+  const editor = new Editor(doc, { ids: seededIds(9) });
+  const target = { part: ids.part, feature: editor.newId('feat'), name: 'Move 1' };
+  const build = (patch: Partial<ReturnType<typeof newMoveForm>>) =>
+    buildMove(
+      editor.document,
+      target,
+      { ...newMoveForm(), bodies: [body(1)], ...patch },
+      new ValueSlots(() => editor.newId('val')),
+    );
+
+  it('waits for the copy to move off its body before OK writes it', () => {
+    const still = build({ copy: true });
+    expect(still.ok).toBe(false);
+    expect(!still.ok && still.quiet).toBe(true);
+    expect(build({ copy: true, x: '0 mm', angle: '0 deg' }).ok).toBe(false);
+    expect(build({ copy: true, x: '25' }).ok).toBe(true);
+    expect(build({ copy: true, angle: '90' }).ok).toBe(true);
+    // A move without Copy may stay put.
+    expect(build({}).ok).toBe(true);
   });
 });
 

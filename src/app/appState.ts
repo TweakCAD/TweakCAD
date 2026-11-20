@@ -26,6 +26,8 @@ export interface PanelRequest {
   from?: string;
   /** Region keys of the shown display a new extrude or revolve starts with, in place of the selection. */
   regions?: readonly number[];
+  /** A new move starts with Copy on: Duplicate. */
+  copy?: boolean;
 }
 
 /** A standard plane a section view can cut parallel to. */

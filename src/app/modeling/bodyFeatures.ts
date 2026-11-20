@@ -695,9 +695,15 @@ export function readPlacement(text: string): Pick<MoveForm, 'x' | 'y' | 'z' | 'a
 
 const PLACEMENT = { type: 'placement' } as const;
 
+/** A field that reads as zero: a plain 0, with or without its unit. */
+const ZERO = /^\s*[+-]?(0+\.?0*|\.0+)\s*(mm|deg|°)?\s*$/;
+
 export function buildMove(doc: Doc, target: FeatureTarget, form: MoveForm, values: ValueSlots): Built {
   const of = setOf(form.bodies, 'bodies', 'Pick the bodies to move');
   if (!of.ok) return of;
+  // A copy where its source lies would be a second body in the same place.
+  if (form.copy && !form.kept && [form.x, form.y, form.z, form.angle].every((t) => ZERO.test(t)))
+    return needsPick('Drag the copy off its body, or type how far it moves', 'transform');
   let transform: Json;
   if (form.kept) transform = form.kept;
   else {

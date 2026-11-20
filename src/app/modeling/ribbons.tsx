@@ -5,7 +5,7 @@
  * dimensions. Only what the app can do is offered.
  */
 import { useEffect, useSyncExternalStore } from 'react';
-import { SquareSplitHorizontal } from 'lucide-react';
+import { Copy, SquareSplitHorizontal } from 'lucide-react';
 import type { RibbonToolGroup } from '../../components/MainToolbar.tsx';
 import { toolForShortcutKey } from '../../components/toolShortcuts.ts';
 import { useSaasState } from '../../storage/useSaasState.ts';
@@ -269,6 +269,16 @@ const MODEL_TOOLS: readonly ModelTool[] = [
     icon: <MoveIcon size={26} color="#0ea5e9" />,
     panel: 'move',
     run: (s) => startPanel(s, 'move', 'Move', { needsBody: true }),
+  },
+  {
+    id: 'duplicate',
+    label: 'Duplicate',
+    group: 'MODIFY',
+    primary: false,
+    shortcut: 'D',
+    icon: <Copy size={26} color="#0ea5e9" />,
+    panel: 'move',
+    run: (s) => startPanel(s, 'move', 'Duplicate', { needsBody: true, copy: true }),
   },
   {
     id: 'parameters',
