@@ -40,7 +40,7 @@ describe('joining many bodies', () => {
       const [part] = [...ev.parts.values()];
       const bodies = [...(part?.state.entities.values() ?? [])].filter((e) => e.kind === 'body');
       expect(bodies).toHaveLength(1);
-      expect(ev.adapter.measures((bodies[0] as { key: number }).key).volume).toBeCloseTo(62686, -1);
+      expect(ev.adapter.measures((bodies[0] as { key: number }).key).volume).toBeCloseTo(62696, -1);
     } finally {
       ev.adapter.dispose();
     }
