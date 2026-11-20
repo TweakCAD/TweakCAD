@@ -813,8 +813,8 @@ async function blends(kernel: Kernel): Promise<Doc> {
 
 /**
  * Copies: a peg patterned in two directions, a hub's spoke patterned round
- * Z, a mirror of bodies and of a feature, a moved copy, booleans and a
- * removed body.
+ * Z, a mirror of bodies and of a feature, a moved copy, booleans, a
+ * removed body, and splits keeping both pieces and one.
  */
 async function copies(kernel: Kernel): Promise<Doc> {
   const t = await session(kernel, 'Patterns mirrors moves', 204);
@@ -900,6 +900,10 @@ async function copies(kernel: Kernel): Promise<Doc> {
   await ok(t.call('feature_boolean', { target: slab.handle, tools: [lump.handle], op: 'join' }));
   const spare = await make({ shape: 'torus', majorRadius: 6, minorRadius: 1.5, position: [140, 0, 1.5] });
   await ok(t.call('feature_remove_body', { bodies: [spare.handle] }));
+  const halves = await make({ shape: 'sphere', radius: 5, position: [170, 0, 0] });
+  await ok(t.call('feature_split', { bodies: [halves.handle], plane: 'xy' }));
+  const trimmed = await make({ shape: 'box', width: 10, depth: 10, height: 6, position: [0, 70, 0] });
+  await ok(t.call('feature_split', { bodies: [trimmed.handle], plane: 'xy', keep: 'positive' }));
   return done(t);
 }
 
@@ -1067,7 +1071,7 @@ export const FIXTURES: Fixture[] = [
   {
     name: 'features-patterns',
     proves:
-      'Linear patterns in two directions, a circular pattern about a construction axis, mirrors of bodies and of a feature about a construction plane, a moved copy, boolean cut and join, a removed body.',
+      'Linear patterns in two directions, a circular pattern about a construction axis, mirrors of bodies and of a feature about a construction plane, a moved copy, boolean cut and join, a removed body, a split keeping both pieces and one keeping one side.',
     build: copies,
   },
   {

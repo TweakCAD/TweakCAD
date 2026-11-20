@@ -11,7 +11,14 @@ import { SweepPanel } from './modeling/SweepPanel';
 import { ChamferPanel, FilletPanel } from './modeling/BlendPanels';
 import { HolePanel } from './modeling/HolePanel';
 import { ThreadPanel } from './modeling/ThreadPanel';
-import { BooleanPanel, MirrorPanel, PatternPanel, RemoveBodyPanel, ShellPanel } from './modeling/BodyPanels';
+import {
+  BooleanPanel,
+  MirrorPanel,
+  PatternPanel,
+  RemoveBodyPanel,
+  ShellPanel,
+  SplitPanel,
+} from './modeling/BodyPanels';
 import { MoveBodiesPanel } from './modeling/MoveBodiesPanel';
 import { PrimitivePanel } from './modeling/PrimitivePanel';
 import { ConstructionPanel } from './modeling/ConstructionPanel';
@@ -51,6 +58,7 @@ const PANELS: Record<string, (props: PanelProps) => React.ReactNode> = {
   cut: (props) => <BooleanPanel {...props} />,
   intersect: (props) => <BooleanPanel {...props} />,
   removeBody: (props) => <RemoveBodyPanel {...props} />,
+  split: (props) => <SplitPanel {...props} />,
   primitive: (props) => <PrimitivePanel {...props} />,
   'primitive.box': (props) => <PrimitivePanel {...props} />,
   'primitive.cylinder': (props) => <PrimitivePanel {...props} />,

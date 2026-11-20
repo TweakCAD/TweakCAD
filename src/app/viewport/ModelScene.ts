@@ -253,6 +253,7 @@ export class ModelScene {
     view: { exploded?: string | null; faded?: (index: number) => boolean; own?: number },
   ): void {
     this.moved = null;
+    this.removeGhosts();
     this.display = display;
     this.content.matrixAutoUpdate = false;
     this.content.matrix.identity();
@@ -618,6 +619,8 @@ export class ModelScene {
 
   /** Empties the scene's content; with `spare`, the bodies' materials are kept for the next display to take. */
   private clearContent(spare = false): void {
+    // Ghosts share their bodies' geometry and materials; they go with them.
+    this.removeGhosts();
     disposeOverlays(this.selectionOverlays);
     disposeOverlays(this.hoverOverlays);
     this.selectionOverlays = [];
@@ -957,6 +960,50 @@ export class ModelScene {
     for (const o of [...this.selectionOverlays, ...this.hoverOverlays, ...overlays])
       if (out.has(o.userData.source as THREE.Object3D)) out.add(o);
     return out;
+  }
+
+  /** Copies a drag draws of shown bodies, until the next display, and the bodies they hide. */
+  private ghosts: { keys: string; objects: THREE.Object3D[]; hidden: THREE.Object3D[] } | null = null;
+
+  /**
+   * Draws the shown bodies `keys` once more, moved by `matrix` in the part's
+   * frame, as a copy a drag places before the copy is evaluated; the bodies
+   * feature `replaces` made (an earlier preview of that copy) are hidden
+   * meanwhile. Null removes them. A new display ends it.
+   */
+  ghostBodies(keys: readonly Key[], matrix: THREE.Matrix4 | null, replaces?: string): void {
+    const id = [...keys].sort((a, b) => a - b).join() + `|${replaces ?? ''}`;
+    if (this.ghosts && (!matrix || this.ghosts.keys !== id)) this.removeGhosts();
+    if (!matrix || keys.length === 0) return;
+    if (!this.ghosts) {
+      const wanted = new Set(keys);
+      const objects: THREE.Object3D[] = [];
+      const hidden: THREE.Object3D[] = [];
+      for (const { body, mesh, edges } of this.bodies) {
+        const parts = [mesh, ...(edges ? [edges] : [])];
+        if (replaces !== undefined && body.feature === replaces)
+          for (const o of parts) {
+            if (!o.visible) continue;
+            o.visible = false;
+            hidden.push(o);
+          }
+        if (!wanted.has(body.key)) continue;
+        for (const o of parts) {
+          const copy = o.clone(false);
+          o.parent?.add(copy);
+          objects.push(copy);
+        }
+      }
+      this.ghosts = { keys: id, objects, hidden };
+    }
+    for (const o of this.ghosts.objects) this.place(o, matrix);
+  }
+
+  private removeGhosts(): void {
+    if (!this.ghosts) return;
+    for (const o of this.ghosts.objects) o.parent?.remove(o);
+    for (const o of this.ghosts.hidden) o.visible = true;
+    this.ghosts = null;
   }
 
   private placeMoved(overlays: readonly THREE.Object3D[]): void {

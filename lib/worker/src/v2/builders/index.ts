@@ -16,6 +16,7 @@ import './mirror';
 import './move';
 import './primitive';
 import './boolean';
+import './split';
 import './construction';
 import './import';
 import './measure';

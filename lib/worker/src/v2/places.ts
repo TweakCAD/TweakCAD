@@ -214,10 +214,10 @@ export function faceFrameOf(w: Where, ref: Json, what = 'a face'): Frame {
 }
 
 /** The frame of the `plane` mode on a default plane, a construction plane or a planar face. */
-function planeOf(w: Where, support: Json): Frame {
+export function planeFrameOf(w: Where, support: Json): Frame {
   const opened = inContextOf(w, support);
   if (opened) {
-    const f = planeOf(opened.w, opened.ref);
+    const f = planeFrameOf(opened.w, opened.ref);
     if (!('standard' in opened.ref)) return f;
     const p = opened.placement;
     return {
@@ -310,10 +310,10 @@ function modeFrame(w: Where, mode: unknown, supports: readonly Json[]): Frame {
   switch (mode) {
     case 'plane':
       count(1);
-      return planeOf(w, supports[0] as Json);
+      return planeFrameOf(w, supports[0] as Json);
     case 'planeAtPoint': {
       count(2);
-      const base = planeOf(w, supports[0] as Json);
+      const base = planeFrameOf(w, supports[0] as Json);
       const p = pointAt(w, supports[1] as Json);
       return { ...base, origin: sub(p, scale(base.normal, dot(sub(p, base.origin), base.normal))) };
     }
@@ -344,7 +344,7 @@ function modeFrame(w: Where, mode: unknown, supports: readonly Json[]): Frame {
     }
     case 'midplane': {
       count(2);
-      return midplaneOf(planeOf(w, supports[0] as Json), planeOf(w, supports[1] as Json));
+      return midplaneOf(planeFrameOf(w, supports[0] as Json), planeFrameOf(w, supports[1] as Json));
     }
     case 'faceAxis': {
       count(1);

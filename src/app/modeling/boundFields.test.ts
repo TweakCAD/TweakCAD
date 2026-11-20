@@ -23,12 +23,14 @@ import {
   buildMove,
   buildPattern,
   buildRemoveBody,
+  buildSplit,
   buildShell,
   readBoolean,
   readMirror,
   readMove,
   readPattern,
   readRemoveBody,
+  readSplit,
   readShell,
 } from './bodyFeatures';
 import { buildConstruction, CONSTRUCTION_TYPES, readConstruction, type ConstructionKind } from './construction';
@@ -69,6 +71,7 @@ const MODELS: Record<string, PanelModel> = {
   'core.move': plain(readMove, buildMove),
   'core.boolean': plain(readBoolean, buildBoolean),
   'core.removeBody': plain(readRemoveBody, (_doc, target, form) => buildRemoveBody(_doc, target, form)),
+  'core.split': plain(readSplit, buildSplit),
   'core.primitive': plain(readPrimitive, buildPrimitive),
   'core.revolve': plain(readRevolve, buildRevolve),
   'core.loft': plain(readLoft, buildLoft),

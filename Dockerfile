@@ -46,7 +46,7 @@ COPY --from=builder /app/dist /dist
 
 # ---- runner ----------------------------------------------------------------
 # Unprivileged nginx already listens on 8080 as a non-root user.
-FROM nginxinc/nginx-unprivileged:1.27-alpine AS runner
+FROM nginxinc/nginx-unprivileged:1.30-alpine AS runner
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 8080

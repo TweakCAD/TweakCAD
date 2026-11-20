@@ -378,6 +378,54 @@ describe('mirror', () => {
     expect(readsClean(t.editor)).toBe(true);
   });
 
+  it('picks the curves by clicks with nothing selected, then the line after Enter', () => {
+    const t = openTestSession(gcs);
+    const a = line(t, [10, 10], [20, 25]);
+    const b = line(t, [10, 30], [20, 40]);
+    const axis = line(t, [0, 0], [0, 50]);
+    t.session.setTool('mirror');
+    expect(t.session.getState().mirror).toEqual({ armed: 'curves', curves: 0 });
+    // Clicks add curves; a second click on one takes it back out.
+    for (const p of [
+      [15, 17.5],
+      [15, 35],
+      [0, 25],
+      [0, 25],
+    ] as [number, number][]) {
+      t.move(...p);
+      t.click(...p);
+    }
+    expect(t.session.getState().selection).toEqual([a.id, b.id]);
+    expect(t.session.getState().mirror).toEqual({ armed: 'curves', curves: 2 });
+    expect(rowsOf(t.inputs(), 'curves')).toHaveLength(3);
+    t.key('Enter');
+    expect(t.session.getState().mirror?.armed).toBe('line');
+    t.move(0, 25);
+    t.click(0, 25);
+    expect(t.session.getState().message).toBeNull();
+    const copies = rowsOf(t.inputs(), 'curves').slice(3);
+    expect(copies).toHaveLength(2);
+    expect(xy(t.inputs(), (copies[0] as Json).start)[0]).toBeCloseTo(-10, 9);
+    expect(readsClean(t.editor)).toBe(true);
+    // Ready for the next mirror; the axis line was never copied.
+    expect(t.session.getState().mirror).toEqual({ armed: 'curves', curves: 0 });
+    expect(rowsOf(t.inputs(), 'curves').filter((c) => c.id === axis.id)).toHaveLength(1);
+  });
+
+  it('takes a sketch axis clicked while picking curves as the line', () => {
+    const t = openTestSession(gcs);
+    const a = line(t, [10, 10], [20, 25]);
+    t.session.setTool('mirror');
+    t.move(15, 17.5);
+    t.click(15, 17.5);
+    expect(t.session.getState().selection).toEqual([a.id]);
+    t.move(-70, 0);
+    t.click(-70, 0);
+    expect(t.session.getState().message).toBeNull();
+    const copy = rowsOf(t.inputs(), 'curves')[1] as Json;
+    expect(xy(t.inputs(), copy.start)[1]).toBeCloseTo(-10, 9);
+  });
+
   it('keeps a mirrored ellipse the same shape as its original when that changes', () => {
     const t = openTestSession(gcs);
     const ellipse = (clicks: [number, number][]): Json => {

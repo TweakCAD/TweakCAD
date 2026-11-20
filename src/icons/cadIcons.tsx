@@ -163,6 +163,36 @@ export function CutIcon({
   );
 }
 
+// ---- Split Body ----
+/** Two halves of a box parted along a dashed plane */
+export function SplitIcon({
+  size = defaults.size,
+  color = defaults.color,
+  strokeWidth = defaults.strokeWidth,
+  ...rest
+}: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+      {/* Left half */}
+      <path
+        d="M6.5 3H2.5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h4"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinejoin="round"
+      />
+      {/* Right half, moved off */}
+      <path
+        d="M9.5 3h4a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-4"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinejoin="round"
+      />
+      {/* Split plane */}
+      <path d="M8 1v14" stroke={color} strokeWidth={strokeWidth} strokeDasharray="1.5 1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 // ---- Fuse (Boolean Join) ----
 /** Two overlapping shapes with plus - represents boolean union */
 export function FuseIcon({
@@ -1565,6 +1595,8 @@ export function getFeatureIcon(featureType: string, size = 14): ReactElement {
       return <ThreadIcon size={size} />;
     case 'removeBody':
       return <CutIcon size={size} />;
+    case 'split':
+      return <SplitIcon size={size} />;
     case 'measure':
       return <MeasureIcon size={size} />;
     case 'joint':
@@ -1620,6 +1652,7 @@ export const featureTypeColors: Record<string, string> = {
   sweep: '#eab308',
   thread: '#f97316',
   removeBody: '#ef4444',
+  split: '#f59e0b', // amber
   measure: '#0d9488',
   joint: '#6366f1',
   component: '#6366f1', // indigo

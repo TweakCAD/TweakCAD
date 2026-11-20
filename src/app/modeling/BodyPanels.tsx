@@ -7,7 +7,7 @@
  * again drops it.
  */
 import { useEffect, useState } from 'react';
-import { CutIcon, FuseIcon, MirrorIcon, PatternIcon, ShellIcon } from '../../icons/cadIcons.tsx';
+import { CutIcon, FuseIcon, MirrorIcon, PatternIcon, ShellIcon, SplitIcon } from '../../icons/cadIcons.tsx';
 import type { ViewportPointer } from '../viewport/Viewport';
 import type { PanelProps } from '../AppShell';
 import type { Doc, Json } from '@tweakcad/editor';
@@ -25,17 +25,20 @@ import {
   buildPattern,
   buildRemoveBody,
   buildShell,
+  buildSplit,
   newBooleanForm,
   newDirection,
   newMirrorForm,
   newPatternForm,
   newRemoveBodyForm,
   newShellForm,
+  newSplitForm,
   readBoolean,
   readMirror,
   readPattern,
   readRemoveBody,
   readShell,
+  readSplit,
   clickBooleanBody,
   COPY_OPS,
   type BooleanForm,
@@ -47,6 +50,8 @@ import {
   type ShellDirection,
   type ShellForm,
   type ShellOwner,
+  type SplitForm,
+  type SplitKeep,
   toggledShellBody,
   withShellFaces,
 } from './bodyFeatures';
@@ -994,6 +999,137 @@ export function RemoveBodyPanel(props: PanelProps) {
       />
       <ErrorLine message={panel.error} />
       <Actions onCancel={close} onOk={panel.confirm} blocked={panel.blocked} />
+    </PanelCard>
+  );
+}
+
+// ---- Split Body ----
+
+const SPLIT: PanelSpec<SplitForm> = {
+  type: 'core.split',
+  baseName: 'Split',
+  create: newSplitForm,
+  read: readSplit,
+  build: buildSplit,
+};
+
+const SPLIT_KEEP: { id: SplitKeep; label: string }[] = [
+  { id: 'both', label: 'Both' },
+  { id: 'positive', label: '+ side' },
+  { id: 'negative', label: '− side' },
+];
+
+export function SplitPanel(props: PanelProps) {
+  const { services, viewport, close } = props;
+  // The selection as the panel opened, before the panel shows its own picks selected.
+  const [opened] = useState(() => services.selection.getState().items);
+  const panel = useFeaturePanel(props, SPLIT);
+  const [armed, setArmed] = useState<'bodies' | 'tool'>('bodies');
+  const [hint, setHint] = useState<string | null>(null);
+  usePicking(
+    services,
+    armed === 'bodies'
+      ? { kinds: ['face', 'edge'], standardPlanes: false }
+      : { kinds: ['standard', 'construction', 'face'], standardPlanes: true },
+  );
+  const form = panel?.form;
+  const bodyRefs = (form?.bodies ?? []).map((b) => b.reference);
+  useShownPicks(services, panel?.target.part ?? null, [...bodyRefs, ...(form?.tool ? [form.tool.reference] : [])]);
+  const outlineAt = usePickOutlines(services, viewport, panel?.target ?? null, bodyRefs);
+  const onClick = (item: SelectionItem | null, e?: ViewportPointer) => {
+    if (!panel) return;
+    const dropped = e && armed === 'bodies' ? outlineAt(e) : null;
+    if (dropped) {
+      panel.update((f) => ({ bodies: f.bodies.filter((b) => !sameReference(b.reference, dropped)) }));
+      return;
+    }
+    if (!item || 'feature' in item) return;
+    void (async () => {
+      // A standard plane clicked in the browser is the split plane, whichever list is armed.
+      if (armed === 'bodies' && !('standard' in item)) {
+        const body = await pickBody(services, panel.target, item);
+        if (body) panel.update((f) => ({ bodies: toggled(f.bodies, body) }));
+        return;
+      }
+      const kind = kindOf(services.display.getState().display, item);
+      if (
+        kind === 'face' &&
+        'key' in item &&
+        (await services.client.properties(item.key))?.measures.surface !== 'plane'
+      ) {
+        setHint('This face is not flat');
+        return;
+      }
+      if (kind !== 'standard' && kind !== 'plane' && kind !== 'face') {
+        setHint('Pick a plane or a flat face');
+        return;
+      }
+      const tool = await pickFor(services, panel.target, item);
+      if (!tool) return;
+      setHint(null);
+      panel.update({ tool });
+      setArmed('bodies');
+    })();
+  };
+  useClicks(services, viewport, onClick);
+  useTreeClicks(services, onClick);
+  // Bodies selected in the browser when the panel opens are taken.
+  useEffect(() => {
+    if (!panel || props.request.feature) return;
+    const display = services.display.getState().display;
+    const keys = opened.flatMap((i) => ('key' in i && kindOf(display, i) === 'body' ? [i] : []));
+    void Promise.all(keys.map((k) => pickBody(services, panel.target, k))).then((bodies) => {
+      const found = bodies.filter((b): b is PickedRef => b !== null);
+      if (found.length > 0) panel.update((f) => ({ bodies: f.bodies.length > 0 ? f.bodies : found }));
+    });
+    // Once, when the panel opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (!panel || !form) return null;
+  const standard = form.tool ? at(form.tool.reference, 'standard', 'name') : undefined;
+  const picked = form.tool && standard === undefined ? [form.tool] : [];
+  return (
+    <PanelCard title="Split Body" icon={<SplitIcon size={14} color="#f59e0b" />} onClose={close}>
+      <PickList
+        label="Bodies"
+        items={form.bodies}
+        armed={armed === 'bodies'}
+        onArm={() => setArmed('bodies')}
+        onRemove={(i) => panel.update((f) => ({ bodies: f.bodies.filter((_, j) => j !== i) }))}
+        empty="Click the bodies to split"
+      />
+      <Row label="Plane">
+        <Toggles
+          value={(typeof standard === 'string' ? standard : '') as MirrorPlane}
+          options={MIRROR_PLANES}
+          onChange={(name) => {
+            panel.update({
+              tool: { reference: { standard: { name } }, names: {}, label: `${name.toUpperCase()} plane` },
+            });
+            setArmed('bodies');
+          }}
+        />
+      </Row>
+      <PickList
+        label="Or a plane or face"
+        single
+        items={picked}
+        armed={armed === 'tool'}
+        onArm={() => setArmed('tool')}
+        onRemove={() => panel.update({ tool: null })}
+        empty="Click a construction plane or a flat face"
+      />
+      <Note message={hint} />
+      <ToggleRow
+        label="Keep"
+        value={form.keep}
+        options={SPLIT_KEEP}
+        bound={panel.values.boundText(['keep', 'side', 'sign'], form.keep)}
+        onChange={(keep) => panel.update({ keep })}
+      />
+      <ErrorLine message={panel.error} />
+      <Actions onCancel={close} onOk={panel.confirm} blocked={panel.blocked} okTitle="Split" />
     </PanelCard>
   );
 }
