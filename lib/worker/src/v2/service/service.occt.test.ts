@@ -1256,3 +1256,22 @@ describe('a change only to what is shown', { timeout: 60_000 }, () => {
     }
   });
 });
+
+describe('releasing shapes', { timeout: 60_000 }, () => {
+  it('releases the kept shapes before a settings change, which nothing can resume across', () => {
+    const own = new EvaluationService(k, gcs);
+    try {
+      const { doc } = plate();
+      const before = k.shapeCount;
+      own.evaluate(doc);
+      const built = k.shapeCount - before;
+      const changed = structuredClone(doc);
+      changed.settings = { displayUnits: 'in' };
+      const display = own.evaluate(changed);
+      expect(display.timing.misses).toEqual(['afresh: the library, settings or naming rules changed']);
+      expect(k.shapeCount - before).toBe(built);
+    } finally {
+      own.release();
+    }
+  });
+});

@@ -74,7 +74,7 @@ import { motionOf } from '../contexts';
 import { runMotion } from '../copies';
 import { updateContexts as recapture } from '../capture';
 import { FreezeError, freezeFeature } from '../freeze';
-import { evaluateCached, namesHeld, stepsOf, valuesFor, type Recorded } from './cache';
+import { documentKey, evaluateCached, namesHeld, stepsOf, valuesFor, type Recorded } from './cache';
 import { DEFAULT_COLOR, PartStyles, readProperties, type Properties } from './styles';
 import { asciiStl, binaryStl } from './stl';
 import { build3mf, type ThreeMfBody } from './threemf';
@@ -603,11 +603,13 @@ export class EvaluationService {
       ? 'the cache is off'
       : !previous
         ? 'nothing was evaluated before'
-        : previous.carried >= MAX_CARRIED
-          ? `${MAX_CARRIED} evaluations in a row resumed from the same shapes`
-          : k.shapeCount > Math.max(4 * this.baseline, this.baseline + 200_000)
-            ? 'the kernel holds too many shapes'
-            : undefined;
+        : previous.documentKey !== documentKey(doc)
+          ? 'the library, settings or naming rules changed'
+          : previous.carried >= MAX_CARRIED
+            ? `${MAX_CARRIED} evaluations in a row resumed from the same shapes`
+            : k.shapeCount > Math.max(4 * this.baseline, this.baseline + 200_000)
+              ? 'the kernel holds too many shapes'
+              : undefined;
     if (afresh) this.release();
     this.mark ??= k.checkpoint();
     this.reset();
