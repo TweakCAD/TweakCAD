@@ -672,6 +672,16 @@ export function AppShell(props: AppShellProps) {
             folders={foldersOf(doc)}
             library={libraryOf(doc).map((e) => ({ id: String(e.id), name: String(e.name ?? '') }))}
             onFolderCommand={(command) => report(editor.dispatch(command), 'Folders')}
+            onRenameItem={(item, name) =>
+              report(
+                editor.dispatch(
+                  item.startsWith('asm_')
+                    ? { type: 'renameAssembly', assembly: item, name }
+                    : { type: 'renamePart', part: item, name },
+                ),
+                'Rename',
+              )
+            }
             bomOf={(part) => bomOf(doc, part)}
             onSetBom={(parts, kind) => report(setBom(editor, parts, kind), 'BOM')}
             onNewFolder={(parent, members) => {

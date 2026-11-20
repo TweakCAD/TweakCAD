@@ -197,7 +197,6 @@ export function AssemblyTree({
         expanded={isOpen(a.id)}
         onToggle={() => toggle(a.id)}
         depth={1 + base}
-        bold
         {...(nodeRow ? { row: nodeRow } : {})}
         {...(!here
           ? {

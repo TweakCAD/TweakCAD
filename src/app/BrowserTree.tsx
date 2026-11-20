@@ -238,6 +238,8 @@ export interface TreeRowHooks {
   /** A drop here would put the dragged row into this one, or before it. */
   dropHint?: 'into' | 'before' | null;
   onContextMenu?: (e: React.MouseEvent) => void;
+  /** The row's name is being edited: the field in place of its label, and where the new name goes (null: kept). */
+  rename?: (name: string | null) => void;
 }
 
 /** The keys an action on body rows acts on; a row the shown display (a preview) lacks has none. */
@@ -267,6 +269,8 @@ export interface BrowserTreeProps {
   onFolderCommand?: (command: FolderCommand) => void;
   /** Adds a folder in `parent` (null: the top level) holding `members`; its id, or null when refused. */
   onNewFolder?: (parent: string | null, members: string[]) => string | null;
+  /** Renames a part or an assembly. */
+  onRenameItem?: (item: string, name: string) => void;
   /** A part's place in a bill of materials; parts not normal are marked. */
   bomOf?: (part: string) => BomKind;
   /** Sets the kind of parts: a part's menu sets its own, a folder's every part inside it. */
@@ -351,8 +355,8 @@ export function BrowserTree(props: BrowserTreeProps) {
   } | null>(null);
   /** A part's, assembly's, library entry's or folder's menu: new folder, moves, and a folder's rename and removal. */
   const [folderMenu, setFolderMenu] = useState<{ thing: TreeThing; x: number; y: number } | null>(null);
-  /** The folder whose name is being edited in its row. */
-  const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
+  /** The folder, part or assembly whose name is being edited in its row. */
+  const [renamingRow, setRenamingRow] = useState<string | null>(null);
   /** The row a drop would land on, and how. */
   const [dropAt, setDropAt] = useState<{ key: string; zone: 'into' | 'before' } | null>(null);
   /** The row being dragged. */
@@ -430,6 +434,18 @@ export function BrowserTree(props: BrowserTreeProps) {
   const hooksFor = (thing: TreeThing | 'top'): TreeRowHooks => {
     if (!filing) return {};
     const key = thing === 'top' ? 'top' : 'item' in thing ? thing.item : thing.folder;
+    if (thing !== 'top' && renamingRow === key) {
+      const current = 'folder' in thing ? tree.byId.get(thing.folder)?.name : nameOfItem(thing.item);
+      return {
+        rename: (name) => {
+          setRenamingRow(null);
+          const next = name?.trim() ?? '';
+          if (next === '' || next === current) return;
+          if ('folder' in thing) props.onFolderCommand?.({ type: 'renameFolder', folder: thing.folder, name: next });
+          else props.onRenameItem?.(thing.item, next);
+        },
+      };
+    }
     return {
       rowProps: {
         ...(thing === 'top'
@@ -483,6 +499,8 @@ export function BrowserTree(props: BrowserTreeProps) {
     };
   };
 
+  const nameOfItem = (id: string) => partsById.get(id)?.name ?? assembliesById.get(id)?.name;
+
   /** Every part a folder holds, in it or in its folders. */
   const partsWithin = (folder: string, seen = new Set<string>()): string[] => {
     if (seen.has(folder)) return [];
@@ -496,7 +514,7 @@ export function BrowserTree(props: BrowserTreeProps) {
     const id = props.onNewFolder?.(parent, members);
     if (!id) return;
     if (parent !== null && !open(parent)) toggle(parent);
-    setRenamingFolder(id);
+    setRenamingRow(id);
   };
 
   const renderItem = (id: string, depth: number): React.ReactNode => {
@@ -516,9 +534,7 @@ export function BrowserTree(props: BrowserTreeProps) {
         {...row.rowProps}
       >
         {assembly ? <Layers size={12} color="#6366f1" /> : <Puzzle size={12} color="#6366f1" />}
-        <span style={{ ...styles.originLabel, fontSize: 12, color: '#444', fontWeight: assembly ? 600 : 500 }}>
-          {name}
-        </span>
+        <span style={{ ...styles.originLabel, fontSize: 12, color: '#444', fontWeight: 500 }}>{name}</span>
       </div>
     );
   };
@@ -529,23 +545,6 @@ export function BrowserTree(props: BrowserTreeProps) {
     const inside = new Set(seen).add(id);
     const folders = tree.children.get(id) ?? [];
     const members = folder.members.filter(known);
-    if (renamingFolder === id) {
-      return (
-        <div key={id} style={{ ...styles.featureNode, paddingLeft: 8 + depth * 14 + 18 }}>
-          <span style={styles.featureIconWrap}>
-            <Folder size={13} color="#c08a1e" />
-          </span>
-          <RenameField
-            name={folder.name}
-            onDone={(name) => {
-              setRenamingFolder(null);
-              if (name !== null && name.trim() !== '' && name.trim() !== folder.name)
-                props.onFolderCommand?.({ type: 'renameFolder', folder: id, name: name.trim() });
-            }}
-          />
-        </div>
-      );
-    }
     return (
       <TreeNode
         key={id}
@@ -554,7 +553,6 @@ export function BrowserTree(props: BrowserTreeProps) {
         expanded={open(id)}
         onToggle={() => toggle(id)}
         depth={depth}
-        bold
         count={folders.length + members.length}
         row={hooksFor({ folder: id })}
       >
@@ -588,13 +586,13 @@ export function BrowserTree(props: BrowserTreeProps) {
     const bomNow = 'item' in thing && bomParts.length === 1 ? (props.bomOf?.(thing.item) ?? 'normal') : null;
     return (
       <div ref={menuRef} style={{ ...styles.contextMenu, left: m.x, top: m.y }}>
-        {'folder' in thing && (
+        {('folder' in thing || nameOfItem(thing.item) !== undefined) && (
           <MenuButton
             icon={<Type size={14} />}
             label="Rename"
             onClick={() => {
               closeMenus();
-              setRenamingFolder(thing.folder);
+              setRenamingRow('folder' in thing ? thing.folder : thing.item);
             }}
           />
         )}
@@ -680,7 +678,6 @@ export function BrowserTree(props: BrowserTreeProps) {
         expanded={open(part.id)}
         onToggle={() => toggle(part.id)}
         depth={depth}
-        bold
         row={hooksFor({ item: part.id })}
         {...(mark ? { mark } : {})}
         {...(props.onOpenPart && props.activePart !== part.id
@@ -1385,35 +1382,43 @@ export function TreeNode({
   return (
     <>
       <div style={{ position: 'relative', ...dropHintStyle(row?.dropHint) }} {...row?.rowProps}>
-        <button
-          type="button"
-          style={{
-            ...styles.treeNodeBtn,
-            paddingLeft: 8 + depth * 14,
-            paddingRight: 8 + controls * 22,
-            fontWeight: bold ? 600 : 500,
-            fontSize: bold ? 12 : 11,
-            color: bold ? '#444' : '#555',
-          }}
-          onClick={onToggle}
-          onContextMenu={onContextMenu ?? row?.onContextMenu}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.background = '#f0f0f0';
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
-          }}
-        >
-          <span style={styles.expandIcon}>{expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}</span>
-          <span style={{ display: 'inline-flex' }}>{icon}</span>
-          <span style={styles.treeNodeLabel}>{label}</span>
-          {mark && (
-            <span style={styles.mark} title={mark.label} aria-label={mark.label}>
-              {mark.icon}
-            </span>
-          )}
-          {count !== undefined && <span style={styles.badge}>{count}</span>}
-        </button>
+        {row?.rename ? (
+          <div style={{ ...styles.treeNodeBtn, paddingLeft: 8 + depth * 14, cursor: 'default' }}>
+            <span style={styles.expandIcon}>{expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}</span>
+            <span style={{ display: 'inline-flex' }}>{icon}</span>
+            <RenameField name={label} onDone={row.rename} />
+          </div>
+        ) : (
+          <button
+            type="button"
+            style={{
+              ...styles.treeNodeBtn,
+              paddingLeft: 8 + depth * 14,
+              paddingRight: 8 + controls * 22,
+              fontWeight: bold ? 600 : 500,
+              fontSize: bold ? 12 : 11,
+              color: bold ? '#444' : '#555',
+            }}
+            onClick={onToggle}
+            onContextMenu={onContextMenu ?? row?.onContextMenu}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = '#f0f0f0';
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+            }}
+          >
+            <span style={styles.expandIcon}>{expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}</span>
+            <span style={{ display: 'inline-flex' }}>{icon}</span>
+            <span style={styles.treeNodeLabel}>{label}</span>
+            {mark && (
+              <span style={styles.mark} title={mark.label} aria-label={mark.label}>
+                {mark.icon}
+              </span>
+            )}
+            {count !== undefined && <span style={styles.badge}>{count}</span>}
+          </button>
+        )}
         {trailingAction && (
           <button
             type="button"
