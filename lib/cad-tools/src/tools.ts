@@ -1117,6 +1117,23 @@ export const CAD_TOOLS: readonly CadToolDefinition[] = Object.freeze([
     },
   },
   {
+    name: 'feature_split',
+    description:
+      'Split bodies (body handles) along a plane, taken as its whole plane. `keep` both keeps both pieces as bodies (the one on the ' +
+      "side the plane's normal points to keeps the body's identity, the other is a new body); positive or negative keeps only the piece " +
+      "on that side (a face's normal points out of its body). Returns `{feature, status}`.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        bodies: handles('Body handles.'),
+        plane,
+        keep: { type: 'string', enum: ['both', 'positive', 'negative'], description: "Default 'both'." },
+      },
+      required: ['bodies', 'plane'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'feature_remove_body',
     description: 'Remove bodies from the part from here on (they stay in earlier states). Returns `{feature, status}`.',
     inputSchema: {

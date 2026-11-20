@@ -14,6 +14,7 @@ export const PANEL_OF_TYPE: Readonly<Record<string, string>> = {
   'core.move': 'move',
   'core.boolean': 'combine',
   'core.removeBody': 'removeBody',
+  'core.split': 'split',
   'core.primitive': 'primitive',
   'core.constructionPlane': 'construction.plane',
   'core.constructionAxis': 'construction.axis',

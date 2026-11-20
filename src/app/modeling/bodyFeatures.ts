@@ -814,3 +814,52 @@ export function buildRemoveBody(_doc: Doc, target: FeatureTarget, form: RemoveBo
 export function readRemoveBody(_doc: Doc, _part: string, inputs: Json): RemoveBodyForm {
   return { bodies: picksIn(inputs.bodies, 'Body') };
 }
+
+// ---- split body ----
+
+/** Which pieces a split keeps: both, or the one on the side its plane's normal points to (positive) or away from. */
+export type SplitKeep = 'both' | 'positive' | 'negative';
+
+export interface SplitForm {
+  bodies: PickedRef[];
+  /** A default plane, a construction plane or a flat face. */
+  tool: PickedRef | null;
+  keep: SplitKeep;
+}
+
+/** A new split: across the YZ plane, keeping both pieces. */
+export const newSplitForm = (): SplitForm => ({
+  bodies: [],
+  tool: { reference: { standard: { name: 'yz' } }, names: {}, label: 'YZ plane' },
+  keep: 'both',
+});
+
+export function buildSplit(_doc: Doc, target: FeatureTarget, form: SplitForm, values: ValueSlots): Built {
+  const bodies = setOf(form.bodies, 'bodies', 'Pick the bodies to split');
+  if (!bodies.ok) return bodies;
+  if (!form.tool) return needsPick('Pick the plane to split along', 'tool');
+  return {
+    ok: true,
+    inputs: {
+      ...(target.base ?? {}),
+      targets: bodies.set,
+      tool: form.tool.reference,
+      keep:
+        form.keep === 'both' ? { both: {} } : { side: { sign: values.choice(['keep', 'side', 'sign'], form.keep) } },
+    },
+    names: namesOf([...form.bodies, form.tool]),
+  };
+}
+
+export function readSplit(doc: Doc, _part: string, inputs: Json): SplitForm {
+  const tool = inputs.tool as Json | undefined;
+  const name = at(tool, 'standard', 'name');
+  const sign = fieldReader(doc).choice(at(inputs, 'keep', 'side', 'sign'));
+  return {
+    bodies: picksIn(inputs.targets, 'Body'),
+    tool: tool
+      ? { reference: tool, names: {}, label: typeof name === 'string' ? `${name.toUpperCase()} plane` : 'Plane' }
+      : null,
+    keep: sign === 'positive' || sign === 'negative' ? sign : 'both',
+  };
+}

@@ -33,6 +33,7 @@ import './mirror';
 import './move';
 import './primitive';
 import './boolean';
+import './split';
 import './construction';
 import './measure';
 import { checkDeriveCycles } from './derive';

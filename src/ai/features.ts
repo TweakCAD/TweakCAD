@@ -15,11 +15,13 @@ import {
   buildPattern,
   buildRemoveBody,
   buildShell,
+  buildSplit,
   newDirection,
   newMirrorForm,
   newMoveForm,
   newPatternForm,
   newShellForm,
+  newSplitForm,
   type PatternDirection,
 } from '../app/modeling/bodyFeatures';
 import {
@@ -583,6 +585,18 @@ export async function featureBoolean(ctx: AiContext, args: Args): Promise<Json> 
   };
   const target = newTarget(editor, partOfHandles(ctx, [str(args, 'target'), ...tools]), 'Combine');
   return write(ctx, target, 'core.boolean', buildBoolean(editor.document, target, form, slots(editor)), 'Combine');
+}
+
+export async function featureSplit(ctx: AiContext, args: Args): Promise<Json> {
+  checkCanEdit(ctx);
+  const { editor } = ctx.services;
+  const handles = strings(args, 'bodies') as string[];
+  const form = newSplitForm();
+  form.bodies = picks(ctx, args, 'bodies', ['body']);
+  form.tool = { ...planeOrAxis(ctx, args.plane, ['face', 'construction'], 'plane'), label: 'Plane' };
+  form.keep = oneOf(args, 'keep', ['both', 'positive', 'negative'] as const, 'both');
+  const target = newTarget(editor, partOfHandles(ctx, handles), 'Split');
+  return write(ctx, target, 'core.split', buildSplit(editor.document, target, form, slots(editor)), 'Split');
 }
 
 export async function featureRemoveBody(ctx: AiContext, args: Args): Promise<Json> {

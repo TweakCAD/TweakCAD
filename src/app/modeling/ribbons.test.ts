@@ -44,7 +44,7 @@ describe('modelling ribbon', () => {
     expect(modelToolGroups().map((g) => g.label)).toEqual(['CREATE', 'MODIFY', 'CONSTRUCT', 'ASSEMBLE', 'INSPECT']);
   });
 
-  it('orders MODIFY as Fillet, Chamfer, Shell, Combine, then Move, Parameters, Remove Body, with one Combine for join, cut and intersect', () => {
+  it('orders MODIFY as Fillet, Chamfer, Shell, Combine, then Move, Parameters, Split Body, Remove Body, with one Combine for join, cut and intersect', () => {
     const modify = modelToolGroups().find((g) => g.label === 'MODIFY');
     expect(modify?.tools.map((t) => t.label)).toEqual([
       'Fillet',
@@ -53,6 +53,7 @@ describe('modelling ribbon', () => {
       'Combine',
       'Move',
       'Parameters',
+      'Split Body',
       'Remove Body',
     ]);
     expect(modify?.tools.filter((t) => t.primary !== false).map((t) => t.label)).toEqual([
