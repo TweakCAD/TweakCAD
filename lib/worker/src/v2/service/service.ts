@@ -175,12 +175,13 @@ function equal(a: unknown, b: unknown): boolean {
 /**
  * Whether two documents are equal but for what is shown: the attributes of
  * part and assembly rows, a part's rollback (evaluation runs the whole
- * timeline whatever it says), and the name table (whose entries a feature
- * holds are checked on their own).
+ * timeline whatever it says), the browser's folders, and the name table
+ * (whose entries a feature holds are checked on their own).
  */
 function sameButShown(a: Json, b: Json): boolean {
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
   keys.delete('names');
+  keys.delete('folders');
   for (const key of keys) {
     if (key !== 'parts' && key !== 'assemblies') {
       if (!equal(a[key], b[key])) return false;

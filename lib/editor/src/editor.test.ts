@@ -969,9 +969,14 @@ describe('the bus', () => {
 });
 
 afterAll(() => {
-  // Every command type has a test above, in sketch.test.ts or in commands/library.test.ts.
+  // Every command type has a test above, in sketch.test.ts, commands/library.test.ts or commands/folders.test.ts.
   const sketchOnly = new Set<CommandType>([
     'editSketch',
+    'addFolder',
+    'renameFolder',
+    'removeFolder',
+    'moveFolder',
+    'moveToFolder',
     'removeLibraryEntry',
     'addContext',
     'editContext',

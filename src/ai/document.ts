@@ -16,6 +16,7 @@ import { findFeature, partOf, partOfFeature, partView, partsOf, type FeatureRow 
 import { isPickedRegion, writePicked, type PickResult } from '../app/picking';
 import { check, entryOf, exprArg, objectArg, optStr, str, type Args } from './common';
 import { ToolError, checkCanEdit, invalid, partArg, settledDisplay, type AiContext } from './context';
+import { folderOutline } from './folders';
 import { setSketchDimension } from './sketch';
 
 export function getDocument(ctx: AiContext, args: Args): Json {
@@ -105,6 +106,7 @@ export async function listFeatures(ctx: AiContext, args: Args): Promise<Json> {
       name: a.name,
       instances: Array.isArray(a.instances) ? a.instances.length : 0,
     })),
+    folders: folderOutline(ctx),
   };
 }
 

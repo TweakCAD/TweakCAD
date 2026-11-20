@@ -6,7 +6,7 @@
  * shows as a build failure does, with the message as its tooltip; one that
  * built but not as authored shows amber, with the warning.
  */
-import { forwardRef, useEffect, useRef, useState } from 'react';
+import { Fragment, forwardRef, useEffect, useRef, useState } from 'react';
 import {
   Box,
   ExternalLink,
@@ -41,6 +41,10 @@ import {
   ArrowDownToLine,
   Puzzle,
   Snowflake,
+  Folder,
+  FolderPlus,
+  FolderInput,
+  FolderOutput,
 } from 'lucide-react';
 import { BODY_COLOR_SWATCHES } from './attributes';
 import { useKeptInWindow } from './menuPlacement';
@@ -55,6 +59,16 @@ import {
   getFeatureIcon,
 } from '../icons/cadIcons.tsx';
 import { bodyGroups, componentsOf, rowOf } from './browserActions';
+import {
+  dropCommand,
+  folderTree,
+  moveCommand,
+  moveTargets,
+  type DropTarget,
+  type FolderCommand,
+  type TreeFolder,
+  type TreeThing,
+} from './folders';
 import { featureTypeLabel, type FeatureRow, type PartView } from './features';
 import { editableInPanel } from './modeling/panelTypes';
 import { freezable } from './modeling/freeze';
@@ -215,6 +229,14 @@ export interface BrowserBody {
   visible: boolean;
 }
 
+/** What the browser hangs on a part's, assembly's, library entry's or folder's row: dragging, dropping and its menu. */
+export interface TreeRowHooks {
+  rowProps?: React.HTMLAttributes<HTMLDivElement> & { draggable?: boolean };
+  /** A drop here would put the dragged row into this one, or before it. */
+  dropHint?: 'into' | 'before' | null;
+  onContextMenu?: (e: React.MouseEvent) => void;
+}
+
 /** The keys an action on body rows acts on; a row the shown display (a preview) lacks has none. */
 const keysOf = (b: BrowserBody): number[] => (b.key >= 0 ? [b.key] : []);
 
@@ -229,8 +251,19 @@ export interface BrowserTreeProps {
   /** A body menu's or an import node's action on its bodies, by key, with the part they are listed under. */
   onBodyAction: (part: string, keys: readonly number[], action: BodyAction) => void;
   assemblies: { id: string; name: string }[];
-  /** The assemblies' own rows (instances, joints, positions), drawn in place of their plain names. */
-  assemblyTree?: React.ReactNode;
+  /**
+   * Draws one assembly's own rows (instances, joints, positions) in place of
+   * its plain name: its node at `depth`, with the hooks of its row.
+   */
+  renderAssembly?: (assembly: string, depth: number, row: TreeRowHooks) => React.ReactNode;
+  /** The document's folders: they nest and hold parts, assemblies and library entries; an item in none shows at the top level. */
+  folders?: readonly TreeFolder[];
+  /** The library entries, listed where a folder holds them. */
+  library?: readonly { id: string; name: string }[];
+  /** Runs a folder command: a move by drag and drop or from a menu, a rename, a removal. */
+  onFolderCommand?: (command: FolderCommand) => void;
+  /** Adds a folder in `parent` (null: the top level) holding `members`; its id, or null when refused. */
+  onNewFolder?: (parent: string | null, members: string[]) => string | null;
   /** The part new features go into; another part offers Open. */
   activePart?: string | null;
   onOpenPart?: (part: string) => void;
@@ -309,14 +342,23 @@ export function BrowserTree(props: BrowserTreeProps) {
     x: number;
     y: number;
   } | null>(null);
+  /** A part's, assembly's, library entry's or folder's menu: new folder, moves, and a folder's rename and removal. */
+  const [folderMenu, setFolderMenu] = useState<{ thing: TreeThing; x: number; y: number } | null>(null);
+  /** The folder whose name is being edited in its row. */
+  const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
+  /** The row a drop would land on, and how. */
+  const [dropAt, setDropAt] = useState<{ key: string; zone: 'into' | 'before' } | null>(null);
+  /** The row being dragged. */
+  const [dragged, setDragged] = useState<TreeThing | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  useKeptInWindow(menuRef, menu ?? bodyMenu ?? importMenu);
+  useKeptInWindow(menuRef, menu ?? bodyMenu ?? importMenu ?? folderMenu);
 
-  const anyMenu = menu !== null || bodyMenu !== null || importMenu !== null;
+  const anyMenu = menu !== null || bodyMenu !== null || importMenu !== null || folderMenu !== null;
   const closeMenus = () => {
     setMenu(null);
     setBodyMenu(null);
     setImportMenu(null);
+    setFolderMenu(null);
   };
   // A press outside the open menu, or Escape, closes it.
   useEffect(() => {
@@ -358,6 +400,580 @@ export function BrowserTree(props: BrowserTreeProps) {
     if (feature) props.onFeatureAction(action, feature);
   };
 
+  const tree = folderTree(props.folders ?? []);
+  const filing = !readOnly && props.onFolderCommand !== undefined;
+  const partsById = new Map(props.parts.map((p) => [p.id, p]));
+  const assembliesById = new Map(props.assemblies.map((a) => [a.id, a]));
+  const libraryById = new Map((props.library ?? []).map((e) => [e.id, e]));
+  const known = (id: string) => partsById.has(id) || assembliesById.has(id) || libraryById.has(id);
+
+  /** Where a drop on a row lands: before a folder from the top edge of its row, otherwise into it. */
+  const dropTargetOf = (thing: TreeThing | 'top', e: React.DragEvent): DropTarget => {
+    if (thing === 'top') return { top: true };
+    if ('item' in thing) return thing;
+    const box = e.currentTarget.getBoundingClientRect();
+    const before = dragged !== null && 'folder' in dragged && e.clientY - box.top < box.height * 0.3;
+    return { folder: thing.folder, zone: before ? 'before' : 'into' };
+  };
+  const endDrag = () => {
+    setDragged(null);
+    setDropAt(null);
+  };
+  /** A row's drag, drop and menu hooks; none in a read-only document. */
+  const hooksFor = (thing: TreeThing | 'top'): TreeRowHooks => {
+    if (!filing) return {};
+    const key = thing === 'top' ? 'top' : 'item' in thing ? thing.item : thing.folder;
+    return {
+      rowProps: {
+        ...(thing === 'top'
+          ? {}
+          : {
+              draggable: true,
+              onDragStart: (e: React.DragEvent) => {
+                e.stopPropagation();
+                setDragged(thing);
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', key);
+              },
+              onDragEnd: endDrag,
+            }),
+        onDragOver: (e: React.DragEvent) => {
+          if (!dragged) return;
+          e.stopPropagation();
+          const target = dropTargetOf(thing, e);
+          if (!dropCommand(tree, dragged, target)) {
+            if (dropAt?.key === key) setDropAt(null);
+            return;
+          }
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          const zone = 'zone' in target ? target.zone : 'item' in target ? 'before' : 'into';
+          if (dropAt?.key !== key || dropAt.zone !== zone) setDropAt({ key, zone });
+        },
+        onDragLeave: (e: React.DragEvent) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropAt((d) => (d?.key === key ? null : d));
+        },
+        onDrop: (e: React.DragEvent) => {
+          const from = dragged;
+          if (!from) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const command = dropCommand(tree, from, dropTargetOf(thing, e));
+          endDrag();
+          if (command) props.onFolderCommand?.(command);
+        },
+      },
+      dropHint: dropAt?.key === key ? dropAt.zone : null,
+      ...(thing === 'top'
+        ? {}
+        : {
+            onContextMenu: (e: React.MouseEvent) => {
+              e.preventDefault();
+              closeMenus();
+              setFolderMenu({ thing, x: e.clientX, y: e.clientY });
+            },
+          }),
+    };
+  };
+
+  /** Adds a folder and starts editing its name, with the folder it stands in open. */
+  const newFolder = (parent: string | null, members: string[]) => {
+    const id = props.onNewFolder?.(parent, members);
+    if (!id) return;
+    if (parent !== null && !open(parent)) toggle(parent);
+    setRenamingFolder(id);
+  };
+
+  const renderItem = (id: string, depth: number): React.ReactNode => {
+    const part = partsById.get(id);
+    if (part) return renderPart(part, depth);
+    const row = hooksFor({ item: id });
+    if (assembliesById.has(id) && props.renderAssembly)
+      return <Fragment key={id}>{props.renderAssembly(id, depth, row)}</Fragment>;
+    const assembly = assembliesById.get(id);
+    const entry = libraryById.get(id);
+    const name = assembly?.name ?? entry?.name ?? id;
+    return (
+      <div
+        key={id}
+        style={{ ...styles.originItem, paddingLeft: 8 + depth * 14, ...dropHintStyle(row.dropHint) }}
+        onContextMenu={row.onContextMenu}
+        {...row.rowProps}
+      >
+        {assembly ? <Layers size={12} color="#6366f1" /> : <Puzzle size={12} color="#6366f1" />}
+        <span style={{ ...styles.originLabel, fontSize: 12, color: '#444', fontWeight: assembly ? 600 : 500 }}>
+          {name}
+        </span>
+      </div>
+    );
+  };
+
+  const renderFolder = (id: string, depth: number, seen: ReadonlySet<string>): React.ReactNode => {
+    const folder = tree.byId.get(id);
+    if (!folder || seen.has(id)) return null;
+    const inside = new Set(seen).add(id);
+    const folders = tree.children.get(id) ?? [];
+    const members = folder.members.filter(known);
+    if (renamingFolder === id) {
+      return (
+        <div key={id} style={{ ...styles.featureNode, paddingLeft: 8 + depth * 14 + 18 }}>
+          <span style={styles.featureIconWrap}>
+            <Folder size={13} color="#c08a1e" />
+          </span>
+          <RenameField
+            name={folder.name}
+            onDone={(name) => {
+              setRenamingFolder(null);
+              if (name !== null && name.trim() !== '' && name.trim() !== folder.name)
+                props.onFolderCommand?.({ type: 'renameFolder', folder: id, name: name.trim() });
+            }}
+          />
+        </div>
+      );
+    }
+    return (
+      <TreeNode
+        key={id}
+        label={folder.name}
+        icon={<Folder size={13} color="#c08a1e" />}
+        expanded={open(id)}
+        onToggle={() => toggle(id)}
+        depth={depth}
+        bold
+        count={folders.length + members.length}
+        row={hooksFor({ folder: id })}
+      >
+        {folders.map((f) => renderFolder(f, depth + 1, inside))}
+        {members.map((m) => renderItem(m, depth + 1))}
+      </TreeNode>
+    );
+  };
+
+  /** The top level: the folders, then the assemblies and parts no folder holds. */
+  const renderTop = () => (
+    <>
+      {tree.top.map((f) => renderFolder(f, 1, new Set()))}
+      {props.assemblies.filter((a) => !tree.folderOf.has(a.id)).map((a) => renderItem(a.id, 1))}
+      {props.parts.filter((p) => !tree.folderOf.has(p.id)).map((p) => renderItem(p.id, 1))}
+    </>
+  );
+
+  /** A thing's menu: a new folder holding it (or in it), moves, and a folder's rename and removal. */
+  const renderFolderMenu = (m: { thing: TreeThing; x: number; y: number }) => {
+    const { thing } = m;
+    const at =
+      'folder' in thing ? (tree.byId.get(thing.folder)?.parent ?? null) : (tree.folderOf.get(thing.item) ?? null);
+    const run = (command: FolderCommand) => {
+      closeMenus();
+      props.onFolderCommand?.(command);
+    };
+    const targets = moveTargets(tree, thing);
+    return (
+      <div ref={menuRef} style={{ ...styles.contextMenu, left: m.x, top: m.y }}>
+        {'folder' in thing && (
+          <MenuButton
+            icon={<Type size={14} />}
+            label="Rename"
+            onClick={() => {
+              closeMenus();
+              setRenamingFolder(thing.folder);
+            }}
+          />
+        )}
+        {props.onNewFolder && (
+          <MenuButton
+            icon={<FolderPlus size={14} />}
+            label={'folder' in thing ? 'New folder inside' : 'New folder'}
+            onClick={() => {
+              closeMenus();
+              if ('folder' in thing) newFolder(thing.folder, []);
+              else newFolder(at, [thing.item]);
+            }}
+          />
+        )}
+        {at !== null && (
+          <MenuButton
+            icon={<FolderOutput size={14} />}
+            label="Move to top level"
+            onClick={() => run(moveCommand(thing, null))}
+          />
+        )}
+        {targets.length > 0 && (
+          <>
+            <div style={styles.contextDivider} />
+            <div style={styles.colorLabel}>Move to</div>
+            <div style={styles.menuScroll}>
+              {targets.map(({ folder, level }) => (
+                <MenuButton
+                  key={folder.id}
+                  icon={<FolderInput size={14} />}
+                  label={`${EM_SPACE.repeat(level)}${folder.name}`}
+                  onClick={() => run(moveCommand(thing, folder.id))}
+                />
+              ))}
+            </div>
+          </>
+        )}
+        {'folder' in thing && (
+          <>
+            <div style={styles.contextDivider} />
+            <MenuButton
+              icon={<Trash2 size={14} />}
+              label="Delete folder"
+              danger
+              onClick={() => run({ type: 'removeFolder', folder: thing.folder })}
+            />
+          </>
+        )}
+      </div>
+    );
+  };
+
+  const renderPart = (part: BrowserTreeProps['parts'][number], depth: number) => {
+    const sketches = sketchesOf(part.features);
+    const construction = constructionOf(part.features);
+    const components = componentsOf(part.features);
+    const originShown = props.originShown(part.id);
+    const shownBodies = part.bodies.filter((b) => b.key >= 0);
+    const allBodiesHidden = shownBodies.length > 0 && shownBodies.every((b) => !b.visible);
+    return (
+      <TreeNode
+        key={part.id}
+        label={part.name}
+        icon={<Box size={13} color="#ff9800" />}
+        expanded={open(part.id)}
+        onToggle={() => toggle(part.id)}
+        depth={depth}
+        bold
+        row={hooksFor({ item: part.id })}
+        {...(props.onOpenPart && props.activePart !== part.id
+          ? {
+              trailingAction: {
+                icon: <ExternalLink size={11} color="#777" />,
+                onClick: () => props.onOpenPart?.(part.id),
+                ariaLabel: `Open ${part.name} on its own`,
+              },
+            }
+          : {})}
+        {...(props.onActivatePart
+          ? {
+              radio: {
+                on: props.activePart === part.id,
+                onClick: () => props.onActivatePart?.(part.id),
+                ariaLabel: `Make ${part.name} active`,
+              },
+            }
+          : {})}
+      >
+        {part.configuration && (
+          <div style={{ ...styles.paramRow, paddingLeft: 8 + (depth + 1) * 14 }}>
+            <span style={styles.paramName}>Configuration</span>
+            <select
+              aria-label={`${part.name} configuration`}
+              value={part.configuration.active ?? ''}
+              onChange={(e) => props.onSetConfiguration(part.id, e.target.value)}
+              disabled={readOnly}
+              style={styles.configSelect}
+            >
+              {part.configuration.options.map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        <TreeNode
+          label="Origin"
+          icon={<Crosshair size={12} color="#888" />}
+          expanded={open(`${part.id}/origin`)}
+          onToggle={() => toggle(`${part.id}/origin`)}
+          depth={depth + 1}
+          {...(readOnly
+            ? {}
+            : {
+                trailingAction: {
+                  icon:
+                    originShown.size > 0 ? <Eye size={11} strokeWidth={1.5} /> : <EyeOff size={11} strokeWidth={1.5} />,
+                  onClick: () => props.onSetOriginShown(part.id, ORIGIN_ITEMS, originShown.size === 0),
+                  ariaLabel: originShown.size > 0 ? 'Hide origin' : 'Show origin',
+                },
+              })}
+        >
+          {STANDARD_ROWS.map((p) => (
+            <OriginRow
+              key={p.name}
+              label={p.label}
+              color={p.color}
+              depth={depth + 2}
+              plane
+              selected={props.selectedStandard.has(p.name)}
+              onClick={(additive) => props.onSelectStandard(p.name, additive)}
+              {...(readOnly
+                ? {}
+                : {
+                    shown: originShown.has(p.name),
+                    onToggleShown: () => props.onSetOriginShown(part.id, [p.name], !originShown.has(p.name)),
+                  })}
+            />
+          ))}
+          {DATUM_ROWS.map((p) => (
+            <OriginRow
+              key={p.name}
+              label={p.label}
+              color={p.color}
+              depth={depth + 2}
+              selected={props.selectedDatums.has(p.name)}
+              onClick={(additive) => props.onSelectDatum(p.name, additive)}
+              {...(readOnly
+                ? {}
+                : {
+                    shown: originShown.has(p.name),
+                    onToggleShown: () => props.onSetOriginShown(part.id, [p.name], !originShown.has(p.name)),
+                  })}
+            />
+          ))}
+        </TreeNode>
+        <TreeNode
+          label="Sketches"
+          icon={<PenLine size={12} color="#2196f3" />}
+          expanded={open(`${part.id}/sketches`)}
+          onToggle={() => toggle(`${part.id}/sketches`)}
+          depth={depth + 1}
+          count={sketches.length}
+        >
+          {sketches.length === 0 && (
+            <span style={{ ...styles.emptyText, paddingLeft: 56 + (depth - 1) * 14 }}>No sketches</span>
+          )}
+          {sketches.map((row) => (
+            <FeatureRowView
+              key={row.id}
+              row={row}
+              depth={depth + 2}
+              pastRollback={false}
+              selected={props.selectedFeatures.has(row.id)}
+              renaming={props.renaming === row.id}
+              onClick={(additive) => props.onSelectFeature(row.id, additive)}
+              onDoubleClick={() => {
+                if (!readOnly) props.onFeatureAction('editSketch', row.id);
+              }}
+              onRename={(name) => renamed(row, name)}
+              {...(readOnly
+                ? {}
+                : {
+                    eye: {
+                      hidden: row.hidden,
+                      onToggle: () => props.onToggleFeatureVisible(row.id, row.hidden),
+                    },
+                  })}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                props.onSelectFeature(row.id, false);
+                const index = part.features.findIndex((f) => f.id === row.id);
+                openMenu(row.id, featureMenu(row, index, part.features.length, part.rollbackIndex), e);
+              }}
+            />
+          ))}
+        </TreeNode>
+        {construction.length > 0 && (
+          <TreeNode
+            label="Construction"
+            icon={<SquareDashed size={12} color="#3b82f6" />}
+            expanded={open(`${part.id}/construction`)}
+            onToggle={() => toggle(`${part.id}/construction`)}
+            depth={depth + 1}
+            count={construction.length}
+          >
+            {construction.map((row) => (
+              <FeatureRowView
+                key={row.id}
+                row={row}
+                depth={depth + 2}
+                pastRollback={false}
+                selected={props.selectedFeatures.has(row.id)}
+                renaming={props.renaming === row.id}
+                onClick={(additive) => props.onSelectFeature(row.id, additive)}
+                onDoubleClick={() => {
+                  if (!readOnly) props.onFeatureAction('editFeature', row.id);
+                }}
+                onRename={(name) => renamed(row, name)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  props.onSelectFeature(row.id, false);
+                  const index = part.features.findIndex((f) => f.id === row.id);
+                  openMenu(row.id, featureMenu(row, index, part.features.length, part.rollbackIndex), e);
+                }}
+                {...(readOnly
+                  ? {}
+                  : {
+                      eye: {
+                        hidden: row.hidden,
+                        onToggle: () => props.onToggleFeatureVisible(row.id, row.hidden),
+                      },
+                    })}
+              />
+            ))}
+          </TreeNode>
+        )}
+        <TreeNode
+          label="Components"
+          icon={<Puzzle size={12} color="#6366f1" />}
+          expanded={open(`${part.id}/components`)}
+          onToggle={() => toggle(`${part.id}/components`)}
+          depth={depth + 1}
+          count={components.length}
+        >
+          {components.length === 0 && (
+            <span style={{ ...styles.emptyText, paddingLeft: 56 + (depth - 1) * 14 }}>No components</span>
+          )}
+          {components.map((row) => {
+            const keys = part.bodies.filter((b) => b.feature === row.id).flatMap(keysOf);
+            const hidden =
+              row.hidden || (keys.length > 0 && part.bodies.every((b) => b.feature !== row.id || !b.visible));
+            return (
+              <FeatureRowView
+                key={row.id}
+                row={row}
+                depth={depth + 2}
+                pastRollback={false}
+                selected={props.selectedFeatures.has(row.id)}
+                renaming={props.renaming === row.id}
+                onClick={(additive) => props.onSelectFeature(row.id, additive)}
+                onDoubleClick={() => {
+                  if (!readOnly) props.onFeatureAction(row.component ? 'editComponent' : 'editFeature', row.id);
+                }}
+                onRename={(name) => renamed(row, name)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  props.onSelectFeature(row.id, false);
+                  const index = part.features.findIndex((f) => f.id === row.id);
+                  openMenu(row.id, featureMenu(row, index, part.features.length, part.rollbackIndex), e);
+                }}
+                // A component's eye shows or hides the bodies it made, as their own eyes do.
+                {...(readOnly
+                  ? {}
+                  : {
+                      eye: {
+                        hidden,
+                        onToggle: () =>
+                          row.hidden
+                            ? props.onToggleFeatureVisible(row.id, true)
+                            : props.onBodyAction(part.id, keys, { kind: 'visible', visible: hidden }),
+                      },
+                    })}
+              />
+            );
+          })}
+        </TreeNode>
+        <TreeNode
+          label="Bodies"
+          icon={<Box size={12} color="#ff9800" />}
+          expanded={open(`${part.id}/bodies`)}
+          onToggle={() => toggle(`${part.id}/bodies`)}
+          depth={depth + 1}
+          count={part.bodies.length}
+          {...(readOnly || shownBodies.length === 0
+            ? {}
+            : {
+                trailingAction: {
+                  icon: allBodiesHidden ? <EyeOff size={11} strokeWidth={1.5} /> : <Eye size={11} strokeWidth={1.5} />,
+                  onClick: () =>
+                    props.onBodyAction(
+                      part.id,
+                      shownBodies.map((b) => b.key),
+                      { kind: 'visible', visible: allBodiesHidden },
+                    ),
+                  ariaLabel: allBodiesHidden ? `Show the bodies of ${part.name}` : `Hide the bodies of ${part.name}`,
+                },
+              })}
+        >
+          {part.bodies.length === 0 && (
+            <span style={{ ...styles.emptyText, paddingLeft: 56 + (depth - 1) * 14 }}>No bodies</span>
+          )}
+          {bodyGroups(part.features, part.bodies).map((g) => {
+            const bodyRow = (b: BrowserBody, rowDepth: number) => (
+              <BodyRowView
+                key={b.id}
+                body={b}
+                depth={rowDepth}
+                selected={b.key >= 0 && props.selectedKeys.has(b.key)}
+                onClick={(additive) => {
+                  if (b.key >= 0) props.onSelectBody(b.key, additive);
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  if (b.key < 0) return;
+                  props.onSelectBody(b.key, false);
+                  // Everything a body's menu offers writes to the document.
+                  if (!readOnly)
+                    setBodyMenu({
+                      part: part.id,
+                      body: b,
+                      source: rowOf(part.features, b.feature),
+                      x: e.clientX,
+                      y: e.clientY,
+                    });
+                }}
+                {...(readOnly
+                  ? {}
+                  : {
+                      onToggleVisible: () =>
+                        props.onBodyAction(part.id, keysOf(b), { kind: 'visible', visible: !b.visible }),
+                    })}
+                renaming={renamingBody === b.id}
+                onStartRename={() => {
+                  if (b.key >= 0 && !readOnly) setRenamingBody(b.id);
+                }}
+                onRename={(name) => {
+                  setRenamingBody(null);
+                  if (name !== null && name.trim() !== b.name)
+                    props.onBodyAction(part.id, keysOf(b), { kind: 'rename', name: name.trim() });
+                }}
+              />
+            );
+            if ('body' in g) return bodyRow(g.body, depth + 2);
+            const id = `import:${g.feature.id}`;
+            const keys = g.bodies.flatMap(keysOf);
+            const allHidden = g.bodies.every((b) => !b.visible);
+            const members = g.bodies.map((b) => bodyRow(b, depth + 3));
+            return (
+              <div key={id}>
+                <TreeNode
+                  label={g.feature.name}
+                  icon={<Box size={12} color="#ff9800" />}
+                  expanded={open(id)}
+                  onToggle={() => toggle(id)}
+                  depth={depth + 2}
+                  count={keys.length}
+                  {...(readOnly
+                    ? {}
+                    : {
+                        trailingAction: {
+                          icon: allHidden ? (
+                            <EyeOff size={11} strokeWidth={1.5} />
+                          ) : (
+                            <Eye size={11} strokeWidth={1.5} />
+                          ),
+                          onClick: () => props.onBodyAction(part.id, keys, { kind: 'visible', visible: allHidden }),
+                          ariaLabel: allHidden ? 'Show all bodies' : 'Hide all bodies',
+                        },
+                      })}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    if (!readOnly)
+                      setImportMenu({ part: part.id, feature: g.feature, keys, x: e.clientX, y: e.clientY });
+                  }}
+                >
+                  {members}
+                </TreeNode>
+              </div>
+            );
+          })}
+        </TreeNode>
+      </TreeNode>
+    );
+  };
+
   return (
     <div style={styles.root}>
       <div style={styles.header}>
@@ -375,9 +991,31 @@ export function BrowserTree(props: BrowserTreeProps) {
               <Plus size={12} color="#666" />
             </HeaderButton>
           )}
+          {filing && props.onNewFolder && (
+            <HeaderButton label="New folder" onClick={() => newFolder(null, [])}>
+              <FolderPlus size={12} color="#666" />
+            </HeaderButton>
+          )}
         </span>
       </div>
-      <div style={styles.content}>
+      <div
+        style={styles.content}
+        {...(filing
+          ? {
+              onDragOver: (e: React.DragEvent) => {
+                if (e.target !== e.currentTarget || !dragged) return;
+                if (dropCommand(tree, dragged, { top: true })) e.preventDefault();
+              },
+              onDrop: (e: React.DragEvent) => {
+                if (e.target !== e.currentTarget || !dragged) return;
+                e.preventDefault();
+                const command = dropCommand(tree, dragged, { top: true });
+                endDrag();
+                if (command) props.onFolderCommand?.(command);
+              },
+            }
+          : {})}
+      >
         <TreeNode
           label={props.documentName}
           icon={<FileBox size={13} color="#888" />}
@@ -385,6 +1023,7 @@ export function BrowserTree(props: BrowserTreeProps) {
           onToggle={() => toggle(DOCUMENT_NODE)}
           depth={0}
           bold
+          row={hooksFor('top')}
           {...(props.onActivatePart && props.designActive !== undefined
             ? {
                 radio: {
@@ -436,361 +1075,7 @@ export function BrowserTree(props: BrowserTreeProps) {
               </div>
             ))}
           </TreeNode>
-          {props.assemblyTree ??
-            props.assemblies.map((a) => (
-              <div key={a.id} style={{ ...styles.originItem, paddingLeft: 8 + 14 }}>
-                <Layers size={12} color="#6366f1" />
-                <span style={{ ...styles.originLabel, fontSize: 12, color: '#444', fontWeight: 600 }}>{a.name}</span>
-              </div>
-            ))}
-          {props.parts.map((part) => {
-            const sketches = sketchesOf(part.features);
-            const construction = constructionOf(part.features);
-            const components = componentsOf(part.features);
-            const originShown = props.originShown(part.id);
-            const shownBodies = part.bodies.filter((b) => b.key >= 0);
-            const allBodiesHidden = shownBodies.length > 0 && shownBodies.every((b) => !b.visible);
-            return (
-              <TreeNode
-                key={part.id}
-                label={part.name}
-                icon={<Box size={13} color="#ff9800" />}
-                expanded={open(part.id)}
-                onToggle={() => toggle(part.id)}
-                depth={1}
-                bold
-                {...(props.onOpenPart && props.activePart !== part.id
-                  ? {
-                      trailingAction: {
-                        icon: <ExternalLink size={11} color="#777" />,
-                        onClick: () => props.onOpenPart?.(part.id),
-                        ariaLabel: `Open ${part.name} on its own`,
-                      },
-                    }
-                  : {})}
-                {...(props.onActivatePart
-                  ? {
-                      radio: {
-                        on: props.activePart === part.id,
-                        onClick: () => props.onActivatePart?.(part.id),
-                        ariaLabel: `Make ${part.name} active`,
-                      },
-                    }
-                  : {})}
-              >
-                {part.configuration && (
-                  <div style={{ ...styles.paramRow, paddingLeft: 8 + 2 * 14 }}>
-                    <span style={styles.paramName}>Configuration</span>
-                    <select
-                      aria-label={`${part.name} configuration`}
-                      value={part.configuration.active ?? ''}
-                      onChange={(e) => props.onSetConfiguration(part.id, e.target.value)}
-                      disabled={readOnly}
-                      style={styles.configSelect}
-                    >
-                      {part.configuration.options.map((o) => (
-                        <option key={o} value={o}>
-                          {o}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-                <TreeNode
-                  label="Origin"
-                  icon={<Crosshair size={12} color="#888" />}
-                  expanded={open(`${part.id}/origin`)}
-                  onToggle={() => toggle(`${part.id}/origin`)}
-                  depth={2}
-                  {...(readOnly
-                    ? {}
-                    : {
-                        trailingAction: {
-                          icon:
-                            originShown.size > 0 ? (
-                              <Eye size={11} strokeWidth={1.5} />
-                            ) : (
-                              <EyeOff size={11} strokeWidth={1.5} />
-                            ),
-                          onClick: () => props.onSetOriginShown(part.id, ORIGIN_ITEMS, originShown.size === 0),
-                          ariaLabel: originShown.size > 0 ? 'Hide origin' : 'Show origin',
-                        },
-                      })}
-                >
-                  {STANDARD_ROWS.map((p) => (
-                    <OriginRow
-                      key={p.name}
-                      label={p.label}
-                      color={p.color}
-                      plane
-                      selected={props.selectedStandard.has(p.name)}
-                      onClick={(additive) => props.onSelectStandard(p.name, additive)}
-                      {...(readOnly
-                        ? {}
-                        : {
-                            shown: originShown.has(p.name),
-                            onToggleShown: () => props.onSetOriginShown(part.id, [p.name], !originShown.has(p.name)),
-                          })}
-                    />
-                  ))}
-                  {DATUM_ROWS.map((p) => (
-                    <OriginRow
-                      key={p.name}
-                      label={p.label}
-                      color={p.color}
-                      selected={props.selectedDatums.has(p.name)}
-                      onClick={(additive) => props.onSelectDatum(p.name, additive)}
-                      {...(readOnly
-                        ? {}
-                        : {
-                            shown: originShown.has(p.name),
-                            onToggleShown: () => props.onSetOriginShown(part.id, [p.name], !originShown.has(p.name)),
-                          })}
-                    />
-                  ))}
-                </TreeNode>
-                <TreeNode
-                  label="Sketches"
-                  icon={<PenLine size={12} color="#2196f3" />}
-                  expanded={open(`${part.id}/sketches`)}
-                  onToggle={() => toggle(`${part.id}/sketches`)}
-                  depth={2}
-                  count={sketches.length}
-                >
-                  {sketches.length === 0 && <span style={{ ...styles.emptyText, paddingLeft: 56 }}>No sketches</span>}
-                  {sketches.map((row) => (
-                    <FeatureRowView
-                      key={row.id}
-                      row={row}
-                      depth={3}
-                      pastRollback={false}
-                      selected={props.selectedFeatures.has(row.id)}
-                      renaming={props.renaming === row.id}
-                      onClick={(additive) => props.onSelectFeature(row.id, additive)}
-                      onDoubleClick={() => {
-                        if (!readOnly) props.onFeatureAction('editSketch', row.id);
-                      }}
-                      onRename={(name) => renamed(row, name)}
-                      {...(readOnly
-                        ? {}
-                        : {
-                            eye: {
-                              hidden: row.hidden,
-                              onToggle: () => props.onToggleFeatureVisible(row.id, row.hidden),
-                            },
-                          })}
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        props.onSelectFeature(row.id, false);
-                        const index = part.features.findIndex((f) => f.id === row.id);
-                        openMenu(row.id, featureMenu(row, index, part.features.length, part.rollbackIndex), e);
-                      }}
-                    />
-                  ))}
-                </TreeNode>
-                {construction.length > 0 && (
-                  <TreeNode
-                    label="Construction"
-                    icon={<SquareDashed size={12} color="#3b82f6" />}
-                    expanded={open(`${part.id}/construction`)}
-                    onToggle={() => toggle(`${part.id}/construction`)}
-                    depth={2}
-                    count={construction.length}
-                  >
-                    {construction.map((row) => (
-                      <FeatureRowView
-                        key={row.id}
-                        row={row}
-                        depth={3}
-                        pastRollback={false}
-                        selected={props.selectedFeatures.has(row.id)}
-                        renaming={props.renaming === row.id}
-                        onClick={(additive) => props.onSelectFeature(row.id, additive)}
-                        onDoubleClick={() => {
-                          if (!readOnly) props.onFeatureAction('editFeature', row.id);
-                        }}
-                        onRename={(name) => renamed(row, name)}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          props.onSelectFeature(row.id, false);
-                          const index = part.features.findIndex((f) => f.id === row.id);
-                          openMenu(row.id, featureMenu(row, index, part.features.length, part.rollbackIndex), e);
-                        }}
-                        {...(readOnly
-                          ? {}
-                          : {
-                              eye: {
-                                hidden: row.hidden,
-                                onToggle: () => props.onToggleFeatureVisible(row.id, row.hidden),
-                              },
-                            })}
-                      />
-                    ))}
-                  </TreeNode>
-                )}
-                <TreeNode
-                  label="Components"
-                  icon={<Puzzle size={12} color="#6366f1" />}
-                  expanded={open(`${part.id}/components`)}
-                  onToggle={() => toggle(`${part.id}/components`)}
-                  depth={2}
-                  count={components.length}
-                >
-                  {components.length === 0 && (
-                    <span style={{ ...styles.emptyText, paddingLeft: 56 }}>No components</span>
-                  )}
-                  {components.map((row) => {
-                    const keys = part.bodies.filter((b) => b.feature === row.id).flatMap(keysOf);
-                    const hidden =
-                      row.hidden || (keys.length > 0 && part.bodies.every((b) => b.feature !== row.id || !b.visible));
-                    return (
-                      <FeatureRowView
-                        key={row.id}
-                        row={row}
-                        depth={3}
-                        pastRollback={false}
-                        selected={props.selectedFeatures.has(row.id)}
-                        renaming={props.renaming === row.id}
-                        onClick={(additive) => props.onSelectFeature(row.id, additive)}
-                        onDoubleClick={() => {
-                          if (!readOnly) props.onFeatureAction(row.component ? 'editComponent' : 'editFeature', row.id);
-                        }}
-                        onRename={(name) => renamed(row, name)}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          props.onSelectFeature(row.id, false);
-                          const index = part.features.findIndex((f) => f.id === row.id);
-                          openMenu(row.id, featureMenu(row, index, part.features.length, part.rollbackIndex), e);
-                        }}
-                        // A component's eye shows or hides the bodies it made, as their own eyes do.
-                        {...(readOnly
-                          ? {}
-                          : {
-                              eye: {
-                                hidden,
-                                onToggle: () =>
-                                  row.hidden
-                                    ? props.onToggleFeatureVisible(row.id, true)
-                                    : props.onBodyAction(part.id, keys, { kind: 'visible', visible: hidden }),
-                              },
-                            })}
-                      />
-                    );
-                  })}
-                </TreeNode>
-                <TreeNode
-                  label="Bodies"
-                  icon={<Box size={12} color="#ff9800" />}
-                  expanded={open(`${part.id}/bodies`)}
-                  onToggle={() => toggle(`${part.id}/bodies`)}
-                  depth={2}
-                  count={part.bodies.length}
-                  {...(readOnly || shownBodies.length === 0
-                    ? {}
-                    : {
-                        trailingAction: {
-                          icon: allBodiesHidden ? (
-                            <EyeOff size={11} strokeWidth={1.5} />
-                          ) : (
-                            <Eye size={11} strokeWidth={1.5} />
-                          ),
-                          onClick: () =>
-                            props.onBodyAction(
-                              part.id,
-                              shownBodies.map((b) => b.key),
-                              { kind: 'visible', visible: allBodiesHidden },
-                            ),
-                          ariaLabel: allBodiesHidden
-                            ? `Show the bodies of ${part.name}`
-                            : `Hide the bodies of ${part.name}`,
-                        },
-                      })}
-                >
-                  {part.bodies.length === 0 && <span style={{ ...styles.emptyText, paddingLeft: 56 }}>No bodies</span>}
-                  {bodyGroups(part.features, part.bodies).map((g) => {
-                    const bodyRow = (b: BrowserBody, depth: number) => (
-                      <BodyRowView
-                        key={b.id}
-                        body={b}
-                        depth={depth}
-                        selected={b.key >= 0 && props.selectedKeys.has(b.key)}
-                        onClick={(additive) => {
-                          if (b.key >= 0) props.onSelectBody(b.key, additive);
-                        }}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          if (b.key < 0) return;
-                          props.onSelectBody(b.key, false);
-                          // Everything a body's menu offers writes to the document.
-                          if (!readOnly)
-                            setBodyMenu({
-                              part: part.id,
-                              body: b,
-                              source: rowOf(part.features, b.feature),
-                              x: e.clientX,
-                              y: e.clientY,
-                            });
-                        }}
-                        {...(readOnly
-                          ? {}
-                          : {
-                              onToggleVisible: () =>
-                                props.onBodyAction(part.id, keysOf(b), { kind: 'visible', visible: !b.visible }),
-                            })}
-                        renaming={renamingBody === b.id}
-                        onStartRename={() => {
-                          if (b.key >= 0 && !readOnly) setRenamingBody(b.id);
-                        }}
-                        onRename={(name) => {
-                          setRenamingBody(null);
-                          if (name !== null && name.trim() !== b.name)
-                            props.onBodyAction(part.id, keysOf(b), { kind: 'rename', name: name.trim() });
-                        }}
-                      />
-                    );
-                    if ('body' in g) return bodyRow(g.body, 3);
-                    const id = `import:${g.feature.id}`;
-                    const keys = g.bodies.flatMap(keysOf);
-                    const allHidden = g.bodies.every((b) => !b.visible);
-                    const members = g.bodies.map((b) => bodyRow(b, 4));
-                    return (
-                      <div key={id}>
-                        <TreeNode
-                          label={g.feature.name}
-                          icon={<Box size={12} color="#ff9800" />}
-                          expanded={open(id)}
-                          onToggle={() => toggle(id)}
-                          depth={3}
-                          count={keys.length}
-                          {...(readOnly
-                            ? {}
-                            : {
-                                trailingAction: {
-                                  icon: allHidden ? (
-                                    <EyeOff size={11} strokeWidth={1.5} />
-                                  ) : (
-                                    <Eye size={11} strokeWidth={1.5} />
-                                  ),
-                                  onClick: () =>
-                                    props.onBodyAction(part.id, keys, { kind: 'visible', visible: allHidden }),
-                                  ariaLabel: allHidden ? 'Show all bodies' : 'Hide all bodies',
-                                },
-                              })}
-                          onContextMenu={(e) => {
-                            e.preventDefault();
-                            if (!readOnly)
-                              setImportMenu({ part: part.id, feature: g.feature, keys, x: e.clientX, y: e.clientY });
-                          }}
-                        >
-                          {members}
-                        </TreeNode>
-                      </div>
-                    );
-                  })}
-                </TreeNode>
-              </TreeNode>
-            );
-          })}
+          {renderTop()}
         </TreeNode>
       </div>
       {importMenu && (
@@ -972,6 +1257,7 @@ export function BrowserTree(props: BrowserTreeProps) {
             ))}
         </div>
       )}
+      {folderMenu && renderFolderMenu(folderMenu)}
       {menu && (
         <ContextMenu
           ref={menuRef}
@@ -987,6 +1273,16 @@ export function BrowserTree(props: BrowserTreeProps) {
       )}
     </div>
   );
+}
+
+/** Indents a nested folder's name in a menu. */
+const EM_SPACE = String.fromCharCode(0x2003);
+
+/** How a row shows that a drop would land in it, or before it. */
+export function dropHintStyle(hint: 'into' | 'before' | null | undefined): React.CSSProperties {
+  if (hint === 'into') return { background: '#dbeafe', boxShadow: 'inset 0 0 0 1px #3b82f6' };
+  if (hint === 'before') return { boxShadow: 'inset 0 2px 0 #3b82f6' };
+  return {};
 }
 
 /** A small icon button of the browser's header. */
@@ -1022,6 +1318,7 @@ export function TreeNode({
   trailingAction,
   radio,
   onContextMenu,
+  row,
 }: {
   label: string;
   icon: React.ReactNode;
@@ -1035,11 +1332,13 @@ export function TreeNode({
   /** A radio left of the trailing action: on for the active part, or the design shown with none. */
   radio?: { on: boolean; onClick: () => void; ariaLabel: string };
   onContextMenu?: (e: React.MouseEvent) => void;
+  /** Dragging, dropping and the menu of a part's, assembly's or folder's row. */
+  row?: TreeRowHooks;
 }) {
   const controls = (trailingAction ? 1 : 0) + (radio ? 1 : 0);
   return (
     <>
-      <div style={{ position: 'relative' }}>
+      <div style={{ position: 'relative', ...dropHintStyle(row?.dropHint) }} {...row?.rowProps}>
         <button
           type="button"
           style={{
@@ -1051,7 +1350,7 @@ export function TreeNode({
             color: bold ? '#444' : '#555',
           }}
           onClick={onToggle}
-          onContextMenu={onContextMenu}
+          onContextMenu={onContextMenu ?? row?.onContextMenu}
           onMouseEnter={(e) => {
             (e.currentTarget as HTMLButtonElement).style.background = '#f0f0f0';
           }}
@@ -1305,6 +1604,7 @@ function BodyRowView({
 function OriginRow({
   label,
   color,
+  depth,
   plane,
   selected,
   onClick,
@@ -1313,6 +1613,7 @@ function OriginRow({
 }: {
   label: string;
   color: string;
+  depth: number;
   plane?: boolean;
   selected: boolean;
   onClick: (additive: boolean) => void;
@@ -1324,7 +1625,7 @@ function OriginRow({
     <div style={{ position: 'relative' }}>
       <button
         type="button"
-        style={{ ...styles.originItem, paddingLeft: 8 + 3 * 14, ...(selected ? styles.selectedRow : {}) }}
+        style={{ ...styles.originItem, paddingLeft: 8 + depth * 14, ...(selected ? styles.selectedRow : {}) }}
         onClick={(e) => onClick(e.shiftKey || e.ctrlKey || e.metaKey)}
         onMouseEnter={(e) => {
           if (!selected) e.currentTarget.style.background = '#f4f4f4';
@@ -1636,6 +1937,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'inherit',
   },
   contextDivider: { height: 1, background: '#e8e8e8', margin: '3px 8px' },
+  menuScroll: { maxHeight: 240, overflowY: 'auto' },
   paramRow: { display: 'flex', alignItems: 'center', gap: 6, height: 22, fontSize: 11, color: '#666', paddingRight: 8 },
   paramName: { color: '#555', fontWeight: 500, flexShrink: 0 },
   paramConfigured: {

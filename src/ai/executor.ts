@@ -59,6 +59,7 @@ import {
   featureDerive,
   getAssembly,
 } from './assembly';
+import { folderCreate, folderDelete, folderEdit, folderMoveItems } from './folders';
 import { CAD_WORKFLOW_GUIDE } from './guide';
 import { listBodies, listConstruction, listEdges, listFaces, listVertices, measure } from './inspect';
 import {
@@ -183,6 +184,10 @@ const RUNNERS: Record<string, Runner> = {
   assembly_pattern: withCtx(assemblyPattern),
   assembly_mirror: withCtx(assemblyMirror),
   assembly_replicate: withCtx(assemblyReplicate),
+  folder_create: withCtx(folderCreate),
+  folder_edit: withCtx(folderEdit),
+  folder_delete: withCtx(folderDelete),
+  folder_move_items: withCtx(folderMoveItems),
   list_bodies: withCtx(listBodies),
   list_faces: withCtx(listFaces),
   list_edges: withCtx(listEdges),

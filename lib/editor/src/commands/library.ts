@@ -1,6 +1,7 @@
 import { isPlainObject } from '@tweakcad/format';
 import { CommandError } from '../errors';
 import { arrayAt, findRow, mergeFields, objectAt, type Doc, type Json, type RowAt } from '../rows';
+import { dropFromFolders } from './folders';
 import { insertRow, mergeAssets, mergeNames, nameOf, removeRow, requireRow, type Handlers } from './common';
 
 /** A library entry (11) by id; the library is outside the document's own row index. */
@@ -44,6 +45,7 @@ export const libraryHandlers: Handlers<'removeLibraryEntry' | 'addContext' | 'ed
       const { index } = libraryEntry(ctx.doc, c.entry);
       if (usesOfEntry({ ...ctx.doc, library: [] }, c.entry))
         throw new CommandError('not-allowed', 'the library entry is still used; remove what inserts it first');
+      dropFromFolders(ctx, [c.entry]);
       arrayAt(ctx.draft, ['library']).splice(index, 1);
     },
   },

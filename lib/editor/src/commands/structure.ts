@@ -11,6 +11,7 @@ import {
   type Handlers,
   type RunContext,
 } from './common';
+import { dropFromFolders } from './folders';
 import type { AssemblyTable } from './types';
 
 const ASSEMBLY_TABLES: Record<AssemblyTable, string> = {
@@ -44,14 +45,7 @@ function removeTopLevel(ctx: RunContext, at: RowAt, what: string): void {
       );
     }
   }
-  const folders = ctx.draft.folders;
-  if (Array.isArray(folders)) {
-    for (const folder of folders as Json[]) {
-      if (Array.isArray(folder.members) && folder.members.includes(at.id)) {
-        folder.members = (folder.members as string[]).filter((m) => m !== at.id);
-      }
-    }
-  }
+  dropFromFolders(ctx, [at.id]);
   removeRow(ctx, at);
 }
 

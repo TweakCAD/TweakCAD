@@ -147,6 +147,62 @@ describe('the browser rows and menus', () => {
     expect(html.indexOf('Top assembly')).toBeLessThan(html.indexOf('>Part<'));
   });
 
+  it('lists folders first, nested, with what they hold, and the rest at the top level', () => {
+    const parts = ['part_1', 'part_2', 'part_3'].map((id, i) => ({
+      id,
+      name: `Part ${i + 1}`,
+      features: [],
+      rollbackIndex: 0,
+      groups: [],
+      bodies: [],
+    }));
+    const tree = (o: Partial<BrowserTreeProps>) =>
+      renderToStaticMarkup(
+        <BrowserTree
+          {...props([], {
+            parts,
+            assemblies: [{ id: 'asm_1', name: 'Arm' }],
+            library: [
+              { id: 'lib_1', name: 'Servo' },
+              { id: 'lib_2', name: 'Font' },
+            ],
+            folders: [
+              { id: 'fld_1', name: 'Frame', parent: null, members: ['part_2', 'asm_1'] },
+              { id: 'fld_2', name: 'Bought', parent: 'fld_1', members: ['lib_1'] },
+            ],
+            onFolderCommand: none,
+            onNewFolder: () => null,
+            ...o,
+          })}
+        />,
+      );
+    const html = tree({});
+    const at = (label: string) => html.indexOf(`>${label}<`);
+    // Frame, its folder Bought (with Servo), its members, then the parts no folder holds.
+    expect(at('Frame')).toBeLessThan(at('Bought'));
+    expect(at('Bought')).toBeLessThan(at('Servo'));
+    expect(at('Servo')).toBeLessThan(at('Part 2'));
+    expect(at('Part 2')).toBeLessThan(at('Arm'));
+    expect(at('Arm')).toBeLessThan(at('Part 1'));
+    expect(at('Part 1')).toBeLessThan(at('Part 3'));
+    // A library entry shows only where a folder holds it.
+    expect(html).not.toContain('Font');
+    expect(html).toContain('aria-label="New folder"');
+    expect(html).toContain('draggable="true"');
+    // Closed, a folder hides what it holds.
+    setAllOpen(false);
+    toggleNode('fld_1');
+    const closed = tree({});
+    expect(closed).toContain('>Bought<');
+    expect(closed).not.toContain('>Servo<');
+    // A read-only preview lists the folders but neither drags nor adds them.
+    setAllOpen(true);
+    const preview = tree({ readOnly: true });
+    expect(preview).toContain('>Frame<');
+    expect(preview).not.toContain('draggable');
+    expect(preview).not.toContain('aria-label="New folder"');
+  });
+
   it('marks the active part with its radio, and the whole design with the document radio', () => {
     const activating = { onActivatePart: none, activePart: 'part_1' };
     const html = renderToStaticMarkup(<BrowserTree {...props([], { ...activating, designActive: false })} />);

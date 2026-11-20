@@ -36,7 +36,7 @@ import { isPlainObject } from '@tweakcad/format';
 import type { AppServices } from '../services';
 import { useDocument, useSlice } from '../hooks';
 import { useKeptInWindow } from '../menuPlacement';
-import { MenuButton, RenameField, TreeNode, browserStyles as styles } from '../BrowserTree';
+import { MenuButton, RenameField, TreeNode, browserStyles as styles, type TreeRowHooks } from '../BrowserTree';
 import { FeatureSuppressedIcon, FeatureWarningIcon, getFeatureIcon } from '../../icons/cadIcons.tsx';
 import { editFeature } from '../modeling/commands';
 import { asmTimelineRows, copiesOf } from './asmFeatures';
@@ -75,7 +75,22 @@ type Menu = {
 const fmt = (dof: string, v: number) =>
   `${DOF_LABELS[dof] ?? dof} ${Math.round(v * 100) / 100}${isTranslation(dof) ? ' mm' : '°'}`;
 
-export function AssemblyTree({ services }: { services: AppServices }) {
+/**
+ * The assemblies' rows, or with `assembly` that one alone, its node at
+ * `depth` (default 1) with the browser's drag and menu hooks for it.
+ */
+export function AssemblyTree({
+  services,
+  assembly,
+  depth = 1,
+  row: nodeRow,
+}: {
+  services: AppServices;
+  assembly?: string;
+  depth?: number;
+  row?: TreeRowHooks;
+}) {
+  const base = depth - 1;
   const doc = useDocument(services.editor);
   const display = useSlice(services.display, (s) => s.display);
   const focus = useSlice(services.app, (s) => s.focus);
@@ -106,11 +121,13 @@ export function AssemblyTree({ services }: { services: AppServices }) {
   }, [menu]);
 
   const toggle = toggleNode;
-  const views = assembliesOf(doc).flatMap((a) => assemblyView(doc, String(a.id), display) ?? []);
+  const views = assembliesOf(doc)
+    .filter((a) => assembly === undefined || a.id === assembly)
+    .flatMap((a) => assemblyView(doc, String(a.id), display) ?? []);
 
   const row = (
     key: string,
-    depth: number,
+    rowDepth: number,
     icon: React.ReactNode,
     label: string,
     o: {
@@ -130,7 +147,7 @@ export function AssemblyTree({ services }: { services: AppServices }) {
         key={key}
         style={{
           ...styles.featureNode,
-          paddingLeft: 8 + depth * 14,
+          paddingLeft: 8 + (rowDepth + base) * 14,
           paddingRight: 28,
           borderLeft: '2px solid transparent',
         }}
@@ -144,7 +161,7 @@ export function AssemblyTree({ services }: { services: AppServices }) {
           type="button"
           style={{
             ...styles.featureNode,
-            paddingLeft: 8 + depth * 14,
+            paddingLeft: 8 + (rowDepth + base) * 14,
             paddingRight: 28,
             borderLeft: '2px solid transparent',
             opacity: o.dim ? 0.5 : 1,
@@ -179,8 +196,9 @@ export function AssemblyTree({ services }: { services: AppServices }) {
         icon={<Layers size={13} color="#6366f1" />}
         expanded={isOpen(a.id)}
         onToggle={() => toggle(a.id)}
-        depth={1}
+        depth={1 + base}
         bold
+        {...(nodeRow ? { row: nodeRow } : {})}
         {...(!here
           ? {
               trailingAction: {
@@ -196,10 +214,12 @@ export function AssemblyTree({ services }: { services: AppServices }) {
           icon={<Box size={12} color="#ff9800" />}
           expanded={isOpen(`${a.id}/inst`)}
           onToggle={() => toggle(`${a.id}/inst`)}
-          depth={2}
+          depth={2 + base}
           count={a.instances.length}
         >
-          {a.instances.length === 0 && <span style={{ ...styles.emptyText, paddingLeft: 56 }}>No instances</span>}
+          {a.instances.length === 0 && (
+            <span style={{ ...styles.emptyText, paddingLeft: 56 + base * 14 }}>No instances</span>
+          )}
           {a.instances.map((i) =>
             row(i.id, 3, <Box size={12} color="#ff9800" />, i.label, {
               status: i.status,
@@ -222,10 +242,10 @@ export function AssemblyTree({ services }: { services: AppServices }) {
           icon={<Link2 size={12} color="#6366f1" />}
           expanded={isOpen(`${a.id}/jnt`)}
           onToggle={() => toggle(`${a.id}/jnt`)}
-          depth={2}
+          depth={2 + base}
           count={a.joints.length}
         >
-          {a.joints.length === 0 && <span style={{ ...styles.emptyText, paddingLeft: 56 }}>No joints</span>}
+          {a.joints.length === 0 && <span style={{ ...styles.emptyText, paddingLeft: 56 + base * 14 }}>No joints</span>}
           {a.joints.map((j) =>
             renaming === j.id
               ? row(j.id, 3, <Link2 size={12} color="#6366f1" />, j.label, {
@@ -266,7 +286,7 @@ export function AssemblyTree({ services }: { services: AppServices }) {
             icon={<Cog size={12} color="#6366f1" />}
             expanded={isOpen(`${a.id}/rel`)}
             onToggle={() => toggle(`${a.id}/rel`)}
-            depth={2}
+            depth={2 + base}
             count={a.relations.length}
           >
             {a.relations.map((r) =>
@@ -284,7 +304,7 @@ export function AssemblyTree({ services }: { services: AppServices }) {
             icon={<Layers size={12} color="#64748b" />}
             expanded={isOpen(`${a.id}/grp`)}
             onToggle={() => toggle(`${a.id}/grp`)}
-            depth={2}
+            depth={2 + base}
             count={a.rigidGroups.length + a.contactSets.length}
           >
             {[...a.rigidGroups, ...a.contactSets].map((g) =>
@@ -300,7 +320,7 @@ export function AssemblyTree({ services }: { services: AppServices }) {
             icon={<Copy size={12} color="#6366f1" />}
             expanded={isOpen(`${a.id}/feat`)}
             onToggle={() => toggle(`${a.id}/feat`)}
-            depth={2}
+            depth={2 + base}
             count={features.length}
           >
             {features.map((f) => {
@@ -332,7 +352,7 @@ export function AssemblyTree({ services }: { services: AppServices }) {
           icon={<Camera size={12} color="#0d9488" />}
           expanded={isOpen(`${a.id}/pos`)}
           onToggle={() => toggle(`${a.id}/pos`)}
-          depth={2}
+          depth={2 + base}
           count={a.positions.length}
         >
           {row(
@@ -371,7 +391,7 @@ export function AssemblyTree({ services }: { services: AppServices }) {
             icon={<Expand size={12} color="#6366f1" />}
             expanded={isOpen(`${a.id}/exp`)}
             onToggle={() => toggle(`${a.id}/exp`)}
-            depth={2}
+            depth={2 + base}
             count={a.explodedViews.length}
           >
             {a.explodedViews.map((e) =>

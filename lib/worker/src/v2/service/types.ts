@@ -390,7 +390,7 @@ export interface EvaluateServiceOptions {
   /**
    * The generation of the display whose document this one differs from only
    * in what is shown: the attributes of parts and assemblies, a part's
-   * rollback, and name-table entries no feature holds. When the kept evaluation is that display's,
+   * rollback, the browser's folders, and name-table entries no feature holds. When the kept evaluation is that display's,
    * nothing is evaluated: the display is made again from it with the new
    * attributes, and a body the client holds the mesh of is not meshed again.
    * The service checks it: anything else of the document that differs from

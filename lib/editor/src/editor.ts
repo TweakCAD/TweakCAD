@@ -1,5 +1,6 @@
 import type { Diagnostic } from '@tweakcad/format';
 import { featureHandlers } from './commands/features';
+import { folderHandlers } from './commands/folders';
 import { libraryHandlers } from './commands/library';
 import { sketchHandlers } from './commands/sketch';
 import { structureHandlers } from './commands/structure';
@@ -14,6 +15,7 @@ import { DocumentStore, type StoreOptions } from './store';
 
 const HANDLERS: Handlers<CommandType> = {
   ...structureHandlers,
+  ...folderHandlers,
   ...featureHandlers,
   ...valueHandlers,
   ...sketchHandlers,

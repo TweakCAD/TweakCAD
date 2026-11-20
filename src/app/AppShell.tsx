@@ -30,6 +30,7 @@ import {
   type FeatureAction,
   type GroupAction,
   type MenuEntry,
+  type TreeRowHooks,
 } from './BrowserTree';
 import { addPart, duplicateDerive } from './browserActions';
 import { configurationsOf, setActiveConfiguration, shownParameters } from './parameters';
@@ -50,7 +51,8 @@ import { activePartOf, liveFocus, shownAssembly } from './assembly/focus';
 import { asmTimelineRows } from './assembly/asmFeatures';
 import { editJoint, isJointAction, jointMenu, jointTimelineRows, runJointAction } from './assembly/jointActions';
 import { activatePart, editInPlace, renameJoint } from './assembly/commands';
-import { assemblyOf, jointLocked } from './assembly/assembly';
+import { assemblyOf, jointLocked, libraryOf } from './assembly/assembly';
+import { addFolder, foldersOf } from './folders';
 import { componentTimelines } from './assembly/componentTimelines';
 import { freezeFeature, unfreezeFeature } from './modeling/freeze';
 import { useDocument, useHistory, useSlice } from './hooks';
@@ -93,8 +95,8 @@ export interface AppShellProps {
   renderSketch?: (props: SketchSlotProps) => React.ReactNode;
   /** Drawn over the viewport at all times (notices, side panels). */
   overlay?: React.ReactNode;
-  /** The browser's rows for the document's assemblies. */
-  assemblyTree?: React.ReactNode;
+  /** The browser's rows for one of the document's assemblies, its node at `depth`. */
+  renderAssembly?: (assembly: string, depth: number, row: TreeRowHooks) => React.ReactNode;
   onNew: () => void;
   onOpen: () => void;
   onSave: () => void;
@@ -654,7 +656,16 @@ export function AppShell(props: AppShellProps) {
             documentName={docName}
             parts={parts}
             assemblies={assemblies}
-            assemblyTree={props.assemblyTree}
+            {...(props.renderAssembly ? { renderAssembly: props.renderAssembly } : {})}
+            folders={foldersOf(doc)}
+            library={libraryOf(doc).map((e) => ({ id: String(e.id), name: String(e.name ?? '') }))}
+            onFolderCommand={(command) => report(editor.dispatch(command), 'Folders')}
+            onNewFolder={(parent, members) => {
+              const added = addFolder(editor, parent, members);
+              if (added.ok) return added.id;
+              report({ ok: false, error: { code: 'bad-argument', message: added.message } }, 'New folder');
+              return null;
+            }}
             activePart={workingPart}
             {...(readOnly
               ? { readOnly: true }
