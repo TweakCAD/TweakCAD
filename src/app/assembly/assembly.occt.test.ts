@@ -36,8 +36,8 @@ import { jointCommands, jointEnd, newJointForm, jointsOf, readJoint } from './jo
 import { writeMultiHole } from './multiHole';
 import { jointValues } from './pose';
 import { jointTimelineRows } from './jointActions';
-import { activePartOf, shownOf } from './focus';
-import { activatePart } from './commands';
+import { activePartOf, openedPartOf, partsBeside, shownOf } from './focus';
+import { activatePart, open } from './commands';
 import { planeProblem, sketchOn } from '../modeling/commands';
 import { sketchesOf } from '../modeling/profiles';
 import { embedDocument, insertComponentCommands, overridesFrom, publicParameters } from './library';
@@ -454,6 +454,36 @@ describe('assemblies in the app', { timeout: 120_000 }, () => {
     activatePart(s, arm);
     expect(activePartOf(s.editor.document, focus())).toBe(arm);
     expect(shownOf(s.editor.document, focus())).toEqual({ assembly });
+  });
+
+  it('shows every part of a document whose root is a part, and makes one active with the rest faded around it', async () => {
+    const { s, base, arm } = await boot();
+    const doc = () => s.editor.document;
+    const focus = () => s.app.getState().focus;
+    // The whole design: the root part active, every other part drawn beside it.
+    expect(partsBeside(doc(), focus())).toEqual({ parts: [arm], faded: false });
+    activatePart(s, arm);
+    expect(focus()).toEqual({ part: arm, design: true });
+    expect(activePartOf(doc(), focus())).toBe(arm);
+    expect(shownOf(doc(), focus())).toEqual({ part: arm });
+    expect(partsBeside(doc(), focus())).toEqual({ parts: [base], faded: true });
+    expect(openedPartOf(doc(), focus())).toBeNull();
+    // Working in another part from the design keeps the design; the root part is the design with no focus.
+    open(s, { part: base });
+    expect(focus()).toBeNull();
+    open(s, { part: arm });
+    expect(focus()).toEqual({ part: arm, design: true });
+    activatePart(s, null);
+    expect(focus()).toBeNull();
+    // A part opened on its own draws alone; the radio brings the design back.
+    s.app.setState({ focus: { part: arm } });
+    expect(partsBeside(doc(), focus())).toBeNull();
+    expect(openedPartOf(doc(), focus())).toBe(arm);
+    open(s, { part: base });
+    expect(focus()).toBeNull();
+    s.app.setState({ focus: { part: arm } });
+    activatePart(s, base);
+    expect(focus()).toEqual({ part: base, design: true });
   });
 
   it('references another instance in context through a captured context', async () => {

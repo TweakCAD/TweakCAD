@@ -34,7 +34,7 @@ import {
   rowsOf,
 } from './assembly';
 import { commitSolved, type Written } from './commit';
-import { activePartOf, assemblyDisplay, inContextOf, shownAssembly } from './focus';
+import { activePartOf, assemblyDisplay, inContextOf, inDesign, shownAssembly } from './focus';
 
 export function warn(title: string, message: string): Written {
   consoleLog('warn', message, 'assembly');
@@ -55,10 +55,18 @@ export function currentAssembly(services: AppServices): string | null {
 
 /** Opens a part or an assembly: the window works on it (the document's root needs no focus). */
 export function open(services: AppServices, what: { part: string } | { assembly: string }): void {
-  const root = shownRoot(services.editor.document);
+  const doc = services.editor.document;
+  const root = shownRoot(doc);
   const isRoot = root && JSON.stringify(root) === JSON.stringify(what);
+  // In the whole design of a document whose root is a part, the part is made active there instead.
+  const design = 'part' in what && !isRoot && inDesign(doc, services.app.getState().focus);
   clearSelection(services.selection);
-  services.app.setState({ focus: isRoot ? null : what, panel: null, mode: { kind: 'model' }, exploded: null });
+  services.app.setState({
+    focus: isRoot ? null : design ? { part: what.part, design: true } : what,
+    panel: null,
+    mode: { kind: 'model' },
+    exploded: null,
+  });
 }
 
 /** Edits the part of an instance in the assembly's context (12.4): the assembly shows, features go into the part. */
@@ -319,9 +327,11 @@ export function startAssemblyPanel(services: AppServices, kind: string, label: s
  * Makes `part` the part new features go into, as the browser's radio does,
  * with the assembly the window shows (else the document's root assembly)
  * still drawn around it: the part is edited in place at its first instance
- * there. A part with no instance in that assembly, or a document whose root
- * is a part, opens on its own. Null shows the document's root, with no part
- * of an assembly active.
+ * there. In a document whose root is a part, with no assembly opened, the
+ * part is made active in the whole design, every other part drawn faded
+ * around it. A part with no instance in an opened assembly opens on its
+ * own. Null shows the whole design: the root assembly with no part active,
+ * or every part with the root part active.
  */
 export function activatePart(services: AppServices, part: string | null): void {
   const doc = services.editor.document;
@@ -340,7 +350,10 @@ export function activatePart(services: AppServices, part: string | null): void {
       })
     : undefined;
   if (assembly && instance) editInPlace(services, assembly, String(instance.id));
-  else open(services, { part });
+  else if (!assembly && root && 'part' in root) {
+    clearSelection(services.selection);
+    services.app.setState({ focus: { part, design: true }, panel: null, mode: { kind: 'model' }, exploded: null });
+  } else open(services, { part });
 }
 
 /** The part of an instance, for Open from its menu. */

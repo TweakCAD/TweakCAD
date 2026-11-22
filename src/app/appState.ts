@@ -14,9 +14,12 @@ export type Mode = { kind: 'model' } | { kind: 'sketch'; part: string; feature: 
  * What the window works on when it is not the document's root: one of its
  * parts or assemblies, or a part edited in an assembly's context (12.4),
  * where the assembly shows and new features go into the part at instance
- * path `at`.
+ * path `at`. With `design`, a part of a document whose root is a part is the
+ * active one in the whole design: every other part draws faded around it.
  */
-export type Focus = { part: string; context?: { assembly: string; at: unknown } } | { assembly: string };
+export type Focus =
+  | { part: string; context?: { assembly: string; at: unknown }; design?: true }
+  | { assembly: string };
 
 /** An open feature panel: which one, the feature it edits (absent while creating), and the feature it starts from. */
 export interface PanelRequest {

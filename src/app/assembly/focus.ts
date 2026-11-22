@@ -7,7 +7,7 @@ import { canonicalize, isPlainObject } from '@tweakcad/format';
 import type { Doc, Json } from '@tweakcad/editor';
 import type { AssemblyDisplay, Display } from '@tweakcad/worker/src/v2/service/types';
 import type { Focus } from '../appState';
-import { partOf, shownRoot } from '../features';
+import { partOf, partsOf, shownRoot } from '../features';
 import type { ShownRoot } from '../viewport/ModelScene';
 
 const assemblyOf = (doc: Doc, id: string): Json | undefined =>
@@ -28,6 +28,38 @@ export function shownOf(doc: Doc, focus: Focus | null): ShownRoot {
   if (!f) return shownRoot(doc);
   if ('assembly' in f) return { assembly: f.assembly };
   return f.context ? { assembly: f.context.assembly } : { part: f.part };
+}
+
+/**
+ * Whether the window shows the whole design of a document whose root is a
+ * part: with no focus (the root part active), or with a part made active in
+ * the design.
+ */
+export function inDesign(doc: Doc, focus: Focus | null): boolean {
+  const root = shownRoot(doc);
+  if (!root || !('part' in root)) return false;
+  const f = liveFocus(doc, focus);
+  return f === null || ('part' in f && f.design === true);
+}
+
+/**
+ * The parts drawn beside the shown part in the whole design of a document
+ * whose root is a part: every other part, faded while a part is made active.
+ * Null outside the design, or with no other part.
+ */
+export function partsBeside(doc: Doc, focus: Focus | null): { parts: string[]; faded: boolean } | null {
+  if (!inDesign(doc, focus)) return null;
+  const shown = activePartOf(doc, focus);
+  const parts = partsOf(doc)
+    .map((p) => String(p.id))
+    .filter((p) => p !== shown);
+  return parts.length > 0 ? { parts, faded: liveFocus(doc, focus) !== null } : null;
+}
+
+/** The part shown on its own (opened, not made active in the design or edited in context), or null. */
+export function openedPartOf(doc: Doc, focus: Focus | null): string | null {
+  const f = liveFocus(doc, focus);
+  return f && 'part' in f && !f.context && !f.design ? f.part : null;
 }
 
 /** The part new features go into: the focused part, else the root when it is a part. */

@@ -282,15 +282,17 @@ export interface BrowserTreeProps {
   partHidden?: (part: string) => boolean;
   /** Hides or shows whole parts: a part's eye sets its own, a folder's every part inside it. */
   onSetPartsVisible?: (parts: string[], visible: boolean) => void;
-  /** The part new features go into; another part offers Open. */
+  /** The part new features go into. */
   activePart?: string | null;
+  /** The part shown on its own; every other part offers Open. */
+  openedPart?: string | null;
   onOpenPart?: (part: string) => void;
   /**
    * Makes a part the active one, or with null the whole design: each part's
    * radio, and the document's while `designActive` is given.
    */
   onActivatePart?: (part: string | null) => void;
-  /** The document's root is an assembly: whether it shows with no part active (its radio is on). */
+  /** Whether the whole design shows with no part made active (the document's radio is on). */
   designActive?: boolean;
   /** The header's New Part, and a folder's New part here (the new part goes into that folder). */
   onNewPart?: (folder?: string) => void;
@@ -727,7 +729,7 @@ export function BrowserTree(props: BrowserTreeProps) {
         row={hooksFor({ item: part.id })}
         {...(mark ? { mark } : {})}
         {...eyeOver([part.id], part.name)}
-        {...(props.onOpenPart && props.activePart !== part.id
+        {...(props.onOpenPart && props.openedPart !== part.id
           ? {
               trailingAction: {
                 icon: <ExternalLink size={11} color="#777" />,
@@ -739,7 +741,7 @@ export function BrowserTree(props: BrowserTreeProps) {
         {...(props.onActivatePart
           ? {
               radio: {
-                on: props.activePart === part.id,
+                on: props.activePart === part.id && props.designActive !== true,
                 onClick: () => props.onActivatePart?.(part.id),
                 ariaLabel: `Make ${part.name} active`,
               },
