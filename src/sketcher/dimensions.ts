@@ -166,6 +166,50 @@ export function labelExpression(row: Json, measured: number | null): string {
   return exprText(row.value) ?? valueText(measured ?? 0, row.kind === 'angle');
 }
 
+/** The two directions of an angle, the signed angle from `a` to `b` in radians, and the vertex its arc is drawn about. */
+export interface AngleFrame {
+  vertex: P2;
+  a: P2;
+  b: P2;
+  theta: number;
+}
+
+/**
+ * An angle's frame: where its two lines cross or, against the sketch x
+ * direction, the line's start. Null for parallel lines, or operands that
+ * are not lines.
+ */
+export function angleFrame(g: SketchGeometry, row: Json): AngleFrame | null {
+  const unit = (line: [P2, P2] | undefined): P2 | null => {
+    if (!line) return null;
+    const n = Math.hypot(line[1][0] - line[0][0], line[1][1] - line[0][1]);
+    return n > 0 ? [(line[1][0] - line[0][0]) / n, (line[1][1] - line[0][1]) / n] : null;
+  };
+  const la = g.operandLine(row.a);
+  const a = unit(la);
+  const toX = isPlainObject(row.b) && 'sketchX' in row.b;
+  const lb = toX ? undefined : g.operandLine(row.b);
+  const b: P2 | null = toX ? [1, 0] : unit(lb);
+  if (!la || !a || !b) return null;
+  const cross = a[0] * b[1] - a[1] * b[0];
+  const theta = Math.atan2(cross, a[0] * b[0] + a[1] * b[1]);
+  if (Math.abs(theta) < 1e-6) return null;
+  if (!lb) return { vertex: la[0], a, b, theta };
+  const [pa, pb] = [la[0], lb[0]];
+  const s = ((pb[0] - pa[0]) * b[1] - (pb[1] - pa[1]) * b[0]) / cross;
+  return { vertex: [pa[0] + a[0] * s, pa[1] + a[1] * s], a, b, theta };
+}
+
+/**
+ * Which way from the vertex an angle's arc sweeps for a label at `at`: 1
+ * from `a` to `b`, -1 from `-a` to `-b` (the same angle, across the vertex).
+ */
+export function angleSide(frame: AngleFrame, at: P2): 1 | -1 {
+  const half = Math.atan2(frame.a[1], frame.a[0]) + frame.theta / 2;
+  const w: P2 = [at[0] - frame.vertex[0], at[1] - frame.vertex[1]];
+  return w[0] * Math.cos(half) + w[1] * Math.sin(half) >= 0 ? 1 : -1;
+}
+
 /** Where a dimension's label is drawn, in sketch coordinates. */
 export function labelAnchor(g: SketchGeometry, row: Json): P2 | null {
   const label = row.label;
@@ -218,7 +262,14 @@ export function labelAnchor(g: SketchGeometry, row: Json): P2 | null {
       const ma = a ? g.middleOf(a) : undefined;
       const mb = b ? g.middleOf(b) : undefined;
       // Against an axis or the sketch x direction, beside the line alone.
-      return ma && mb ? mid(ma, mb) : (ma ?? mb ?? null);
+      const near = ma && mb ? mid(ma, mb) : (ma ?? mb ?? null);
+      const frame = near ? angleFrame(g, row) : null;
+      if (!near || !frame) return near;
+      // On the arc's bisector, as far from the vertex as the lines' middles are.
+      const r = Math.hypot(near[0] - frame.vertex[0], near[1] - frame.vertex[1]);
+      const half = Math.atan2(frame.a[1], frame.a[0]) + frame.theta / 2;
+      const k = angleSide(frame, near) * r;
+      return [frame.vertex[0] + k * Math.cos(half), frame.vertex[1] + k * Math.sin(half)];
     }
     default:
       return null;

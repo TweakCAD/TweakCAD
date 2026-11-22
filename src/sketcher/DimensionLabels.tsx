@@ -64,7 +64,12 @@ export function DimensionLabels({ session, project }: DimensionLabelsProps) {
               style={{
                 ...styles.label,
                 ...(label.text.startsWith('(') ? styles.labelDriven : {}),
+                ...(state.hover === label.id ? styles.labelHovered : {}),
                 ...(state.selection.includes(label.id) ? styles.labelSelected : {}),
+              }}
+              onPointerEnter={() => session.highlight(label.id)}
+              onPointerLeave={() => {
+                if (session.getState().hover === label.id) session.highlight(null);
               }}
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
@@ -153,6 +158,7 @@ const styles: Record<string, CSSProperties> = {
     borderColor: '#e5e7eb',
     cursor: 'default',
   },
+  labelHovered: { borderColor: '#ef4444' },
   labelSelected: { borderColor: '#f59e0b', background: '#fffbeb' },
   inputWrap: {
     display: 'flex',

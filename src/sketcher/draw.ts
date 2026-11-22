@@ -2,7 +2,8 @@
  * The three.js drawing of a sketch being edited, in the host's group: curves
  * (construction ones dashed), points, closed regions shaded faintly (a picked
  * or hovered one stronger), the
- * preview of the tool in progress, snap markers, constraint glyphs, and
+ * preview of the tool in progress, snap markers, constraint glyphs, the
+ * dimensions' extension and dimension lines with their arrowheads, and
  * selection and hover, each in its own colour and line weight.
  *
  * Everything is drawn in sketch coordinates under one group placed by the
@@ -17,6 +18,7 @@ import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { cyclePolyline, type Detection } from '@tweakcad/format';
 import type { FrameDisplay } from '@tweakcad/worker/src/v2/service/types';
+import type { DimensionLines } from './dimensionLines';
 import type { SketchGeometry } from './geometry';
 import { STANDARD_IDS, type P2 } from './rows';
 import type { SketchOptions } from './session';
@@ -44,6 +46,8 @@ export const COLORS = {
   gridXAxis: 0xef4444,
   gridYAxis: 0x22c55e,
   box: 0x3b82f6,
+  dimension: 0x6b7280,
+  dimensionDriven: 0xb6bcc6,
 };
 
 const LINE_WIDTH = 0.8;
@@ -52,6 +56,9 @@ const SELECTED_POINT_SIZE = 10;
 const ORIGIN_POINT_SIZE = 11;
 const MARKER_PIXELS = 14;
 const HINT_PIXELS = 18;
+/** An arrowhead's length and half width on screen. */
+const ARROW_PIXELS = 10;
+const ARROW_HALF_WIDTH = 0.3;
 /** Lifts above the plane, so the drawing does not fight a face lying in it. */
 const LIFT = { region: 0.005, curve: 0.01, point: 0.02 };
 const CIRCLE_SEGMENTS = 64;
@@ -62,11 +69,19 @@ export type PreviewShape =
   | { kind: 'arc'; center: P2; radius: number; from: P2; to: P2 }
   | { kind: 'box'; from: P2; to: P2; crossing: boolean };
 
+/** A dimension's lines and arrowheads, by the dimension's constraint id. */
+export interface DrawnDimension extends DimensionLines {
+  id: string;
+  /** Reported, not enforced: drawn fainter. */
+  driven: boolean;
+}
+
 export interface DrawingView {
   geometry: SketchGeometry;
   selection: ReadonlySet<string>;
-  /** What draws as hovered: the entity under the pointer, or the geometry of a constraint row hovered in the browser. */
+  /** What draws as hovered: the entity under the pointer, or a hovered constraint and the geometry it holds. */
   hover: ReadonlySet<string>;
+  dimensions: DrawnDimension[];
   options: SketchOptions;
   /** No degrees of freedom left: curves draw near-black. */
   fullyDefined: boolean;
@@ -203,7 +218,10 @@ export class SketchDrawing {
     preview: makeLineMaterial(COLORS.preview, true, 1.5),
     box: makeLineMaterial(COLORS.box),
     crossing: makeLineMaterial(COLORS.preview, true, 1.5),
+    dimension: makeLineMaterial(COLORS.dimension),
+    dimensionDriven: makeLineMaterial(COLORS.dimensionDriven),
   };
+  private readonly arrowMaterials = new Map<number, THREE.MeshBasicMaterial>();
   private readonly pointMaterial = new THREE.ShaderMaterial({
     uniforms: { pixelRatio: { value: 1 } },
     vertexShader: POINT_VERTEX,
@@ -277,6 +295,7 @@ export class SketchDrawing {
           ),
         );
     }
+    for (const d of view.dimensions) this.drawDimension(d, view);
     for (const shape of view.preview) this.drawPreview(shape);
     this.drawPoints(view);
     if (view.snap && view.snap.kind !== 'none') this.drawSnap(view.snap);
@@ -309,11 +328,75 @@ export class SketchDrawing {
     this.clear();
     this.group.remove(this.root);
     for (const m of Object.values(this.materials)) m.dispose();
+    for (const m of this.arrowMaterials.values()) m.dispose();
     this.pointMaterial.dispose();
   }
 
   private isShared(material: THREE.Material): boolean {
-    return material === this.pointMaterial || Object.values(this.materials).includes(material as LineMaterial);
+    return (
+      material === this.pointMaterial ||
+      Object.values(this.materials).includes(material as LineMaterial) ||
+      [...this.arrowMaterials.values()].includes(material as THREE.MeshBasicMaterial)
+    );
+  }
+
+  private arrowMaterial(color: number): THREE.MeshBasicMaterial {
+    let material = this.arrowMaterials.get(color);
+    if (!material) {
+      material = new THREE.MeshBasicMaterial({
+        color,
+        depthTest: false,
+        depthWrite: false,
+        transparent: true,
+        side: THREE.DoubleSide,
+      });
+      this.arrowMaterials.set(color, material);
+    }
+    return material;
+  }
+
+  private drawDimension(d: DrawnDimension, view: DrawingView): void {
+    const [material, color] = view.selection.has(d.id)
+      ? [this.materials.selected, COLORS.selected]
+      : view.hover.has(d.id)
+        ? [this.materials.hovered, COLORS.hovered]
+        : d.driven
+          ? [this.materials.dimensionDriven, COLORS.dimensionDriven]
+          : [this.materials.dimension, COLORS.dimension];
+    for (const points of d.lines) if (points.length >= 2) this.root.add(this.line(points, material, LIFT.curve));
+    for (const arrow of d.arrows) this.root.add(this.arrowhead(arrow, color));
+  }
+
+  /**
+   * A filled arrowhead with its tip at `at`, pointing along `dir`, that keeps
+   * its size on screen; when its span is too short for two arrowheads it
+   * turns round to point inward from outside.
+   */
+  private arrowhead(arrow: DimensionLines['arrows'][number], color: number): THREE.Mesh {
+    const shape = new THREE.BufferGeometry().setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute([0, 0, 0, -1, ARROW_HALF_WIDTH, 0, -1, -ARROW_HALF_WIDTH, 0], 3),
+    );
+    const mesh = new THREE.Mesh(shape, this.arrowMaterial(color));
+    mesh.position.set(arrow.at[0], arrow.at[1], LIFT.point);
+    mesh.rotation.z = Math.atan2(arrow.dir[1], arrow.dir[0]);
+    mesh.renderOrder = 1001;
+    mesh.frustumCulled = false;
+    const tip = new THREE.Vector3();
+    mesh.onBeforeRender = (renderer, _scene, camera) => {
+      renderer.getSize(sizeNow);
+      tip.setFromMatrixPosition(mesh.matrixWorld).applyMatrix4(camera.matrixWorldInverse);
+      const e = camera.projectionMatrix.elements;
+      // Clip w at the tip: the view depth for a perspective camera, 1 for an orthographic one.
+      const w = (e[3] ?? 0) * tip.x + (e[7] ?? 0) * tip.y + (e[11] ?? 0) * tip.z + (e[15] ?? 0);
+      const size = (ARROW_PIXELS * 2 * Math.abs(w)) / ((e[5] ?? 1) * Math.max(1, sizeNow.y));
+      const x = arrow.span < 2.5 * size ? -size : size;
+      if (mesh.scale.x !== x || mesh.scale.y !== size) {
+        mesh.scale.set(x, size, 1);
+        mesh.updateMatrixWorld();
+      }
+    };
+    return mesh;
   }
 
   private line(points: readonly P2[], material: LineMaterial, z: number): Line2 {
