@@ -10,7 +10,7 @@ import { ViewportToolbar } from '../../components/ViewportToolbar.tsx';
 import type { AppState, SectionView } from '../appState';
 import type { AppServices } from '../services';
 import { useSlice } from '../hooks';
-import { assemblyDisplay, inContextOf, instanceIndex, shownOf } from '../assembly/focus';
+import { assemblyDisplay, inContextOf, instanceIndex, partsBeside, shownOf } from '../assembly/focus';
 import { STANDARD_PLANES, clearSelection, select, setHover } from '../selection';
 import type { OriginItem } from '../attributes';
 import { ALL_PICKS } from './ModelScene';
@@ -60,9 +60,11 @@ export function ViewportView({ services, onViewport, children }: ViewportViewPro
       const shown = display.getState().display;
       const context = inContextOf(editor.document, focus);
       const edited = context ? instanceIndex(assemblyDisplay(shown, context.assembly), context.at) : -1;
+      const beside = partsBeside(editor.document, focus);
       viewport.model.setDisplay(shown, shownOf(editor.document, focus), {
         exploded,
         ...(context && edited >= 0 ? { faded: (i: number) => i !== edited, own: edited } : {}),
+        ...(beside ? { beside } : {}),
       });
       if (pendingFrame && display.getState().display) {
         pendingFrame = false;

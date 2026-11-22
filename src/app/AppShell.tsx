@@ -60,7 +60,7 @@ import {
   shownRoot,
   type FeatureRow,
 } from './features';
-import { activePartOf, liveFocus, shownAssembly } from './assembly/focus';
+import { activePartOf, liveFocus, openedPartOf, shownAssembly } from './assembly/focus';
 import { asmTimelineRows } from './assembly/asmFeatures';
 import { editJoint, isJointAction, jointMenu, jointTimelineRows, runJointAction } from './assembly/jointActions';
 import { activatePart, editInPlace, renameJoint } from './assembly/commands';
@@ -718,13 +718,13 @@ export function AppShell(props: AppShellProps) {
                       if (r) report(r, 'New Part');
                     }),
                 })}
+            openedPart={openedPartOf(doc, focus)}
             onOpenPart={(part) => {
               clearSelection(selection);
-              const isRoot = root && 'part' in root && root.part === part;
-              app.setState({ focus: isRoot ? null : { part }, panel: null, mode: { kind: 'model' }, exploded: null });
+              app.setState({ focus: { part }, panel: null, mode: { kind: 'model' }, exploded: null });
             }}
             onActivatePart={(part) => activatePart(services, part)}
-            {...(root && 'assembly' in root ? { designActive: liveFocus(doc, focus) === null } : {})}
+            {...(root ? { designActive: liveFocus(doc, focus) === null } : {})}
             selectedFeatures={litFeatures}
             selectedKeys={selectedKeys}
             selectedStandard={selectedStandard}

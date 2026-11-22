@@ -104,6 +104,14 @@ export const ALL_PICKS: ReadonlySet<PickKind> = new Set<PickKind>([
 /** What the document shows: one of its parts, one of its assemblies, or nothing. */
 export type ShownRoot = { part: string } | { assembly: string } | null;
 
+/** How a display is drawn: see `ModelScene.setDisplay`. */
+export interface SceneView {
+  exploded?: string | null;
+  faded?: (index: number) => boolean;
+  own?: number;
+  beside?: { parts: readonly string[]; faded: boolean };
+}
+
 /** The standard planes as the format defines them (9.1): right-handed, normal = x × y. */
 export const STANDARD_FRAMES: Record<StandardPlane, FrameDisplay> = {
   xy: { origin: [0, 0, 0], x: [1, 0, 0], y: [0, 1, 0], normal: [0, 0, 1] },
@@ -224,13 +232,11 @@ export class ModelScene {
    * `view.own` is the instance of a part edited in the assembly's context:
    * it draws as the part itself (its picks name the part's own keys) at the
    * scene's origin, and the other instances where they stand from it, so
-   * the scene's coordinates are the part's.
+   * the scene's coordinates are the part's. For a part, `view.beside` draws
+   * other parts of the document where they were modelled, faded or not;
+   * they take no picks, so a click lands only on the shown part.
    */
-  setDisplay(
-    display: Display | null,
-    shown: ShownRoot,
-    view: { exploded?: string | null; faded?: (index: number) => boolean; own?: number } = {},
-  ): void {
+  setDisplay(display: Display | null, shown: ShownRoot, view: SceneView = {}): void {
     const before = this.geometries;
     this.clearContent(true);
     this.geometries = GeometryCache.after(before);
@@ -247,11 +253,7 @@ export class ModelScene {
     }
   }
 
-  private drawDisplay(
-    display: Display | null,
-    shown: ShownRoot,
-    view: { exploded?: string | null; faded?: (index: number) => boolean; own?: number },
-  ): void {
+  private drawDisplay(display: Display | null, shown: ShownRoot, view: SceneView): void {
     this.moved = null;
     this.removeGhosts();
     this.display = display;
@@ -262,6 +264,14 @@ export class ModelScene {
       const index = display.parts[shown.part];
       const definition = index === undefined ? undefined : display.definitions[index];
       if (definition) this.content.add(this.buildDefinition(definition, undefined, {}));
+      for (const part of view.beside?.parts ?? []) {
+        const at = display.parts[part];
+        const other = at === undefined ? undefined : display.definitions[at];
+        if (!other) continue;
+        const picks = this.pickables.length;
+        this.content.add(this.buildDefinition(other, undefined, view.beside?.faded ? { opacity: FADED_OPACITY } : {}));
+        this.pickables.length = picks;
+      }
     } else {
       const assembly = display.assemblies.find((a) => a.id === shown.assembly);
       const own = view.own !== undefined ? assembly?.instances[view.own] : undefined;
