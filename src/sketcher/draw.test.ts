@@ -92,6 +92,48 @@ describe('drawing', () => {
     expect(drawn(t.host.group).colors).toEqual([COLORS.hovered, COLORS.line, COLORS.line, COLORS.line]);
   });
 
+  it('draws a dimension with arrowheads; hovering or selecting it lights it and the points it measures', () => {
+    const t = openTestSession(gcs);
+    t.session.setTool('line');
+    t.click(10, 10);
+    t.click(40, 50);
+    t.key('Escape');
+    t.session.setTool('dimension');
+    t.click(25, 30);
+    t.click(10, 40);
+    t.key('Escape');
+    t.session.setTool('select');
+    const dim = rowsOf(t.inputs(), 'constraints').at(-1)?.id as string;
+    const arrows = () =>
+      drawn(t.host.group)
+        .root.children.filter((o): o is THREE.Mesh => o instanceof THREE.Mesh && !(o instanceof Line2))
+        .map((m) => (m.material as THREE.MeshBasicMaterial).color.getHex());
+    const pointColors = () => {
+      const points = drawn(t.host.group).root.children.find((o) => o instanceof THREE.Points) as THREE.Points;
+      const fill = points.geometry.getAttribute('fill');
+      // The origin first, then the line's two ends.
+      return [1, 2].map((i) => new THREE.Color(fill.getX(i), fill.getY(i), fill.getZ(i)).getHex());
+    };
+    // The line, two extension lines and the dimension line.
+    expect(drawn(t.host.group).colors).toEqual([COLORS.line, COLORS.dimension, COLORS.dimension, COLORS.dimension]);
+    expect(arrows()).toEqual([COLORS.dimension, COLORS.dimension]);
+
+    t.session.highlight(dim);
+    expect(drawn(t.host.group).colors.slice(1)).toEqual([COLORS.hovered, COLORS.hovered, COLORS.hovered]);
+    expect(arrows()).toEqual([COLORS.hovered, COLORS.hovered]);
+    expect(pointColors()).toEqual([COLORS.hovered, COLORS.hovered]);
+
+    t.session.highlight(null);
+    t.session.select([dim]);
+    expect(drawn(t.host.group).colors.slice(1)).toEqual([COLORS.selected, COLORS.selected, COLORS.selected]);
+    expect(arrows()).toEqual([COLORS.selected, COLORS.selected]);
+    expect(pointColors()).toEqual([COLORS.selected, COLORS.selected]);
+
+    t.session.setOptions({ dimensions: false });
+    expect(drawn(t.host.group).colors).toEqual([COLORS.line]);
+    expect(arrows()).toEqual([]);
+  });
+
   it('previews the tool in progress with a snap marker, and the inferred constraint', () => {
     const t = openTestSession(gcs);
     t.session.setTool('line');

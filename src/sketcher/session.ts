@@ -41,13 +41,15 @@ import {
   valueText,
   type DimensionMode,
 } from './dimensions';
-import { SketchDrawing, type DrawingView, type PreviewShape } from './draw';
+import { dimensionLines } from './dimensionLines';
+import { SketchDrawing, type DrawingView, type DrawnDimension, type PreviewShape } from './draw';
 import { SketchGeometry, flagOn } from './geometry';
 import type { SketchHost, SketchLabel, SketchPointer } from './host';
 import {
   DIMENSION_KINDS,
   RowMaker,
   exprText,
+  isMeasured,
   STANDARD_IDS,
   standardName,
   standardOf,
@@ -2362,8 +2364,9 @@ export class SketchSession {
       t === 'line' || t === 'rectangle' || t === 'circle' || t === 'arc' || t === 'point' || t === 'text' || isShape(t);
     const view: DrawingView = {
       geometry: this.geometry,
-      selection: new Set(this.selection),
+      selection: this.selectionSet(),
       hover: this.hoverSet(),
+      dimensions: this.dimensionDrawings(),
       options: this.options,
       fullyDefined: this.dof === 0,
       detection: this.regions(),
@@ -2382,17 +2385,39 @@ export class SketchSession {
     this.host.requestRender();
   }
 
-  /** What draws as hovered: the hovered entity, or for a hovered constraint the points and curves it holds. */
+  /** What draws as hovered: the hovered entity, or a hovered constraint and the points and curves it holds. */
   private hoverSet(): Set<string> {
-    const id = this.hover;
-    if (id === null) return new Set();
-    const row = table(this.stored, 'constraints').find((c) => c.id === id);
-    if (!row) return new Set([id]);
-    const out = new Set<string>();
-    for (const named of namedIds(row))
-      if (this.geometry.points.has(named) || this.geometry.curves.has(named)) out.add(named);
-    for (const name of standardsOf(row)) out.add(STANDARD_IDS[name]);
+    return this.withHeld(this.hover === null ? [] : [this.hover]);
+  }
+
+  /** What draws as selected: the selection, and the points and curves each selected constraint holds. */
+  private selectionSet(): Set<string> {
+    return this.withHeld(this.selection);
+  }
+
+  /** The ids, with the points, curves and sketch origin or axes each constraint among them holds. */
+  private withHeld(ids: readonly string[]): Set<string> {
+    const out = new Set(ids);
+    if (ids.length === 0) return out;
+    const constraints = table(this.stored, 'constraints');
+    for (const id of ids) {
+      const row = constraints.find((c) => c.id === id);
+      if (!row) continue;
+      for (const named of namedIds(row))
+        if (this.geometry.points.has(named) || this.geometry.curves.has(named)) out.add(named);
+      for (const name of standardsOf(row)) out.add(STANDARD_IDS[name]);
+    }
     return out;
+  }
+
+  /** The extension and dimension lines of the active dimensions, while dimensions show. */
+  private dimensionDrawings(): DrawnDimension[] {
+    if (!this.options.dimensions) return [];
+    return table(this.working, 'constraints').flatMap((row): DrawnDimension[] => {
+      if (!DIMENSION_KINDS.has(row.kind as string) || !flagOn(this.values, row.active)) return [];
+      const lines = dimensionLines(this.geometry, row);
+      return lines ? [{ id: row.id as string, driven: isMeasured(row.value), ...lines }] : [];
+    });
   }
 
   /** The constraints that show glyphs; rows standing as one constraint show one glyph, a point held on the origin a Coincident one. */

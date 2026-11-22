@@ -113,6 +113,10 @@ export function ConstraintGlyphs({ session, project }: ConstraintGlyphsProps) {
               else nodes.current.delete(key);
             }}
             style={{ ...styles.glyph, ...(selected ? styles.selected : {}) }}
+            onPointerEnter={() => session.highlight(g.id)}
+            onPointerLeave={() => {
+              if (session.getState().hover === g.id) session.highlight(null);
+            }}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
