@@ -17,9 +17,7 @@ export type Mode = { kind: 'model' } | { kind: 'sketch'; part: string; feature: 
  * path `at`. With `design`, a part of a document whose root is a part is the
  * active one in the whole design: every other part draws faded around it.
  */
-export type Focus =
-  | { part: string; context?: { assembly: string; at: unknown }; design?: true }
-  | { assembly: string };
+export type Focus = { part: string; context?: { assembly: string; at: unknown }; design?: true } | { assembly: string };
 
 /** An open feature panel: which one, the feature it edits (absent while creating), and the feature it starts from. */
 export interface PanelRequest {
