@@ -36,6 +36,7 @@ import type {
   PickedEntity,
   Progress,
   Resolved,
+  ExportScope,
   ResolveScope,
   ShapeMeasures,
 } from './types';
@@ -297,7 +298,7 @@ export class ServiceClient {
     return this.#api.freeze(doc as Record<string, unknown>, feature);
   }
 
-  exportFile(format: ExportFormat, scope: ResolveScope, options?: ExportOptions): Promise<Uint8Array> {
+  exportFile(format: ExportFormat, scope: ExportScope, options?: ExportOptions): Promise<Uint8Array> {
     return this.#api.exportFile(format, scope, options);
   }
 

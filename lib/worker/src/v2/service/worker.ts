@@ -27,6 +27,7 @@ import type {
   PickOptions,
   PickTarget,
   Progress,
+  ExportScope,
   ResolveScope,
 } from './types';
 
@@ -147,7 +148,7 @@ const api = {
     return (await service()).freeze(doc, feature);
   },
 
-  async exportFile(format: ExportFormat, scope: ResolveScope, options?: ExportOptions): Promise<Uint8Array> {
+  async exportFile(format: ExportFormat, scope: ExportScope, options?: ExportOptions): Promise<Uint8Array> {
     const bytes = (await service()).exportFile(format, scope, options);
     return Comlink.transfer(bytes, buffers(bytes));
   },

@@ -117,6 +117,7 @@ import type {
   PlacedReference,
   Progress,
   Resolved,
+  ExportScope,
   ResolveScope,
   Scope,
   ShapeMeasures,
@@ -2324,21 +2325,29 @@ export class EvaluationService {
     return { props, faces, name: props.name ?? `Body ${b.number}` };
   }
 
+  /** A part's shown bodies an export writes: those in `bodies`, by key, or else every one not hidden. */
+  private partBodies(def: Definition, bodies?: Key[]): ExportBody[] {
+    const state = def.shown.state;
+    const wanted = bodies && new Set(bodies);
+    return shownBodies(this.ev, state, def.shown.shapes, def.steps).flatMap((b) => {
+      const e = this.exported(def, b, state);
+      const key = this.modelKey({ definition: def.index }, b.entity, state, true);
+      if (wanted ? !wanted.has(key) : e.props.visible === false) return [];
+      return [{ handle: b.handle, name: e.name, props: e.props, faces: e.faces }];
+    });
+  }
+
   /** The bodies an export writes, each with what its attributes set and its faces' colours. */
-  private exportBodies(
-    scope: ResolveScope,
-    options: ExportOptions,
-  ): { handle: ShapeHandle; name: string; props: Properties; faces: Map<ShapeKey, string> }[] {
+  private exportBodies(scope: ExportScope, options: ExportOptions): ExportBody[] {
     const ev = this.ev;
-    if ('part' in scope) {
-      const def = this.definitionOfPart(scope.part);
-      const state = def.shown.state;
-      const wanted = options.bodies && new Set(options.bodies);
-      return shownBodies(ev, state, def.shown.shapes, def.steps).flatMap((b) => {
-        const e = this.exported(def, b, state);
-        const key = this.modelKey({ definition: def.index }, b.entity, state, true);
-        if (wanted ? !wanted.has(key) : e.props.visible === false) return [];
-        return [{ handle: b.handle, name: e.name, props: e.props, faces: e.faces }];
+    if ('part' in scope) return this.partBodies(this.definitionOfPart(scope.part), options.bodies);
+    if ('parts' in scope) {
+      // Several parts, each named in its bodies' names; a kind of part the export leaves out is not written.
+      return scope.parts.flatMap((part) => {
+        const def = this.definitionOfPart(part);
+        if (def.styles.bom !== 'normal' && (options.leaveOut ?? []).includes(def.styles.bom)) return [];
+        const name = typeof def.row.name === 'string' ? def.row.name : 'Part';
+        return this.partBodies(def).map((b) => ({ ...b, name: `${name}: ${b.name}` }));
       });
     }
     const view = this.assemblies.get(scope.assembly);
@@ -2576,7 +2585,7 @@ export class EvaluationService {
     return [...counts].map(([def, n]) => line(def, n));
   }
 
-  exportFile(format: ExportFormat, scope: ResolveScope, options: ExportOptions = {}): Uint8Array {
+  exportFile(format: ExportFormat, scope: ExportScope, options: ExportOptions = {}): Uint8Array {
     const k = this.kernel;
     const bodies = this.exportBodies(scope, options);
     if (bodies.length === 0) throw new Error('there is nothing to export');
@@ -2655,6 +2664,14 @@ export class EvaluationService {
       for (const h of made) k.release(h);
     }
   }
+}
+
+/** A body an export writes, with what its attributes set and its faces' colours. */
+interface ExportBody {
+  handle: ShapeHandle;
+  name: string;
+  props: Properties;
+  faces: Map<ShapeKey, string>;
 }
 
 /** Whether an assembly export writes a leaf: one whose part's kind it does not leave out. */

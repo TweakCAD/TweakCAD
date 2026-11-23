@@ -14,6 +14,7 @@ import type {
   ExportFormat,
   FrozenResult,
   ExportOptions,
+  ExportScope,
   ExternalCandidates,
   FrameDisplay,
   Key,
@@ -32,7 +33,7 @@ import { createAppStore, type AppStore } from './appState';
 import { clearConsole } from './console';
 import { createDisplayStore, RebuildScheduler, type DisplayStore, type Evaluator } from './display/scheduler';
 import { inContextPick } from './assembly/contexts';
-import { shownOf } from './assembly/focus';
+import { designParts, shownOf } from './assembly/focus';
 import type { PickClient, PickResult } from './picking';
 import {
   clearSelection,
@@ -53,7 +54,7 @@ export interface AppServiceClient extends Evaluator, PickClient {
   init(): Promise<{ loadTimeMs: number }>;
   /** Stops the work in the worker and starts a fresh one; calls waiting fail. Absent where the client cannot. */
   restart?(): void;
-  exportFile(format: ExportFormat, scope: ResolveScope, options?: ExportOptions): Promise<Uint8Array>;
+  exportFile(format: ExportFormat, scope: ExportScope, options?: ExportOptions): Promise<Uint8Array>;
   exportFreeCad(): Promise<FcstdExport>;
   billOfMaterials(assembly?: string): Promise<BomLine[]>;
   /** A model entity kind and measures (9.7), or null for anything else. */
@@ -135,8 +136,13 @@ export interface ExportIncludes {
 }
 
 /** What the shown part or assembly is, and for an assembly how many instances of each kind it places. */
+/**
+ * What an export may leave out. An assembly counts the instances it places;
+ * a design (several parts of a document whose root is a part) counts its parts.
+ */
 export type ExportChoices =
-  { kind: 'part' } | { kind: 'assembly'; name: string; instances: number; purchased: number; reference: number };
+  | { kind: 'part' }
+  | { kind: 'assembly' | 'design'; name: string; instances: number; purchased: number; reference: number };
 
 /**
  * What an assembly export puts in unless asked otherwise: files for
@@ -257,9 +263,13 @@ export async function bootApp(o: BootAppOptions): Promise<BootedApp> {
     },
     async exportShown(format, include = defaultIncludes(format)) {
       await settled();
-      const root = shownOf(editor.document, app.getState().focus);
+      const doc = editor.document;
+      const focus = app.getState().focus;
+      const root = shownOf(doc, focus);
       if (!root || !display.getState().display) return new Uint8Array();
-      const scope: ResolveScope = 'part' in root ? { part: root.part } : { assembly: root.assembly };
+      const parts = designParts(doc, focus);
+      const scope: ExportScope =
+        parts && parts.length > 1 ? { parts } : 'part' in root ? { part: root.part } : { assembly: root.assembly };
       const docName = (editor.document.metadata as { name?: unknown }).name;
       const leaveOut = (['purchased', 'reference'] as const).filter((kind) => !include[kind]);
       return o.client.exportFile(format, scope, {
@@ -269,21 +279,36 @@ export async function bootApp(o: BootAppOptions): Promise<BootedApp> {
     },
     async exportChoices() {
       await settled();
-      const root = shownOf(editor.document, app.getState().focus);
+      const doc = editor.document;
+      const focus = app.getState().focus;
+      const root = shownOf(doc, focus);
       if (!root || !display.getState().display) return null;
+      const parts = designParts(doc, focus);
+      const count = (lines: BomLine[], kind?: BomLine['kind']) =>
+        lines.filter((l) => kind === undefined || l.kind === kind).reduce((n, l) => n + l.quantity, 0);
+      if (parts && parts.length > 1) {
+        // A document whose root is a part lists each of its parts once.
+        const lines = (await o.client.billOfMaterials()).filter((l) => !l.library && parts.includes(l.part));
+        const docName = (doc.metadata as { name?: unknown }).name;
+        return {
+          kind: 'design',
+          name: typeof docName === 'string' && docName !== '' ? docName : 'Design',
+          instances: parts.length,
+          purchased: count(lines, 'purchased'),
+          reference: count(lines, 'reference'),
+        };
+      }
       if ('part' in root) return { kind: 'part' };
       const lines = await o.client.billOfMaterials(root.assembly);
-      const count = (kind?: BomLine['kind']) =>
-        lines.filter((l) => kind === undefined || l.kind === kind).reduce((n, l) => n + l.quantity, 0);
       const row = (editor.document.assemblies as { id: string; name?: unknown }[] | undefined)?.find(
         (a) => a.id === root.assembly,
       );
       return {
         kind: 'assembly',
         name: typeof row?.name === 'string' ? row.name : 'Assembly',
-        instances: count(),
-        purchased: count('purchased'),
-        reference: count('reference'),
+        instances: count(lines),
+        purchased: count(lines, 'purchased'),
+        reference: count(lines, 'reference'),
       };
     },
     async billOfMaterials() {

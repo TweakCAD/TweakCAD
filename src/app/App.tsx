@@ -479,12 +479,13 @@ export function App() {
   const onExport = useCallback(
     (format: ExportFormat) => {
       if (!services) return;
-      // An assembly that places purchased or reference parts asks what goes in; anything else exports at once.
+      // An assembly or design with purchased or reference parts asks what goes in; anything else exports at once.
       const chosen = async (): Promise<ExportIncludes | undefined | null> => {
         const choices = await services.exportChoices();
-        if (choices?.kind !== 'assembly' || choices.purchased + choices.reference === 0) return undefined;
+        if (!choices || choices.kind === 'part' || choices.purchased + choices.reference === 0) return undefined;
         const include = await askExport({
           title: `Export ${format === 'brep' ? 'BREP' : format.toUpperCase()}`,
+          kind: choices.kind,
           name: choices.name,
           instances: choices.instances,
           counts: { purchased: choices.purchased, reference: choices.reference },
@@ -498,7 +499,7 @@ export function App() {
         .then((bytes) => {
           if (bytes === null) return;
           if (bytes.byteLength === 0) {
-            enqueueToast({ tone: 'info', title: 'Nothing to export', message: 'The shown part has no bodies.' });
+            enqueueToast({ tone: 'info', title: 'Nothing to export', message: 'Nothing shown has a body.' });
             return;
           }
           const name = String((services.editor.document.metadata as { name?: unknown }).name ?? '');

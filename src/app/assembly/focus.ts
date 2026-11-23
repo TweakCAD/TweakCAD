@@ -56,6 +56,16 @@ export function partsBeside(doc: Doc, focus: Focus | null): { parts: string[]; f
   return parts.length > 0 ? { parts, faded: liveFocus(doc, focus) !== null } : null;
 }
 
+/**
+ * The parts an export of what is shown writes when that is the whole design
+ * of a document whose root is a part: every part of the document, as File
+ * Export writes a whole design whichever part is active. Null when one part
+ * or an assembly is shown on its own.
+ */
+export function designParts(doc: Doc, focus: Focus | null): string[] | null {
+  return inDesign(doc, focus) ? partsOf(doc).map((p) => String(p.id)) : null;
+}
+
 /** The part shown on its own (opened, not made active in the design or edited in context), or null. */
 export function openedPartOf(doc: Doc, focus: Focus | null): string | null {
   const f = liveFocus(doc, focus);

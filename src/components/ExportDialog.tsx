@@ -1,7 +1,7 @@
 /**
- * The Export dialog: what an assembly export puts in. It lists each kind of
- * part the assembly places that a file may leave out (purchased, reference)
- * with how many instances, ticked as the caller asks. Opened only when there
+ * The Export dialog: what an assembly or design export puts in. It lists
+ * each kind of part that a file may leave out (purchased, reference) with
+ * how many there are, ticked as the caller asks. Opened only when there
  * is such a choice; `useExportDialog` gives a Promise-based `ask`.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -14,12 +14,20 @@ export interface ExportIncludeChoice {
 export interface ExportDialogRequest {
   /** "Export 3MF". */
   title: string;
-  /** What is exported: the assembly's name and how many instances it places. */
+  /** What is exported: an assembly and how many instances it places, or a design and how many parts it has. */
+  kind: 'assembly' | 'design';
   name: string;
   instances: number;
-  /** How many instances of purchased and of reference parts it places; a kind with none is not offered. */
+  /** How many instances (parts, in a design) are purchased and reference parts; a kind with none is not offered. */
   counts: { purchased: number; reference: number };
   initial: ExportIncludeChoice;
+}
+
+/** What `instances` counts: an assembly's instances or a design's parts. */
+function unit(request: ExportDialogRequest): string {
+  const one = request.instances === 1;
+  if (request.kind === 'design') return one ? 'part' : 'parts';
+  return one ? 'instance' : 'instances';
 }
 
 export function ExportDialog({
@@ -70,7 +78,7 @@ export function ExportDialog({
           <div style={styles.row}>
             <span style={styles.key}>What</span>
             <span>
-              {request.name} (assembly, {request.instances} {request.instances === 1 ? 'instance' : 'instances'})
+              {request.name} ({request.kind}, {request.instances} {unit(request)})
             </span>
           </div>
           <div style={styles.row}>

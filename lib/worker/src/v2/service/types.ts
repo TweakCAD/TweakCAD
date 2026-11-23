@@ -296,6 +296,9 @@ export type Resolved = { outcome: 'same'; keys: Key[] } | { outcome: 'ask'; sugg
 /** Where a reference is read: a part of the document, before one of its features or as displayed; or an assembly. */
 export type ResolveScope = { part: string; before?: string } | { assembly: string };
 
+/** What an export writes: a part, an assembly, or several parts of the document where they were modelled. */
+export type ExportScope = ResolveScope | { parts: readonly string[] };
+
 /**
  * A part as it stands just before one of its features: the state a panel
  * on that feature picks in. A feature the part does not hold (a new one,
@@ -376,8 +379,9 @@ export interface ExportOptions {
   /** STL as text rather than binary. */
   ascii?: boolean;
   /**
-   * The kinds of part (16.1) whose instances an assembly export leaves out;
-   * none by default. A part exported on its own is written whatever it is.
+   * The kinds of part (16.1) that an export of an assembly or of several
+   * parts leaves out; none by default. A part exported on its own is written
+   * whatever it is.
    */
   leaveOut?: ('purchased' | 'reference')[];
 }
