@@ -43,6 +43,7 @@ import { sketchesOf } from '../modeling/profiles';
 import { embedDocument, insertComponentCommands, overridesFrom, publicParameters } from './library';
 import { Editor, saveDocument } from '@tweakcad/editor';
 import { partView } from '../features';
+import { setPartsVisible } from '../attributes';
 import {
   addConfiguration,
   addConfigurationRow,
@@ -74,6 +75,7 @@ function client(): AppServiceClient {
     init: () => Promise.resolve({ loadTimeMs: 0 }),
     evaluate: (doc) => Promise.resolve(service.evaluate(doc as Json)),
     pick: (target, options) => Promise.resolve(service.pick(target, options)),
+    billOfMaterials: (assembly) => Promise.resolve(service.billOfMaterials(assembly)),
     exportFile: (format, scope, options) => Promise.resolve(service.exportFile(format, scope, options)),
     properties: (key) => Promise.resolve(service.properties(key)),
     measure: (kind, targets) => Promise.resolve(service.measure(kind, targets)),
@@ -484,6 +486,33 @@ describe('assemblies in the app', { timeout: 120_000 }, () => {
     s.app.setState({ focus: { part: arm } });
     activatePart(s, base);
     expect(focus()).toEqual({ part: base, design: true });
+  });
+
+  it('exports every part of the design that is not hidden, and a part opened on its own alone', async () => {
+    const { s, base, arm } = await boot();
+    const triangles = (stl: Uint8Array) => new DataView(stl.buffer, stl.byteOffset).getUint32(80, true);
+    const alone = async (part: string) => {
+      s.app.setState({ focus: { part } });
+      const n = triangles(await s.exportShown('stl'));
+      s.app.setState({ focus: null });
+      return n;
+    };
+    const baseOnly = await alone(base);
+    const armOnly = await alone(arm);
+    expect(triangles(await s.exportShown('stl'))).toBe(baseOnly + armOnly);
+    activatePart(s, arm);
+    expect(triangles(await s.exportShown('stl'))).toBe(baseOnly + armOnly);
+    expect(await s.exportChoices()).toEqual({
+      kind: 'design',
+      name: expect.any(String),
+      instances: 2,
+      purchased: 0,
+      reference: 0,
+    });
+    // The root part hidden: the design still exports the rest.
+    activatePart(s, null);
+    expect(setPartsVisible(s.editor, [base], false).ok).toBe(true);
+    expect(triangles(await s.exportShown('stl'))).toBe(armOnly);
   });
 
   it('references another instance in context through a captured context', async () => {
