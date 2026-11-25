@@ -1,14 +1,15 @@
 /**
- * The status line of the build in progress, for the toolbar: null while
- * nothing builds. It counts the seconds of a long build, so it renders again
- * each second while one runs.
+ * The status line of the build in progress, for the toolbar, and how far it
+ * has come (0 to 1, or null when nothing tells): null while nothing builds.
+ * It counts the seconds of a long build, so it renders again each second
+ * while one runs.
  */
 import { useEffect, useState } from 'react';
 import { useSlice } from '../hooks';
 import type { DisplayStore } from './scheduler';
-import { statusText } from './status';
+import { progressShare, statusText } from './status';
 
-export function useBuildStatus(store: DisplayStore): string | null {
+export function useBuildStatus(store: DisplayStore): { text: string; share: number | null } | null {
   const evaluating = useSlice(store, (s) => s.evaluating);
   const status = useSlice(store, (s) => s.status);
   const since = useSlice(store, (s) => s.busySince);
@@ -20,5 +21,5 @@ export function useBuildStatus(store: DisplayStore): string | null {
   }, [evaluating]);
   if (!evaluating) return null;
   // The clock last ticked before this build may have started.
-  return statusText(status, since === null ? 0 : Math.max(0, now - since));
+  return { text: statusText(status, since === null ? 0 : Math.max(0, now - since)), share: progressShare(status) };
 }

@@ -254,8 +254,21 @@ export interface Display {
    * feature each part rebuilt from and what changed there, or why the
    * evaluation started afresh.
    */
-  /** Times in ms; features taken over from the evaluation before (`resumed`), placings of instances taken over (`placed`), and why the cache missed. */
-  timing: { evaluate: number; display: number; resumed: number; placed?: number; misses?: string[] };
+  /**
+   * Times in ms; features taken over from the evaluation before (`resumed`),
+   * placings of instances taken over (`placed`), why the cache missed, and
+   * how long each stage of the build took (`times`: a feature taken over
+   * keeps its time from `EvaluateServiceOptions.expected`), for the next
+   * build's progress.
+   */
+  timing: {
+    evaluate: number;
+    display: number;
+    resumed: number;
+    placed?: number;
+    misses?: string[];
+    times?: BuildTimes;
+  };
 }
 
 /** A picked entity, as a feature input stores it. */
@@ -432,13 +445,33 @@ export interface EvaluateServiceOptions {
    * but its rollbacks (a later `restyle` evaluates).
    */
   preview?: boolean;
+  /**
+   * How long an earlier build of the same document took
+   * (`Display.timing.times`), so progress can tell how far a full build has
+   * come in time rather than in features.
+   */
+  expected?: BuildTimes;
+}
+
+/**
+ * How long the stages of a build took, in ms: each feature by
+ * `<part id>/<feature id>`, placing the assemblies' parts, and meshing.
+ */
+export interface BuildTimes {
+  features: Record<string, number>;
+  placing?: number;
+  meshing?: number;
 }
 
 /**
  * Where a running evaluation stands, as the worker reports it while it
  * works: reading the document, building feature `done + 1` of `total`
  * (`kept` of them taken over from the evaluation before), placing the
- * assemblies' parts, meshing body `done + 1` of `total`.
+ * assemblies' parts, meshing body `done + 1` of `total`. `fraction` (0 to
+ * 1) is how far a full build has come in time, from the times of an earlier
+ * build (`EvaluateServiceOptions.expected`); absent without them, or when
+ * the evaluation resumes from the one before. When a document is opened,
+ * each of its parts is reported `built` with its bodies as soon as it is.
  */
 export type Progress =
   | { phase: 'reading' }
@@ -451,9 +484,24 @@ export type Progress =
       feature: string;
       name: string;
       type: string;
+      fraction?: number;
     }
-  | { phase: 'placing' }
-  | { phase: 'meshing'; done: number; total: number };
+  | { phase: 'placing'; fraction?: number }
+  | { phase: 'meshing'; done: number; total: number; fraction?: number }
+  | { phase: 'built'; part: string; bodies: EarlyBody[] };
+
+/**
+ * A body of a part as its build left it, meshed as soon as the part is
+ * built, for a display to show while the rest of the document builds
+ * (`Progress` phase `built`). It carries no keys: nothing in it can be picked.
+ */
+export interface EarlyBody {
+  positions: Float32Array;
+  normals: Float32Array;
+  indices: Uint32Array;
+  /** Edge polylines as line segments: two XYZ points per segment. */
+  segments: Float32Array;
+}
 
 /** A context to re-capture (12.4), and instance paths it should hold besides those its part references. */
 export interface ContextRequest {

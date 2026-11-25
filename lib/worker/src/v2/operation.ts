@@ -116,6 +116,25 @@ export function copyInPlace(ctx: BuildContext, namer: FeatureNamer, source: Live
 /** Two bodies closer than this (mm) meet. */
 export const CONTACT = 1e-7;
 
+/**
+ * Whether two shapes meet: closer than `CONTACT`. Loose boxes always hold
+ * the shape, so boxes further apart than that settle it without measuring
+ * the distance, which costs far more on shapes with many faces.
+ */
+export function meets(ctx: BuildContext, a: ShapeHandle, b: ShapeHandle): boolean {
+  const k = ctx.ev.kernel;
+  const p = k.getBoundingBox(a, { precise: false });
+  const q = k.getBoundingBox(b, { precise: false });
+  const apart =
+    p.xmin > q.xmax + CONTACT ||
+    q.xmin > p.xmax + CONTACT ||
+    p.ymin > q.ymax + CONTACT ||
+    q.ymin > p.ymax + CONTACT ||
+    p.zmin > q.zmax + CONTACT ||
+    q.zmin > p.zmax + CONTACT;
+  return !apart && k.distanceBetween(a, b) <= CONTACT;
+}
+
 /** A body whose volume changed by less than this fraction kept its volume through a cut or intersect. */
 const SAME_VOLUME = 1e-9;
 
@@ -127,10 +146,21 @@ export const REFINE_ANGLE = 1e-6;
  * leaves level with each other. Where the merge leaves an invalid solid (as it
  * can joining spheres over their seam or poles), the fuse runs again without
  * it. A union is never smaller than the largest body in it, so a smaller
- * result has lost one, and pauses.
+ * result has lost one, and pauses. `volumes` keeps the volumes measured, by
+ * handle, for the next fuse of the same feature.
  */
-function refinedFuse(ctx: BuildContext, targets: readonly Live[], tools: readonly Live[]): EvolutionData {
+function refinedFuse(
+  ctx: BuildContext,
+  targets: readonly Live[],
+  tools: readonly Live[],
+  volumes = new Map<ShapeHandle, number>(),
+): EvolutionData {
   const { kernel: k, adapter } = ctx.ev;
+  const volume = (h: ShapeHandle): number => {
+    let v = volumes.get(h);
+    if (v === undefined) volumes.set(h, (v = Math.abs(k.getVolume(h))));
+    return v;
+  };
   const bodies = [...targets, ...tools];
   const fuse = (refine: boolean) =>
     k.booleanOp(
@@ -153,8 +183,8 @@ function refinedFuse(ctx: BuildContext, targets: readonly Live[], tools: readonl
       k.release(plain.result);
     }
   }
-  const largest = Math.max(...bodies.map((b) => Math.abs(k.getVolume(b.handle))));
-  if (Math.abs(k.getVolume(evolution.result)) < 0.99 * largest) {
+  const largest = Math.max(...bodies.map((b) => volume(b.handle)));
+  if (volume(evolution.result) < 0.99 * largest) {
     throw new FeaturePause('the kernel lost a body joining these');
   }
   return evolution;
@@ -174,8 +204,9 @@ export function namedBoolean(
   b: Live,
   use: 'tool' | 'target',
   dividers?: readonly ShapeKey[],
+  volumes?: Map<ShapeHandle, number>,
 ): { live: Live; history: OperationHistory } {
-  const evolution = kind === 'fuse' ? refinedFuse(ctx, [a], [b]) : cutEvolution(ctx, kind, a, b);
+  const evolution = kind === 'fuse' ? refinedFuse(ctx, [a], [b], volumes) : cutEvolution(ctx, kind, a, b);
   return namedStep(ctx, namer, kind, a, b, use, evolution, dividers);
 }
 
@@ -209,6 +240,28 @@ function namedStep(
     { outputs: [], dividers: use === 'tool' && kind !== 'fuse' ? (dividers ?? adapter.topology(b.shape).faces) : [] },
     'normal',
   );
+  return { live: { shape: history.result, handle: evolution.result }, history };
+}
+
+/**
+ * `tools` fused into one in a single kernel boolean (`refinedFuse`), named as
+ * one step. Every tool is a target of the step, so a face several of them
+ * merge into keeps the identity of the earliest created and the others
+ * become its aliases (9.4).
+ */
+function namedFuseAll(
+  ctx: BuildContext,
+  namer: FeatureNamer,
+  tools: readonly Live[],
+): { live: Live; history: OperationHistory } {
+  const { adapter } = ctx.ev;
+  const [first, ...rest] = tools as [Live, ...Live[]];
+  const evolution = refinedFuse(ctx, [first], rest);
+  const history = adapter.history(
+    evolution,
+    tools.map((t) => ({ shape: t.shape, use: 'target' as const })),
+  );
+  namer.step(history, { outputs: [], dividers: [] }, 'normal');
   return { live: { shape: history.result, handle: evolution.result }, history };
 }
 
@@ -302,8 +355,10 @@ export function runOperation(
   // Each tool and each target is told by its faces, followed through every boolean.
   const tracker = new FaceTracker<Tool | Live>();
   for (const t of [...tools, ...targets]) tracker.track(t, adapter.topology(t.shape).faces);
+  // Volumes the feature's fuses measured, for the next fuse to take over.
+  const volumes = new Map<ShapeHandle, number>();
   const boolean = (kind: 'fuse' | 'cut' | 'intersect', a: Live, b: Live, use: 'tool' | 'target'): Live => {
-    const { live, history } = namedBoolean(ctx, namer, kind, a, b, use);
+    const { live, history } = namedBoolean(ctx, namer, kind, a, b, use, undefined, volumes);
     tracker.follow(history);
     return live;
   };
@@ -316,9 +371,13 @@ export function runOperation(
     return { solid: solid.solid, from: { create: uniqueSorted(inside.flatMap((t) => t.src)) } };
   };
 
-  // Several tools of one feature are one tool: fused, their merges named by creation key.
+  // Several tools of one feature are one tool: fused in one boolean, their merges named by creation key.
   let tool: Live = tools[0] as Live;
-  for (const next of tools.slice(1)) tool = boolean('fuse', tool, next, 'target');
+  if (tools.length > 1) {
+    const { live, history } = namedFuseAll(ctx, namer, tools);
+    tracker.follow(history);
+    tool = live;
+  }
   // Kept with its names, so a feature pattern can apply copies of it.
   const recorded = {
     shape: tool.shape,
@@ -351,7 +410,7 @@ export function runOperation(
     asNewBody();
   } else if (op === 'join') {
     // The tool joins the targets it meets; a target it does not meet stays as it was, even where it touches one that joins.
-    const met = targets.filter((t) => ev.kernel.distanceBetween(tool.handle, t.handle) <= CONTACT);
+    const met = targets.filter((t) => meets(ctx, tool.handle, t.handle));
     // A tool that meets no target is a new body, kept or not.
     let acc = met.length > 0 ? usedUp() : tool;
     for (const target of met) {
@@ -363,7 +422,7 @@ export function runOperation(
     // A target the tool swallows whole keeps no face: it lives on in the solid that holds it.
     for (const target of met) {
       if (carried.some((c) => c.includes(target))) continue;
-      const i = solids.findIndex((s) => ev.kernel.distanceBetween(adapter.handleOf(s.solid), target.handle) <= CONTACT);
+      const i = solids.findIndex((s) => meets(ctx, adapter.handleOf(s.solid), target.handle));
       if (i >= 0) (carried[i] as (Tool | Live)[]).push(target);
     }
     solids.forEach((solid, i) => {
@@ -385,7 +444,7 @@ export function runOperation(
       const overlap = kind === 'cut' ? after < before * (1 - SAME_VOLUME) : after > before * SAME_VOLUME;
       overlaps ||= overlap;
       // A tool that only touches a target takes nothing away: the target stays as it was, not split where touched.
-      if (kind === 'cut' && !overlap && ev.kernel.distanceBetween(target.handle, used.handle) <= CONTACT) {
+      if (kind === 'cut' && !overlap && meets(ctx, target.handle, used.handle)) {
         ev.kernel.release(evolution.result);
         continue;
       }

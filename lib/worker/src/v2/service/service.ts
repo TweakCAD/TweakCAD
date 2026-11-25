@@ -93,6 +93,7 @@ import type {
   ContextRequest,
   ContextsUpdate,
   DefinitionDisplay,
+  EarlyBody,
   FrozenResult,
   Display,
   EntityInfo,
@@ -126,6 +127,7 @@ import type {
   ThreadDisplay,
   Vec3,
 } from './types';
+import { ProgressClock } from './progressClock';
 
 /** The display deflection, as fine as the app has always shown. */
 const DISPLAY = { linearDeflection: 0.05, angularDeflection: 0.1 };
@@ -208,7 +210,7 @@ function sameButShown(a: Json, b: Json): boolean {
   }
   return true;
 }
-/** Evaluations in a row that may resume from one evaluation's shapes before one starts afresh. */
+/** Evaluations in a row that resume from the same shapes before what superseded ones registered is let go (`sweep`). */
 const MAX_CARRIED = 16;
 const ENTITY_KINDS = new Set<EntityKind>([
   'face',
@@ -602,26 +604,48 @@ export class EvaluationService {
       }
     }
     const previous = this.recorded;
+    const sameDocument = previous !== undefined && previous.documentKey === documentKey(doc);
+    // Every few evaluations that resume from the same shapes, what superseded ones registered is let go.
+    if (this.cache && previous && sameDocument && previous.carried >= MAX_CARRIED) this.sweep(previous);
     const afresh = !this.cache
       ? 'the cache is off'
       : !previous
         ? 'nothing was evaluated before'
-        : previous.documentKey !== documentKey(doc)
+        : !sameDocument
           ? 'the library, settings or naming rules changed'
-          : previous.carried >= MAX_CARRIED
-            ? `${MAX_CARRIED} evaluations in a row resumed from the same shapes`
-            : k.shapeCount > Math.max(4 * this.baseline, this.baseline + 200_000)
-              ? 'the kernel holds too many shapes'
-              : undefined;
+          : k.shapeCount > Math.max(4 * this.baseline, this.baseline + 200_000)
+            ? 'the kernel holds too many shapes'
+            : undefined;
+    // A document just opened shows each part as soon as it is built, while the rest build.
+    const opened =
+      afresh !== undefined &&
+      progress !== undefined &&
+      options.preview !== true &&
+      options.meshes !== false &&
+      this.doc?.id !== doc.id;
     if (afresh) this.release();
     this.mark ??= k.checkpoint();
     this.reset();
+    const keys = ((doc.parts as Json[] | undefined) ?? []).flatMap((part) =>
+      ((part.timeline as Json[] | undefined) ?? []).map((f) => `${String(part.id)}/${String(f.id)}`),
+    );
+    const clock = new ProgressClock(keys, options.expected, afresh !== undefined && options.preview !== true);
+    const report = (p: Progress) => {
+      const timed = clock.report(p);
+      progress?.(timed);
+    };
     try {
       // A preview's evaluation is kept beside the committed one, which a later evaluation may resume from instead.
       const committed = !afresh && this.partial ? this.committed : undefined;
       const preview = options.preview === true;
       this.recorded = evaluateCached(doc, k, this.solver, afresh ? undefined : previous, {
-        ...(progress ? { progress } : {}),
+        progress: report,
+        ...(opened
+          ? {
+              built: (part: string, result: PartResult, ev: Evaluation) =>
+                report({ phase: 'built', part, bodies: this.earlyBodies(ev, result, deflection) }),
+            }
+          : {}),
         ...(committed ? { alternative: committed } : {}),
         toRollback: preview,
       });
@@ -640,7 +664,7 @@ export class EvaluationService {
       this.define(this.recorded);
       display = {
         generation: ++this.generation,
-        ...this.compose(deflection, progress, options.meshes !== false),
+        ...this.compose(deflection, report, options.meshes !== false),
         timing: { evaluate: 0, display: 0, resumed: 0 },
       };
     } catch (e) {
@@ -655,6 +679,7 @@ export class EvaluationService {
       resumed: this.recorded.resumed,
       placed: this.recorded.placedKept,
       misses,
+      times: clock.finish(options.expected),
     };
     return display;
   }
@@ -719,6 +744,45 @@ export class EvaluationService {
     this.doc = undefined;
     this.plans = new Map();
     this.reset();
+  }
+
+  /**
+   * Releases what superseded evaluations registered with the adapter: every
+   * shape that neither `recorded` nor the committed evaluation kept beside it
+   * names anywhere in what a later evaluation may take over (its features'
+   * results, its parts and assemblies, its placements). The walk keeps any
+   * registered name it meets, so whatever might still be read stays.
+   */
+  private sweep(recorded: Recorded): void {
+    const { adapter } = recorded;
+    const keep = new Set<string>();
+    const seen = new WeakSet<object>();
+    const stack: unknown[] = [];
+    for (const r of [recorded, this.committed]) {
+      if (r) stack.push(r.features, r.placements, r.ev.parts, r.ev.assemblies);
+    }
+    while (stack.length > 0) {
+      const v = stack.pop();
+      if (typeof v === 'string') {
+        if (adapter.holds(v)) keep.add(v);
+        continue;
+      }
+      if (typeof v !== 'object' || v === null || seen.has(v) || ArrayBuffer.isView(v)) continue;
+      seen.add(v);
+      if ('kernel' in v && 'adapter' in v) {
+        // An evaluation met inside (a variant's) holds its shapes in its parts and assemblies.
+        const e = v as Evaluation;
+        stack.push(e.parts, e.assemblies);
+      } else if (v instanceof Map) {
+        for (const [key, value] of v) stack.push(key, value);
+      } else if (v instanceof Set || Array.isArray(v)) {
+        for (const value of v) stack.push(value);
+      } else {
+        for (const value of Object.values(v)) stack.push(value);
+      }
+    }
+    adapter.retain((ref) => keep.has(ref));
+    recorded.carried = 0;
   }
 
   private reset(): void {
@@ -1198,6 +1262,45 @@ export class EvaluationService {
       tables: { faces: new Uint32Array(faces), edges: new Uint32Array(edges), vertices: new Uint32Array(vertices) },
       faces: styled,
     };
+  }
+
+  /**
+   * A just-built part's bodies, meshed for a display to show before the
+   * document is done: triangles and drawn edges, no pick tables. The kernel
+   * keeps the triangulation, so the display's own meshing reuses it.
+   */
+  private earlyBodies(ev: Evaluation, result: PartResult, deflection: Deflection): EarlyBody[] {
+    const { kernel: k, adapter } = ev;
+    const out: EarlyBody[] = [];
+    for (const [ref, handle] of result.shapes) {
+      try {
+        const m = k.meshShape(handle, deflection);
+        // Seams and degenerate edges are not drawn, as in the display.
+        const drawn = new Set<number>();
+        for (const e of adapter.topology(ref).edges) {
+          if (e.form === 'normal') drawn.add(k.hashCode(adapter.handleOf(e.edge), HASH_BOUND));
+        }
+        const wire = k.wireframe(handle, { deflection: deflection.linearDeflection, source: 'triangulation' });
+        const segments: number[] = [];
+        const eg = wire.edgeGroups;
+        for (let i = 0; i + 2 < eg.length; i += 3) {
+          const [start, count, hash] = [eg[i] as number, eg[i + 1] as number, eg[i + 2] as number];
+          if (!drawn.has(hash)) continue;
+          for (let p = start; p + 5 < start + count; p += 3) {
+            for (let c = 0; c < 6; c++) segments.push(wire.points[p + c] as number);
+          }
+        }
+        out.push({
+          positions: new Float32Array(m.positions),
+          normals: new Float32Array(m.normals),
+          indices: new Uint32Array(m.indices),
+          segments: new Float32Array(segments),
+        });
+      } catch {
+        // A body the kernel cannot mesh shows once the document's display does.
+      }
+    }
+    return out;
   }
 
   /** One body's mesh and pick tables from the kernel, and what it found, for its plan. */

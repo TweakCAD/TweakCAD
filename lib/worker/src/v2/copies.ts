@@ -16,11 +16,11 @@ import {
 import { HASH_BOUND } from '@tweakcad/kernel/src/namingAdapter.ts';
 import { FLAG, FeaturePause, TEXT, add, kv, norm, rotate, sub, type BuildContext, type Json, type V3 } from './context';
 import {
-  CONTACT,
   FaceTracker,
   copyInPlace,
   keptToolStep,
   liveBodies,
+  meets,
   namedBoolean,
   targetsOf,
   type Live,
@@ -150,11 +150,11 @@ export function applyToCopies(ctx: BuildContext, namer: FeatureNamer, made: read
   if (op === 'cut' || op === 'intersect')
     throw new FeaturePause(`a copying feature with operation ${op} is not built yet`);
   const keep = values.literal(operation.keepTools, FLAG) === true;
-  const meets = (c: Live, t: Live) => ev.kernel.distanceBetween(c.handle, t.handle) <= CONTACT;
+  const meetsTarget = (c: Live, t: Live) => meets(ctx, c.handle, t.handle);
   let copies = made;
   // The copies join the targets they meet; a target no copy meets stays as it was.
   const all = op === 'join' && copies.length > 0 ? targetsOf(ctx, namer, operation.targets as Json) : [];
-  const targets = all.filter((t) => copies.some((c) => meets(c, t)));
+  const targets = all.filter((t) => copies.some((c) => meetsTarget(c, t)));
   if (targets.length === 0) {
     part.state = namer.finish([]);
     for (const copy of copies) part.shapes.set(copy.shape, copy.handle);
@@ -163,7 +163,7 @@ export function applyToCopies(ctx: BuildContext, namer: FeatureNamer, made: read
   if (keep) {
     for (const copy of made) part.shapes.set(copy.shape, copy.handle);
     copies = made
-      .filter((c) => targets.some((t) => meets(c, t)))
+      .filter((c) => targets.some((t) => meetsTarget(c, t)))
       .map((c) => copyInPlace(ctx, namer, c, keptToolStep(ctx.id)));
   }
 

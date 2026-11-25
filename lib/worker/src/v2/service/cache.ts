@@ -380,6 +380,8 @@ export interface CachedOptions {
   alternative?: Recorded;
   /** Builds each part of the document only up to its rollback (`EvaluateOptions.until`). */
   toRollback?: boolean;
+  /** Hears of each part of the document as it is built (`EvaluateOptions.built`). */
+  built?: (part: string, result: PartResult, ev: Evaluation) => void;
 }
 
 /** The ordinal of the feature a part row is rolled back to just before; undefined at the end. */
@@ -444,6 +446,8 @@ export function evaluateCached(
     return list;
   };
 
+  // What this build takes over from; let go once it is built, so a kept evaluation does not keep the ones before it.
+  const prior: { from: Recorded | undefined; sources: Recorded[] } = { from, sources };
   const ev = evaluateDocument(doc, kernel, {
     ...(solver ? { solver } : {}),
     values,
@@ -455,7 +459,7 @@ export function evaluateCached(
     ...(until ? { until } : {}),
     placements: {
       get: (k) => {
-        const known = sources.map((s) => s.placements.get(k)).find((r) => r !== undefined);
+        const known = prior.sources.map((s) => s.placements.get(k)).find((r) => r !== undefined);
         if (known) {
           placements.set(k, known);
           placedKept++;
@@ -468,6 +472,7 @@ export function evaluateCached(
       const row = rows.get(part) as Json;
       order.push(part);
       partKeys.set(part, partKey(row));
+      const { from } = prior;
       if (!from) return undefined;
       const timeline = row.timeline as Json[];
       // A part built only up to its rollback resumes no further than that either.
@@ -475,7 +480,7 @@ export function evaluateCached(
       // Of the evaluations to resume from, the one whose unchanged features run longest.
       let source: Recorded | undefined;
       let longest = -1;
-      for (const s of sources) {
+      for (const s of prior.sources) {
         const list = s.features.get(part);
         if (!list || s.partKeys.get(part) !== partKeys.get(part)) continue;
         let n = 0;
@@ -545,6 +550,7 @@ export function evaluateCached(
       marks.push(names.order.length);
     },
     placing: () => progress?.({ phase: 'placing' }),
+    ...(options.built ? { built: options.built } : {}),
     step: (s) => {
       done++;
       const { reads, effects } = values.end();
@@ -564,6 +570,8 @@ export function evaluateCached(
       };
     },
   });
+  prior.from = undefined;
+  prior.sources = [];
   for (const part of rows.keys()) if (!partKeys.has(part)) partKeys.set(part, partKey(rows.get(part) as Json));
   return {
     ev,

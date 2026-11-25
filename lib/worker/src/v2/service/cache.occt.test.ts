@@ -167,6 +167,41 @@ describe('the feature-result cache', { timeout: 300_000 }, () => {
     }
   });
 
+  it('lets go of what superseded evaluations registered instead of building afresh, naming as a fresh build', () => {
+    const doc = (height: number) => {
+      const d = new Docs();
+      const base = d.part('Base');
+      base.box('40 mm', '40 mm', '10 mm');
+      const arm = d.part('Arm');
+      arm.box('30 mm', '6 mm', arm.parameter('height', `${height} mm`), [15, 0, 0]);
+      const a = d.assembly('Pair');
+      a.instance({ part: { id: base.id } }, { grounded: true });
+      a.instance({ part: { id: arm.id } }, { at: [0, 0, 20] });
+      return { doc: d.document({ assembly: { id: a.id } }), asm: a.id, parts: [base.id, arm.id] };
+    };
+    const service = new EvaluationService(k, gcs);
+    try {
+      service.evaluate(doc(4).doc);
+      let most = 0;
+      let last = doc(4);
+      for (let i = 1; i <= 40; i++) {
+        last = doc(4 + i / 10);
+        const display = service.evaluate(structuredClone(last.doc));
+        // Never afresh: the base is taken over every time.
+        expect(display.timing.misses?.some((m) => m.startsWith('afresh'))).toBe(false);
+        expect(display.timing.resumed).toBe(1);
+        most = Math.max(most, k.shapeCount);
+      }
+      // What superseded evaluations held was let go along the way.
+      expect(k.shapeCount).toBeLessThan(most);
+      const ev = fresh(structuredClone(last.doc));
+      const kept = service.evaluation as Evaluation;
+      for (const id of [...last.parts, last.asm]) expect(fingerprint(kept, id)).toEqual(fingerprint(ev, id));
+    } finally {
+      service.release();
+    }
+  });
+
   it('takes over every placing of an assembly whose parts are all taken over, nested ones too, naming as a fresh build', () => {
     const d = new Docs();
     const base = d.part('Base');

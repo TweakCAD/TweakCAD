@@ -16,6 +16,7 @@ import type { OriginItem } from '../attributes';
 import { ALL_PICKS } from './ModelScene';
 import { Viewport, viewAlong } from './Viewport';
 import { sectionCut, sectionDistance } from './sectionCut';
+import { earlyDisplay } from '../display/earlyDisplay';
 
 export interface ViewportViewProps {
   services: AppServices;
@@ -55,9 +56,27 @@ export function ViewportView({ services, onViewport, children }: ViewportViewPro
     if (!viewport) return;
     const { display, editor } = services;
     let pendingFrame = true;
+    /**
+     * While a new document's parts show as they are built, the view frames
+     * them again as each comes, until the user moves the camera, and then
+     * once more for the full display.
+     */
+    let framingEarly = false;
     const draw = () => {
       const { focus, exploded } = services.app.getState();
-      const shown = display.getState().display;
+      const state = display.getState();
+      // While a just-opened document builds, the parts built so far show.
+      if (state.early) {
+        viewport.model.setDisplay(earlyDisplay(state.early, editor.document), shownOf(editor.document, focus));
+        if (pendingFrame && state.early.parts.some((p) => p.bodies.length > 0)) {
+          pendingFrame = false;
+          framingEarly = true;
+        }
+        if (framingEarly) viewport.resetView();
+        viewport.requestRender();
+        return;
+      }
+      const shown = state.display;
       const context = inContextOf(editor.document, focus);
       const edited = context ? instanceIndex(assemblyDisplay(shown, context.assembly), context.at) : -1;
       const beside = partsBeside(editor.document, focus);
@@ -66,18 +85,29 @@ export function ViewportView({ services, onViewport, children }: ViewportViewPro
         ...(context && edited >= 0 ? { faded: (i: number) => i !== edited, own: edited } : {}),
         ...(beside ? { beside } : {}),
       });
-      if (pendingFrame && display.getState().display) {
+      if ((pendingFrame || framingEarly) && shown) {
         pendingFrame = false;
+        framingEarly = false;
         viewport.resetView();
       }
       viewport.requestRender();
     };
     const offStore = editor.store.subscribe((change) => {
-      if (change.cause === 'replace') pendingFrame = true;
+      if (change.cause === 'replace') {
+        pendingFrame = true;
+        framingEarly = false;
+      }
     });
+    // Moving the camera while parts arrive keeps the view where the user put it.
+    const canvas = canvasRef.current;
+    const userMoved = () => {
+      framingEarly = false;
+    };
+    canvas?.addEventListener('pointerdown', userMoved);
+    canvas?.addEventListener('wheel', userMoved, { passive: true });
     draw();
     const offDisplay = display.subscribe((s, prev) => {
-      if (s.display !== prev.display) draw();
+      if (s.display !== prev.display || s.early !== prev.early) draw();
     });
     const offApp = services.app.subscribe((s, prev) => {
       if (s.focus !== prev.focus || s.exploded !== prev.exploded) draw();
@@ -86,6 +116,8 @@ export function ViewportView({ services, onViewport, children }: ViewportViewPro
       offStore();
       offDisplay();
       offApp();
+      canvas?.removeEventListener('pointerdown', userMoved);
+      canvas?.removeEventListener('wheel', userMoved);
     };
   }, [viewport, services]);
 

@@ -43,11 +43,14 @@ import type {
   BeforeScope,
   BodiesBefore,
   Display,
+  EarlyBody,
   EvaluateServiceOptions,
   ListedBody,
   Progress,
 } from '@tweakcad/worker/src/v2/service/types';
 import { statusOf, type BuildStatus } from './status';
+import { localBuildTimes, type BuildTimesStore } from './buildTimes';
+import type { EarlyParts } from './earlyDisplay';
 import { displayOnly } from './displayOnly';
 
 /** The bodies of a part just before a feature, from the evaluation of the display with `generation`. */
@@ -81,6 +84,11 @@ export interface DisplayState {
   committed: Display | null;
   /** While a panel names the state it works in: that state's bodies, as the newest listing read them; null otherwise. */
   before: BeforeListing | null;
+  /**
+   * While a just-opened document builds: the parts the worker has finished
+   * so far, to show until its display arrives (`earlyDisplay`); null otherwise.
+   */
+  early: EarlyParts | null;
 }
 
 export type DisplayStore = StoreApi<DisplayState>;
@@ -97,6 +105,7 @@ export function createDisplayStore(): DisplayStore {
     candidate: false,
     committed: null,
     before: null,
+    early: null,
   }));
 }
 
@@ -202,8 +211,16 @@ export class RebuildScheduler {
     private readonly evaluator: Evaluator,
     readonly store: DisplayStore = createDisplayStore(),
     private readonly options: EvaluateServiceOptions = {},
+    /** Each document's last build times (`buildTimes.ts`). */
+    private readonly times: BuildTimesStore = localBuildTimes,
   ) {
-    this.offProgress = evaluator.onProgress?.((p) => this.report(statusOf(p)));
+    this.offProgress = evaluator.onProgress?.((p) => {
+      if (p.phase === 'built') this.built(p.part, p.bodies);
+      else {
+        const status = statusOf(p);
+        if (status) this.report(status);
+      }
+    });
   }
 
   /**
@@ -212,6 +229,13 @@ export class RebuildScheduler {
    * says it is doing. It changes at most every 100 ms, to the newest
    * reported: a build of a thousand features reports a thousand times.
    */
+  /** Adds a part the worker built early to what shows until the display arrives. */
+  private built(part: string, bodies: EarlyBody[]): void {
+    if (this.disposed || !this.evaluatingNow) return;
+    const early = this.store.getState().early;
+    this.store.setState({ early: { parts: [...(early?.parts ?? []), { part, bodies }] } });
+  }
+
   report(status: BuildStatus): void {
     if (this.disposed || !this.store.getState().evaluating) return;
     const now = Date.now();
@@ -394,8 +418,13 @@ export class RebuildScheduler {
         const kept = this.kept;
         const restyled =
           kept && displayOnly(kept.document, document) ? { ...this.options, restyle: kept.generation } : this.options;
-        const options = candidate ? { ...restyled, preview: true } : restyled;
+        // The document's last build times, for progress in time; a preview builds only part of it.
+        const id = typeof document.id === 'string' ? document.id : undefined;
+        const expected = id !== undefined && !candidate ? this.times.get(id) : undefined;
+        const options = candidate ? { ...restyled, preview: true } : { ...restyled, ...(expected ? { expected } : {}) };
         this.kept = null;
+        // Parts shown early belong to the build they came from.
+        if (this.store.getState().early) this.store.setState({ early: null });
         this.evaluatingNow = true;
         let display: Display;
         try {
@@ -403,13 +432,14 @@ export class RebuildScheduler {
         } finally {
           this.evaluatingNow = false;
         }
+        if (id !== undefined && !candidate && display.timing?.times) this.times.set(id, display.timing.times);
         this.kept = { document, generation: display.generation };
         if (this.disposed || this.pending) continue;
         const shown = { display, revision, error: null, preview, candidate: candidate === true };
-        this.store.setState(preview ? shown : { ...shown, committed: display });
+        this.store.setState(preview ? { ...shown, early: null } : { ...shown, committed: display, early: null });
       } catch (e) {
         if (this.disposed || this.pending) continue;
-        this.store.setState({ error: e instanceof Error ? e.message : String(e) });
+        this.store.setState({ error: e instanceof Error ? e.message : String(e), early: null });
       }
     }
     this.running = false;

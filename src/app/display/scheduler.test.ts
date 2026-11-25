@@ -103,7 +103,7 @@ describe('RebuildScheduler', () => {
       name: 'Extrude 2',
       type: 'core.extrude',
     });
-    expect(state().status).toEqual({ label: 'Building Extrude 2', done: 3, total: 9 });
+    expect(state().status).toEqual({ label: 'Building Extrude 2', done: 3, total: 9, stage: 'building' });
     expect(statusText(state().status)).toBe('Building Extrude 2 (4 of 9)');
     // What comes within 100 ms waits, and only the newest shows: the line does not change for every feature.
     post({

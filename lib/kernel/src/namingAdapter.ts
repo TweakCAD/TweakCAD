@@ -158,6 +158,8 @@ export class NamingAdapter implements KernelFacts {
   /** The solid most recently registered with each face. */
   private readonly solidOfFace = new Map<ShapeKey, Entry>();
   private nextKey = 1;
+  /** Shapes registered without a name of their own, which numbers their default names. */
+  private unnamed = 0;
 
   /** @param hashBound passed to every hash call; history must be asked for with the same value. */
   constructor(
@@ -170,7 +172,7 @@ export class NamingAdapter implements KernelFacts {
    * and for each shape with no history. The handle stays the caller's.
    */
   addShape(shape: ShapeHandle, ref?: ShapeRef): ShapeRef {
-    const name = ref ?? `shape_${this.shapes.size + 1}`;
+    const name = ref ?? `shape_${++this.unnamed}`;
     if (this.shapes.has(name)) throw new NamingAdapterError('unknown', `Shape ${name} is already registered`);
     const walk = emptyRecord();
     const root = this.visit(this.ownedCopy(shape), walk);
@@ -398,6 +400,45 @@ export class NamingAdapter implements KernelFacts {
       kind: entry.kind,
       children: unique(entry.uses).flatMap((child) => index.get(child) ?? []),
     }));
+  }
+
+  /** Whether `shape` is registered. */
+  holds(shape: ShapeRef): boolean {
+    return this.shapes.has(shape);
+  }
+
+  /**
+   * Forgets every registered shape `keep` turns down, and releases each
+   * sub-shape no shape still registered holds: what superseded builds
+   * registered. What stays keeps its keys and handles.
+   */
+  retain(keep: (shape: ShapeRef) => boolean): { shapes: number; keys: number } {
+    let shapes = 0;
+    for (const ref of [...this.shapes.keys()]) {
+      if (keep(ref)) continue;
+      this.shapes.delete(ref);
+      shapes++;
+    }
+    const held = new Set<ShapeKey>();
+    for (const record of this.shapes.values()) {
+      held.add(record.root.key);
+      for (const kind of KINDS) for (const entry of record.entries[kind]) held.add(entry.key);
+    }
+    let keys = 0;
+    for (const [key, entry] of this.keys) {
+      if (held.has(key)) continue;
+      this.k.release(entry.handle);
+      if (entry.boundary !== undefined) this.k.release(entry.boundary);
+      this.keys.delete(key);
+      const bucket = (this.byHash.get(entry.hash) ?? []).filter((e) => e !== entry);
+      if (bucket.length > 0) this.byHash.set(entry.hash, bucket);
+      else this.byHash.delete(entry.hash);
+      keys++;
+    }
+    for (const [face, solid] of this.solidOfFace) {
+      if (!held.has(face) || !held.has(solid.key)) this.solidOfFace.delete(face);
+    }
+    return { shapes, keys };
   }
 
   /** Release every handle the adapter holds. The adapter is empty afterwards. */
