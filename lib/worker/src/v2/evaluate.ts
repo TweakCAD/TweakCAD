@@ -95,6 +95,8 @@ export interface EvaluateOptions {
   diagnostics?: readonly Diagnostic[];
   /** Called once the parts are built, before the assemblies place them. */
   placing?: () => void;
+  /** Called as each part of the document is built, with its result. */
+  built?: (part: string, result: PartResult, ev: Evaluation) => void;
   /** The asset table the builders read, standing for the document's (one that records what is read); by default the document's. */
   assets?: Json;
   /** Placed copies of an earlier evaluation on the same shapes and adapter, to take over (see `placeInto`). */
@@ -237,7 +239,11 @@ export function evaluateDocument(doc: Json, kernel: OcctKernel, options: Evaluat
   };
   const unread = readerPauses(doc, options.diagnostics ?? readDocument(doc).diagnostics);
   // A part another part derives from builds first; the dependency graph decides, not the table order (10).
-  startInsertions(ev, doc, (e, partJson) => buildPart(e, partJson, e === ev ? options : {}, unread));
+  startInsertions(ev, doc, (e, partJson) => {
+    buildPart(e, partJson, e === ev ? options : {}, unread);
+    const result = e === ev ? ev.parts.get(partJson.id as string) : undefined;
+    if (result) options.built?.(partJson.id as string, result, ev);
+  });
   for (const partJson of doc.parts as Json[]) ensurePart(ev, partJson.id as string);
   if (((doc.assemblies as Json[] | undefined) ?? []).length > 0) options.placing?.();
   evaluateAssemblies(ev, doc);

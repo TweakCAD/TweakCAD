@@ -1684,10 +1684,22 @@ function IconBtn({ icon, label, onClick, disabled, active }: IconBtnProps) {
 // ---- Styles ----
 
 /** The red badge saying what the build in progress is doing. */
-export function RebuildBadge({ text }: { text: string }) {
+/** The red badge of a running build: what it does, and a bar along its foot of how far it has come (0 to 1). */
+export function RebuildBadge({ text, progress = null }: { text: string; progress?: number | null }) {
   return (
-    <span style={styles.rebuildBadge} title={text}>
+    <span style={progress === null ? styles.rebuildBadge : badgeWithBar} title={text}>
       {text}
+      {progress !== null && (
+        <span
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(progress * 100)}
+          style={styles.rebuildTrack}
+        >
+          <span style={{ ...styles.rebuildFill, width: `${Math.round(progress * 1000) / 10}%` }} />
+        </span>
+      )}
     </span>
   );
 }
@@ -1961,6 +1973,23 @@ const styles: Record<string, React.CSSProperties> = {
     textOverflow: 'ellipsis',
     maxWidth: 420,
     fontVariantNumeric: 'tabular-nums',
+    position: 'relative',
+  },
+  rebuildTrack: {
+    position: 'absolute',
+    left: 8,
+    right: 8,
+    bottom: 3,
+    height: 3,
+    borderRadius: 2,
+    background: 'rgba(255, 255, 255, 0.35)',
+    overflow: 'hidden',
+  },
+  rebuildFill: {
+    display: 'block',
+    height: '100%',
+    background: '#ffffff',
+    transition: 'width 300ms linear',
   },
   projectName: {
     fontSize: 12,
@@ -1972,3 +2001,6 @@ const styles: Record<string, React.CSSProperties> = {
     marginRight: 4,
   },
 };
+
+/** The badge with room along its foot for the progress bar. */
+const badgeWithBar: React.CSSProperties = { ...styles.rebuildBadge, paddingBottom: 9 };

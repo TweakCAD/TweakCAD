@@ -1455,3 +1455,40 @@ describe('a sweep', () => {
     expect([...walls].sort()).toEqual([...adapter.topology(history.result).faces].sort());
   });
 });
+
+describe('retain', () => {
+  it('forgets the shapes turned down and releases the sub-shapes only they held', () => {
+    const a = start();
+    const first = a.addShape(box(0, 0, 0, 10, 10, 10), 'first');
+    const second = a.addShape(box(20, 0, 0, 10, 10, 10), 'second');
+    const kept = a.topology(first).faces;
+    const before = k.shapeCount;
+    // A box: its solid, shell, 6 faces, 6 wires, 12 edges and 8 vertices.
+    expect(a.retain((ref) => ref === first)).toEqual({ shapes: 1, keys: 34 });
+    expect(a.holds(first)).toBe(true);
+    expect(a.holds(second)).toBe(false);
+    // The kept box keeps its keys and handles; the other box's sub-shapes are released.
+    expect(a.topology(first).faces).toEqual(kept);
+    expect(a.measures(kept[0] as ShapeKey).area).toBeCloseTo(100);
+    expect(k.shapeCount).toBe(before - 34);
+  });
+
+  it('keeps a sub-shape another kept shape still holds', () => {
+    const a = start();
+    const solid = box(0, 0, 0, 10, 10, 10);
+    const whole = a.addShape(solid, 'whole');
+    const inner = a.addShape(k.makeCompound([solid]), 'again');
+    // The compound holds the solid's entries, and one of its own.
+    expect(a.subShapes(inner).length).toBe(a.subShapes(whole).length + 1);
+    expect(a.retain((ref) => ref === inner)).toEqual({ shapes: 1, keys: 0 });
+    expect(a.topology(inner).faces).toHaveLength(6);
+  });
+
+  it('numbers an unnamed shape past every name it gave, after forgetting some', () => {
+    const a = start();
+    const one = a.addShape(box(0, 0, 0, 1, 1, 1));
+    a.addShape(box(2, 0, 0, 1, 1, 1));
+    a.retain((ref) => ref !== one);
+    expect(() => a.addShape(box(4, 0, 0, 1, 1, 1))).not.toThrow();
+  });
+});

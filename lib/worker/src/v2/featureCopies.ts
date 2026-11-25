@@ -29,7 +29,7 @@ import {
   type V3,
 } from './context';
 import type { Motion } from './copies';
-import { CONTACT, runOperation, type Live } from './operation';
+import { meets, runOperation, type Live } from './operation';
 
 export interface FeatureTool extends RecordedTool {
   feature: string;
@@ -159,9 +159,7 @@ export function applyFeatureCopies(
   }
   if (from.op === 'join') {
     const targets = targetShapes(ctx, from.targets);
-    const alone = copies.some(
-      ({ live }) => !targets.some((t) => ctx.ev.kernel.distanceBetween(live.handle, t.handle) <= CONTACT),
-    );
+    const alone = copies.some(({ live }) => !targets.some((t) => meets(ctx, live.handle, t.handle)));
     if (alone) throw new FeaturePause('a copy of a joining feature that meets no target body is not built yet');
   }
   runOperation(

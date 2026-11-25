@@ -101,7 +101,7 @@ function wheel(stray = false): { doc: Json; part: string; cut: string } {
   const picked = before.map((b) => service.pick({ key: b.key }) as PickedEntity);
   const cut = d.feature('core.boolean', {
     target: picked[0]!.reference,
-    tools: { set: picked.slice(1).map((p) => p.reference) },
+    tools: makeSet(picked.slice(1).map((p) => p.reference)) as unknown as Json,
     op: d.val('"cut"'),
     keepTools: d.val('false'),
   });
@@ -155,13 +155,9 @@ describe('editing a feature works in the part just before it', { timeout: 60_000
 
     // The panel's stored target and tools are named as the state before the cut names them.
     const relabel = relabelled(form, await labelsOfStoredPicks(s, target, form));
-    expect([relabel.target?.label, ...relabel.tools.map((t) => t.label)]).toEqual([
-      'Body 1',
-      'Body 2',
-      'Body 3',
-      'Body 4',
-      'Body 5',
-    ]);
+    // The tools come in the stored set's order, which is by their names, not by body number.
+    expect(relabel.target?.label).toBe('Body 1');
+    expect(relabel.tools.map((t) => t.label).sort()).toEqual(['Body 2', 'Body 3', 'Body 4', 'Body 5']);
     const lists = { target: relabel.target, tools: relabel.tools };
 
     // The browser lists the part before the cut.
@@ -178,7 +174,7 @@ describe('editing a feature works in the part just before it', { timeout: 60_000
     const built = buildBoolean(
       s.editor.document,
       target,
-      { ...form, target: lists.target, tools: lists.tools.slice(1) },
+      { ...form, target: lists.target, tools: lists.tools.filter((t) => t.label !== 'Body 2') },
       new ValueSlots(() => s.editor.newId('val'), target.base),
     );
     if (!built.ok) throw new Error(built.message);
@@ -199,7 +195,7 @@ describe('editing a feature works in the part just before it', { timeout: 60_000
     expect(rows[0]!.key).toBe(bodiesOf(preview, part)[0]!.key);
     const fourth = await pickBody(s, target, { key: rows[3]!.key });
     expect(fourth?.label).toBe('Body 4');
-    expect(sameReference(fourth!.reference, lists.tools[2]!.reference)).toBe(true);
+    expect(sameReference(fourth!.reference, lists.tools.find((t) => t.label === 'Body 4')!.reference)).toBe(true);
 
     // Closed: the browser lists the committed model again.
     s.scheduler.setPreview(null);
